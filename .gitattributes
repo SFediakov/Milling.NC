@@ -4,3 +4,7 @@
 # STL may be binary; never apply line-ending conversion.
 *.STL binary
 *.stl binary
+# Vendored NuGet packages are binary archives.
+*.nupkg binary
+# Golden G-code files are compared byte for byte; keep LF.
+*.nc text eol=lf
