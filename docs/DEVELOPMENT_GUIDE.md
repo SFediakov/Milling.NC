@@ -652,6 +652,7 @@ check that decides done.
 - Input: placeholders; section 6.3
 - Output: `ToolProfile.Create(ToolDefinition, float cellSize)` with `Offsets` (`dx`, `dy`, `dz`) for the cutter footprint and `AnnulusOffsets` for the head ring; tests: flat 6 mm tool at 0.5 mm cells has all `dz == 0` and offsets within radius 3; ball tool center `dz == 0` and edge `dz` close to `r`; annulus offsets have distance in `(r, R]`
 - Acceptance: tests green
+- Status: done
 
 #### T-026 Tip map by dilation
 - Depends on: T-025
@@ -659,6 +660,7 @@ check that decides done.
 - Input: placeholder; formula 6.3
 - Output: `ComputeTipMap(HeightMap model, ToolProfile) -> HeightMap` using `max(model - dz)` over the footprint, NaN cells skipped (pitfall 6), grid edges clamped
 - Acceptance: compiles; tests in T-027
+- Status: done
 
 #### T-027 Tests for dilation
 - Depends on: T-026, T-024
@@ -666,6 +668,7 @@ check that decides done.
 - Input: placeholder
 - Output: tests: a single spike cell at height 10 in a flat map produces a plateau of height 10 with the footprint's diameter for a flat tool; a ball tool produces a rounded profile with `tip = 10 - dz` at distance d; the tip map is never below the model map at any cell
 - Acceptance: tests green
+- Status: done
 
 #### T-028 Head clearance
 - Depends on: T-026
@@ -673,6 +676,7 @@ check that decides done.
 - Input: placeholder; formula 6.3
 - Output: `ComputeHeadLimit(HeightMap model, ToolProfile, float cutterLength) -> HeightMap`, `ApplyHeadLimit(HeightMap tip, HeightMap limit) -> HeightMap effectiveTip`, `HeadLimitedMask(tip, limit, tolerance) -> bool[,]`
 - Acceptance: compiles; tests in T-029
+- Status: done
 
 #### T-029 Tests for head clearance
 - Depends on: T-028, T-024
