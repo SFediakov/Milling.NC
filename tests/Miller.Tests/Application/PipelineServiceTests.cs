@@ -19,6 +19,7 @@ public sealed class PipelineServiceTests
         project.Stock.SizeY = 20;
         project.Stock.SizeZ = 5;
         project.Parameters.CellSize = 0.5f;
+        project.Models.Add(new ModelPlacement { StlPath = "box.stl" });
         return project;
     }
 
@@ -38,7 +39,7 @@ public sealed class PipelineServiceTests
         Assert.Equal(StlFormat.Binary, report.Format);
         Assert.Equal(4050, report.TriangleCount);
         Assert.Equal(21.971f, report.Bounds.Max.Z, 3);
-        Assert.Same(report, service.Report);
+        Assert.Same(report, Assert.Single(service.Reports));
 
         service.Clear();
         Assert.False(service.HasMesh);
@@ -64,7 +65,7 @@ public sealed class PipelineServiceTests
     public async Task BoxProject_ProducesRoughingAndFinishingWithoutGouges()
     {
         var reports = new List<ProgressReport>();
-        var result = await new PipelineService().RunAsync(BoxProject(), Box(), new SynchronousProgress(reports.Add), CancellationToken.None);
+        var result = await new PipelineService().RunAsync(BoxProject(), new[] { Box() }, new SynchronousProgress(reports.Add), CancellationToken.None);
 
         Assert.Empty(GougeChecker.Verify(result.Toolpath, result.EffectiveTip, result.Parameters.Tolerance));
         Assert.Equal(3, result.Plan.RoughingLevels);
@@ -93,11 +94,12 @@ public sealed class PipelineServiceTests
     {
         var project = MillingProject.Default();
         project.Parameters.CellSize = 0.2f;
+        project.Models.Add(new ModelPlacement { StlPath = TestMeshes.FixtureFileName });
         var mesh = new MeshImportService();
         mesh.Import(TestMeshes.FixturePath());
 
         var watch = System.Diagnostics.Stopwatch.StartNew();
-        var result = await new PipelineService().RunAsync(project, mesh.CurrentMesh!, null, CancellationToken.None);
+        var result = await new PipelineService().RunAsync(project, mesh.Meshes, null, CancellationToken.None);
         watch.Stop();
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(60), $"fixture pipeline took {watch.Elapsed}");
 
@@ -126,7 +128,7 @@ public sealed class PipelineServiceTests
     {
         using var cts = new CancellationTokenSource();
         cts.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new PipelineService().RunAsync(BoxProject(), Box(), null, cts.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new PipelineService().RunAsync(BoxProject(), new[] { Box() }, null, cts.Token));
     }
 
     [Fact]
@@ -134,7 +136,7 @@ public sealed class PipelineServiceTests
     {
         var project = BoxProject();
         project.Parameters.Stepdown = 0;
-        var ex = await Assert.ThrowsAsync<ValidationException>(() => new PipelineService().RunAsync(project, Box(), null, CancellationToken.None));
+        var ex = await Assert.ThrowsAsync<ValidationException>(() => new PipelineService().RunAsync(project, new[] { Box() }, null, CancellationToken.None));
         Assert.Contains("Parameters.Stepdown", ex.Message);
         Assert.Contains(ex.Result.Errors, e => e.Field == "Parameters.Stepdown");
     }
@@ -144,11 +146,11 @@ public sealed class PipelineServiceTests
     {
         var unknown = BoxProject();
         unknown.RoughingStrategyId = "missing";
-        Assert.Throws<KeyNotFoundException>(() => new PipelineService().Run(unknown, Box(), null, CancellationToken.None));
+        Assert.Throws<KeyNotFoundException>(() => new PipelineService().Run(unknown, new[] { Box() }, null, CancellationToken.None));
 
         var mismatched = BoxProject();
         mismatched.FinishingStrategyId = "raster-roughing";
-        Assert.Throws<ArgumentException>(() => new PipelineService().Run(mismatched, Box(), null, CancellationToken.None));
+        Assert.Throws<ArgumentException>(() => new PipelineService().Run(mismatched, new[] { Box() }, null, CancellationToken.None));
     }
 
     [Fact]

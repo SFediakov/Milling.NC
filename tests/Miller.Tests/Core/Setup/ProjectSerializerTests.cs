@@ -10,7 +10,7 @@ public sealed class ProjectSerializerTests
 {
     private static MillingProject FullyCustomized() => new()
     {
-        StlPath = "../Milling_Heart_V2.STL",
+        Models = { new ModelPlacement { StlPath = "../Milling_Heart_V2.STL", Name = "heart", Offset = new Vector3(1, 2, 3), RotationZ = 15 } },
         Tool = new ToolDefinition
         {
             Name = "3 mm ball",
@@ -69,9 +69,10 @@ public sealed class ProjectSerializerTests
     {
         var project = MillingProject.Default();
 
-        Assert.Equal(1, MillingProject.CurrentSchemaVersion);
+        Assert.Equal(2, MillingProject.CurrentSchemaVersion);
         Assert.Equal(MillingProject.CurrentSchemaVersion, project.SchemaVersion);
-        Assert.Equal(string.Empty, project.StlPath);
+        Assert.Empty(project.Models);
+        Assert.Null(project.StlPath);
         Assert.Equal(MillingProject.DefaultRoughingStrategyId, project.RoughingStrategyId);
         Assert.Equal("raster-finishing", project.FinishingStrategyId);
         Assert.Equal("grbl", project.PostProcessorId);
@@ -109,7 +110,12 @@ public sealed class ProjectSerializerTests
         var copy = ProjectSerializer.Deserialize(json);
 
         Assert.Equal(original.SchemaVersion, copy.SchemaVersion);
-        Assert.Equal(original.StlPath, copy.StlPath);
+        var model = Assert.Single(copy.Models);
+        Assert.Equal("../Milling_Heart_V2.STL", model.StlPath);
+        Assert.Equal("heart", model.Name);
+        Assert.Equal(new Vector3(1, 2, 3), model.Offset);
+        Assert.Equal(15f, model.RotationZ);
+        Assert.DoesNotContain("\"StlPath\": null", json);
         Assert.Equal(original.RoughingStrategyId, copy.RoughingStrategyId);
         Assert.Equal(original.FinishingStrategyId, copy.FinishingStrategyId);
         Assert.Equal(original.PostProcessorId, copy.PostProcessorId);
@@ -168,7 +174,7 @@ public sealed class ProjectSerializerTests
         Assert.Contains("\"MapX\": \"Y\"", json);
         Assert.Contains("\"OriginMode\": \"Custom\"", json);
         Assert.Contains("\"Direction\": \"OneWay\"", json);
-        Assert.Contains("\"SchemaVersion\": 1", json);
+        Assert.Contains("\"SchemaVersion\": 2", json);
         Assert.Contains("\n", json);
         Assert.DoesNotContain("\"TipType\": 1", json);
     }
@@ -195,7 +201,7 @@ public sealed class ProjectSerializerTests
     [Fact]
     public void Deserialize_UnknownSchemaVersion_Throws()
     {
-        var json = ProjectSerializer.Serialize(MillingProject.Default()).Replace("\"SchemaVersion\": 1", "\"SchemaVersion\": 7");
+        var json = ProjectSerializer.Serialize(MillingProject.Default()).Replace("\"SchemaVersion\": 2", "\"SchemaVersion\": 7");
         var ex = Assert.Throws<InvalidDataException>(() => ProjectSerializer.Deserialize(json));
         Assert.Contains("7", ex.Message);
     }
@@ -204,7 +210,7 @@ public sealed class ProjectSerializerTests
     public void Deserialize_NullOrUnknownMember_Throws()
     {
         Assert.Throws<InvalidDataException>(() => ProjectSerializer.Deserialize("null"));
-        var json = ProjectSerializer.Serialize(MillingProject.Default()).Replace("\"StlPath\"", "\"StlPatch\"");
+        var json = ProjectSerializer.Serialize(MillingProject.Default()).Replace("\"Tool\"", "\"Tools\"");
         Assert.Throws<JsonException>(() => ProjectSerializer.Deserialize(json));
     }
 
@@ -214,5 +220,17 @@ public sealed class ProjectSerializerTests
         var project = ProjectSerializer.Deserialize("{ \"SchemaVersion\": 1 }");
         Assert.Equal(6f, project.Tool.CutterDiameter);
         Assert.Equal(MillingProject.DefaultRoughingStrategyId, project.RoughingStrategyId);
+    }
+
+    [Fact]
+    public void Deserialize_SchemaOne_MigratesTheStlPathIntoTheModelList()
+    {
+        var project = ProjectSerializer.Deserialize("{ \"SchemaVersion\": 1, \"StlPath\": \"parts/heart.stl\" }");
+        Assert.Equal(MillingProject.CurrentSchemaVersion, project.SchemaVersion);
+        var model = Assert.Single(project.Models);
+        Assert.Equal("parts/heart.stl", model.StlPath);
+        Assert.Equal(Vector3.Zero, model.Offset);
+        Assert.Null(project.StlPath);
+        Assert.Throws<InvalidDataException>(() => ProjectSerializer.Deserialize("{ \"SchemaVersion\": 3 }"));
     }
 }

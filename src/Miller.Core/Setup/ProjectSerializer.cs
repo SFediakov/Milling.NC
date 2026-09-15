@@ -26,12 +26,20 @@ public static class ProjectSerializer
         ArgumentNullException.ThrowIfNull(json);
         var project = JsonSerializer.Deserialize<MillingProject>(json, Options)
             ?? throw new InvalidDataException("Project JSON is null.");
-        if (project.SchemaVersion != MillingProject.CurrentSchemaVersion)
+        if (project.SchemaVersion != MillingProject.CurrentSchemaVersion && project.SchemaVersion != MillingProject.LegacySchemaVersion)
         {
             throw new InvalidDataException(
-                $"Unsupported project schema version {project.SchemaVersion}; this build reads version {MillingProject.CurrentSchemaVersion}.");
+                $"Unsupported project schema version {project.SchemaVersion}; this build reads versions {MillingProject.LegacySchemaVersion} and {MillingProject.CurrentSchemaVersion}.");
         }
 
+        // Schema 1: the single StlPath becomes the first model placement.
+        if (!string.IsNullOrEmpty(project.StlPath))
+        {
+            project.Models.Insert(0, new ModelPlacement { StlPath = project.StlPath });
+        }
+
+        project.StlPath = null;
+        project.SchemaVersion = MillingProject.CurrentSchemaVersion;
         return project;
     }
 }

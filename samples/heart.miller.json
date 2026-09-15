@@ -1,6 +1,13 @@
 {
-  "SchemaVersion": 1,
-  "StlPath": "../Milling_Heart_V2.STL",
+  "SchemaVersion": 2,
+  "Models": [
+    {
+      "StlPath": "../Milling_Heart_V2.STL",
+      "Name": "",
+      "Offset": { "X": 0, "Y": 0, "Z": 0 },
+      "RotationZ": 0
+    }
+  ],
   "Tool": {
     "Name": "6 mm flat end mill",
     "CutterDiameter": 6,

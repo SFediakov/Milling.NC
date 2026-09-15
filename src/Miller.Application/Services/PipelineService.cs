@@ -50,13 +50,19 @@ public sealed class PipelineService
     // Head limit iterations rarely need more than two rounds; the cap keeps a pathological grid finite.
     public const int MaxHeadIterations = 8;
 
-    public Task<PipelineResult> RunAsync(MillingProject project, Mesh mesh, IProgress<ProgressReport>? progress, CancellationToken cancellation)
-        => Task.Run(() => Run(project, mesh, progress, cancellation), cancellation);
+    public Task<PipelineResult> RunAsync(MillingProject project, IReadOnlyList<Mesh> meshes, IProgress<ProgressReport>? progress, CancellationToken cancellation)
+        => Task.Run(() => Run(project, meshes, progress, cancellation), cancellation);
 
-    public PipelineResult Run(MillingProject project, Mesh mesh, IProgress<ProgressReport>? progress, CancellationToken cancellation)
+    // One mesh per model placement of the project, in the same order.
+    public PipelineResult Run(MillingProject project, IReadOnlyList<Mesh> meshes, IProgress<ProgressReport>? progress, CancellationToken cancellation)
     {
         ArgumentNullException.ThrowIfNull(project);
-        ArgumentNullException.ThrowIfNull(mesh);
+        ArgumentNullException.ThrowIfNull(meshes);
+        if (meshes.Count == 0 || meshes.Count != project.Models.Count)
+        {
+            throw new ArgumentException($"{meshes.Count} meshes for {project.Models.Count} model placements.", nameof(meshes));
+        }
+
         var reporter = new StageReporter(progress);
 
         reporter.Begin(0);
@@ -71,7 +77,7 @@ public sealed class PipelineService
         cancellation.ThrowIfCancellationRequested();
 
         reporter.Begin(1);
-        var machineMesh = mesh.Transform(project.Axes.ToMatrix(mesh.Bounds, project.Stock));
+        var machineMesh = ModelLayout.MergeMachineMeshes(project, meshes);
         cancellation.ThrowIfCancellationRequested();
 
         reporter.Begin(2);
