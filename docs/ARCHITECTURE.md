@@ -142,7 +142,8 @@ placeholder; the task that implements it is written in the placeholder header.
 | Setup | `StockDefinition.cs` | `Shape` (Box, Cylinder); Box: `SizeX`, `SizeY`, `SizeZ`; Cylinder: `Diameter`, `Height`; `Placement` (AutoFitWithMargin, Explicit) and `Margin` |
 | Setup | `AxisSetup.cs` | Mapping of model axes to machine X, Y, Z; direction sign per axis; rotation angles (degrees) about X, Y, Z; `OriginMode` (StockCornerMinXYMinZ, StockCornerMinXYTopZ, StockCenterTopZ, Custom); `ToMatrix()` |
 | Setup | `CuttingParameters.cs` | `FeedRate`, `PlungeRate`, `RapidRate` (mm/min), `SpindleRpm`, `Stepover`, `Stepdown`, `SafeHeight`, `CellSize`, `Tolerance`, `MillingDirection` (Zigzag, OneWay) |
-| Setup | `MillingProject.cs` | Aggregate of all setup objects + `StlPath`, `RoughingStrategyId`, `FinishingStrategyId`, `PostProcessorId`; JSON serializable |
+| Setup | `MillingProject.cs` | Aggregate of all setup objects + `Models` (list of `ModelPlacement`), `RoughingStrategyId`, `FinishingStrategyId`, `PostProcessorId`; JSON serializable, schema 2 (schema 1 `StlPath` migrated on load) |
+| Setup | `ModelPlacement.cs`, `ModelLayout.cs` | One STL with offset and rotation about Z; the layout places every model (orientation, rotation, offset), takes machine zero from the stock corner around the union and merges the machine meshes; centering per axis is a fixed point because the stock follows the union |
 | Setup | `ProjectSerializer.cs` | `System.Text.Json` read/write with invariant culture and schema version |
 | HeightMap | `HeightMap.cs` | Uniform grid: `OriginX`, `OriginY`, `CellSize`, `Width`, `Height`, `float[] Z`; `float.NaN` = no material / outside stock; cell-world conversions; `Clone()`; `Min()`, `Max()` |
 | HeightMap | `MeshRasterizer.cs` | Model map: top-down rasterization of triangles, max Z per cell; uncovered cells = `floor` value |
@@ -183,7 +184,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | File | Responsibility |
 |---|---|
 | `Services/ProjectService.cs` | Current `MillingProject`, change notification, new/load/save via `ProjectSerializer` |
-| `Services/MeshImportService.cs` | Loads an STL through `StlReader`, validates (non-empty, finite bounds), keeps the current `Mesh` |
+| `Services/MeshImportService.cs` | Loads STL files through `StlReader`, validates (non-empty, finite bounds), keeps one `Mesh` per model placement in project order |
 | `Services/PipelineService.cs` | mesh -> `AxisSetup` transform -> stock -> model map -> tip map -> head limit -> slice plan -> roughing strategy -> finishing strategy -> linker -> statistics; progress and cancellation |
 | `Services/ExportService.cs` | Toolpath + project -> post-processor -> `.nc` file |
 | `Services/SimulationService.cs` | Owns `SimulationEngine`, `SimulationClock`, `MaterialRemover`, `CollisionDetector`; `Advance(realSeconds)`; exposes snapshot (tool position, dirty rectangle, events) |
@@ -207,6 +208,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | Views | `ToolSettingsView.axaml` | Cutter diameter, cutter length, head diameter, tip type |
 | Views | `StockSettingsView.axaml` | Shape, dimensions, placement, margin, fit button |
 | Views | `AxisSettingsView.axaml` | Axis mapping, directions, rotations, origin mode |
+| Views | `ModelsView.axaml` | Model list with add and remove, offset and rotation of the selected model, center per axis |
 | Views | `CuttingParametersView.axaml` | Feed, plunge, rapid, spindle, stepover, stepdown, safe height, cell size, direction |
 | Views | `StrategySelectionView.axaml` | Roughing strategy, finishing strategy, post-processor, Generate button, statistics |
 | Views | `SimulationControlsView.axaml` | Play, pause, stop, step, run-to-end, logarithmic speed slider 0.1 to 1000 with numeric entry, progress, simulated time, collision counter |
