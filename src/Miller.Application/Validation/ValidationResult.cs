@@ -1,10 +1,32 @@
-// PLACEHOLDER - implemented by T-021 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Application.Validation
-// Purpose: Errors and warnings produced by ProjectValidator, each tied to a field name such as
-//     Tool.CutterDiameter.
-// Public interface (names only): sealed record ValidationMessage(string Field, string Message);
-//     sealed class ValidationResult { IReadOnlyList<ValidationMessage> Errors;
-//     IReadOnlyList<ValidationMessage> Warnings; bool IsValid }; sealed class ValidationException :
-//     Exception { ValidationResult Result }
-// Depends on: none
-// Must not depend on: Avalonia and any UI type; Miller.App
+namespace Miller.Application.Validation;
+
+public sealed record ValidationMessage(string Field, string Message);
+
+public sealed class ValidationResult
+{
+    public ValidationResult(IReadOnlyList<ValidationMessage> errors, IReadOnlyList<ValidationMessage> warnings)
+    {
+        Errors = errors;
+        Warnings = warnings;
+    }
+
+    public IReadOnlyList<ValidationMessage> Errors { get; }
+
+    public IReadOnlyList<ValidationMessage> Warnings { get; }
+
+    public bool IsValid => Errors.Count == 0;
+}
+
+public sealed class ValidationException : Exception
+{
+    public ValidationException(ValidationResult result)
+        : base(Describe(result))
+    {
+        Result = result;
+    }
+
+    public ValidationResult Result { get; }
+
+    private static string Describe(ValidationResult result)
+        => "Project is invalid: " + string.Join("; ", result.Errors.Select(e => $"{e.Field}: {e.Message}"));
+}

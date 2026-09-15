@@ -5,7 +5,7 @@ using Avalonia.Markup.Xaml;
 
 namespace Miller.App;
 
-public partial class App : Application
+public partial class App : Avalonia.Application
 {
     public const string WindowTitle = "Miller";
     public const double DefaultWindowWidth = 1280;
