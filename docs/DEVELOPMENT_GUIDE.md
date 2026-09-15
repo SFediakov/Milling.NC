@@ -914,6 +914,7 @@ check that decides done.
 - Input: placeholders
 - Output: `Colors.axaml` with named `Color` and `SolidColorBrush` resources for: window background, panel background, text, accent, error, warning, viewport background, model, stock, toolpath rapid, toolpath feed, toolpath plunge, tool cutter, tool head, category Ok, RestMaterial, Gouge, Overhang, HeadLimited, CornerLimited, axis X, Y, Z; `Theme.axaml` with base styles for headers, numeric text boxes, validation text; both included from `App.axaml`
 - Acceptance: app starts; no color literal exists outside `Colors.axaml` (checked by T-058)
+- Status: done
 
 #### T-058 Color rule test
 - Depends on: T-057
@@ -921,6 +922,7 @@ check that decides done.
 - Input: placeholder
 - Output: test scanning `src/**/*.axaml` and `src/**/*.cs` for `#[0-9A-Fa-f]{6,8}` and `Color.Parse(`/`Color.FromRgb(` and failing for any file except `Styles/Colors.axaml`
 - Acceptance: test green; temporarily adding a literal to a view makes it red
+- Status: done
 
 #### T-059 View model base and composition root
 - Depends on: T-057, T-047
@@ -928,6 +930,7 @@ check that decides done.
 - Input: placeholders
 - Output: `ViewModelBase : ObservableObject` with `SetError(field, message)`, `ClearErrors()`, `Errors`; `MainWindowViewModel` with `StatusText`, `IsBusy`, `Progress`, child view model properties (null for not yet created ones is not allowed: create them in the tasks that add them and keep the constructor signature growing); `App.axaml.cs` constructs services (`LogService`, `ProjectService`, `MeshImportService`, `PipelineService`, `ExportService`, `SettingsService`, `SimulationService`, `AnalysisService`) and the main view model and assigns `MainWindow.DataContext`
 - Acceptance: app starts with the view model attached (window title shows `Miller Build_1.0.X`)
+- Status: done
 
 #### T-060 Project service and settings service
 - Depends on: T-020, T-045
@@ -935,6 +938,7 @@ check that decides done.
 - Input: placeholders
 - Output: `ProjectService` with `Current`, `Path`, `IsDirty`, `New()`, `Load(path)`, `Save()`, `SaveAs(path)`, event `ProjectChanged`; `SettingsService` with `LastStlDirectory`, `LastProjectDirectory`, `LastExportDirectory`, `WindowWidth`, `WindowHeight`, `SpeedFactor`, stored as JSON at `Environment.SpecialFolder.ApplicationData/Miller/settings.json` (file name is a constant); tests: new/load/save round trip in a temp directory, dirty flag transitions
 - Acceptance: tests green
+- Status: done
 
 #### T-061 Settings service tests
 - Depends on: T-060
