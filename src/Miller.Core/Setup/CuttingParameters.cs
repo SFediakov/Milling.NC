@@ -34,7 +34,7 @@ public sealed class CuttingParameters
 
     public float Stepdown { get; set; } = DefaultStepdown;
 
-    // Absolute Z above the stock top used for rapid moves.
+    // Clearance above the stock top for rapid moves; the absolute rapid Z is stock top + SafeHeight.
     public float SafeHeight { get; set; } = DefaultSafeHeight;
 
     public float CellSize { get; set; } = DefaultCellSize;

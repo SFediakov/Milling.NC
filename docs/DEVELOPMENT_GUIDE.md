@@ -287,7 +287,8 @@ Uncuttable classification (`UncuttableRegions`):
   `(0, CutterDiameter]`. Finishing typically uses a smaller stepover than
   roughing; both come from the same parameter set with a `FinishingStepover`
   field.
-- `SafeHeight`: absolute Z for rapid moves; must be above the stock top.
+- `SafeHeight`: clearance above the stock top for rapid moves. The absolute rapid Z is
+  stock top + `SafeHeight`; the value must be > 0 and does not depend on the origin mode.
 - Feed kinds: `Feed` uses `FeedRate`, `Plunge` uses `PlungeRate`, `Rapid` uses
   `RapidRate` (only for time estimation and simulation; G-code emits `G0`).
 - `MillingDirection`: `Zigzag` alternates row direction; `OneWay` retracts and
@@ -301,12 +302,12 @@ Uncuttable classification (`UncuttableRegions`):
 ( stock: box 100x60x20 )
 G21 G90 G94 G17
 S12000 M3
-G0 Z<SafeHeight>
+G0 Z<stock top + SafeHeight>
 G0 X.. Y..
 G1 Z.. F<PlungeRate>
 G1 X.. Y.. Z.. F<FeedRate>
 ...
-G0 Z<SafeHeight>
+G0 Z<stock top + SafeHeight>
 M5
 M30
 ```
@@ -342,7 +343,7 @@ M30
 | `0 < Stepover <= CutterDiameter` | Parameters.Stepover |
 | `0 < FinishingStepover <= CutterDiameter` | Parameters.FinishingStepover |
 | `Stepdown > 0` | Parameters.Stepdown |
-| `SafeHeight > stock top` | Parameters.SafeHeight |
+| `SafeHeight > 0` (clearance above the stock top) | Parameters.SafeHeight |
 | `0.01 <= CellSize <= 5` | Parameters.CellSize |
 | `FeedRate, PlungeRate, RapidRate > 0` | Parameters.* |
 | `SpindleRpm > 0` | Parameters.SpindleRpm |
@@ -493,7 +494,7 @@ check that decides done.
 - Depends on: T-004, T-005
 - Files: `src/Miller.App/Miller.App.csproj`, `src/Miller.App/Program.cs`, `src/Miller.App/App.axaml` (+ `.axaml.cs`)
 - Input: placeholders; package list section 2.2
-- Output: `OutputType=WinExe`, references `Miller.Application` and the Avalonia, Fluent, Inter, toolkit packages (Diagnostics only in Debug); `Program.cs` with `public const string AppVersion = "Build_1.0.0"`, `--version` printing it and exiting 0, otherwise `BuildAvaloniaApp().StartWithClassicDesktopLifetime(args)` using `UsePlatformDetect()`; `App.axaml` with Fluent theme and an empty `MainWindow`
+- Output: `OutputType=WinExe`, references `Miller.Application` and the Avalonia, Fluent, Inter, toolkit packages; `Program.cs` with `public const string AppVersion = "Build_1.0.0"`, `--version` printing it and exiting 0, otherwise `BuildAvaloniaApp().StartWithClassicDesktopLifetime(args)` using `UsePlatformDetect()`; `App.axaml` with Fluent theme and an empty `MainWindow`
 - Acceptance: `dotnet run --project src/Miller.App -- --version` prints `Build_1.0.0`; running without arguments opens an empty window titled `Miller`
 - Status: done
 
@@ -617,6 +618,7 @@ check that decides done.
 - Input: placeholders; section 6.7
 - Output: `ValidationResult` (errors and warnings with field name and message), validator implementing every rule of 6.7 as a named constant where a limit exists; tests: default project is valid, each rule triggers with the right field name
 - Acceptance: tests green; one test per rule
+- Status: done
 
 ### M2 Heightmaps
 
@@ -626,6 +628,7 @@ check that decides done.
 - Input: placeholders; section 6.3
 - Output: `HeightMap(originX, originY, cellSize, width, height, fill)`, indexer `[i, j]`, `CellCenter(i, j)`, `CellOf(x, y)`, `Clone()`, `Min()`, `Max()` ignoring `NaN`, `Fill(value)`, `Bounds`; tests: indexing, cell-world round trip, NaN ignored by min/max, clone independence
 - Acceptance: tests green
+- Status: done
 
 #### T-023 Mesh rasterizer
 - Depends on: T-022, T-012
@@ -633,13 +636,15 @@ check that decides done.
 - Input: placeholder; section 6.3
 - Output: `Rasterize(Mesh, HeightMap target, float floor)`: for each triangle, loop over the cells inside its XY bounding box, point-in-triangle test at the cell center with barycentric interpolation of Z, keep max; cells never covered stay at `floor`; also `RasterizeDownwardFacing(Mesh, HeightMap target)` keeping the max Z of triangles with `Normal.Z < 0` (used by T-098)
 - Acceptance: compiles; tests in T-024
+- Status: done
 
 #### T-024 Tests for the rasterizer
 - Depends on: T-023, T-013
 - Files: `tests/Miller.Tests/Core/HeightMap/MeshRasterizerTests.cs`
 - Input: placeholder
-- Output: tests: the 10x10x5 box at cell size 0.5 gives 400 cells at 5.0 and floor elsewhere; the fixture at cell size 0.2 has max 21.971 within 0.01 and every covered cell inside the fixture bounds; a triangle edge exactly on a cell center is covered (no gaps between adjacent triangles)
+- Output: tests: the 10x10x5 box at cell size 0.5 gives 400 cells at 5.0 and floor elsewhere; the fixture at cell size 0.2 has its max within one cell size (0.2) below 21.971 and never above it, and every covered cell inside the fixture bounds; a triangle edge exactly on a cell center is covered (no gaps between adjacent triangles)
 - Acceptance: tests green
+- Status: done
 
 #### T-025 Tool profile
 - Depends on: T-022, T-017

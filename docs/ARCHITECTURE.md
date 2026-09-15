@@ -73,7 +73,6 @@ management). No other packages may be added without a task in the guide.
 | Avalonia.Desktop | 12.1.2 | Miller.App |
 | Avalonia.Themes.Fluent | 12.1.2 | Miller.App, Miller.Tests |
 | Avalonia.Fonts.Inter | 12.1.2 | Miller.App (same font on both OS) |
-| Avalonia.Diagnostics | 12.1.2 | Miller.App, Debug configuration only |
 | CommunityToolkit.Mvvm | 8.4.2 | Miller.App (ObservableObject, RelayCommand) |
 | Avalonia.Headless.XUnit | 12.1.2 | Miller.Tests |
 | xunit.v3 | 3.2.2 | Miller.Tests (exact version the headless package depends on) |
@@ -191,7 +190,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | `Services/AnalysisService.cs` | Runs `FinalModelAnalyzer` and `UncuttableRegions` on demand |
 | `Services/SettingsService.cs` | User preferences JSON in the per-user application data folder: last folders, window size, last speed factor |
 | `Services/LogService.cs` | Append-only text log in `logs/miller.log` next to the executable; exception formatting |
-| `Validation/ProjectValidator.cs` | Rule list with messages: cutter length > 0, head diameter > cutter diameter, stepover in (0, cutter diameter], stepdown > 0, safe height above stock top, cell size in [0.01, 5] mm, feed rates > 0, speed factor in [0.1, 1000], model fits inside stock |
+| `Validation/ProjectValidator.cs` | Rule list with messages: cutter length > 0, head diameter > cutter diameter, stepover in (0, cutter diameter], stepdown > 0, safe height > 0, cell size in [0.01, 5] mm, feed rates > 0, speed factor in [0.1, 1000], model fits inside stock |
 | `Validation/ValidationResult.cs` | Errors and warnings with the field name they refer to |
 | `Progress/ProgressReport.cs` | Stage name, fraction 0..1, message |
 
@@ -365,8 +364,8 @@ whole header with the implementation and keeps only comments that add value.
 - Units: millimetres, degrees, mm/min, rpm. No unit conversion anywhere except
   the G-code `G21` declaration.
 - Machine coordinate system: right-handed, Z up, tool moves in +Z to retract.
-  Stock top is the highest Z of the stock; `SafeHeight` is absolute Z above the
-  stock top.
+  Stock top is the highest Z of the stock; `SafeHeight` is the clearance above it,
+  so rapid moves run at stock top + `SafeHeight`.
 - Heightmap cell `(i, j)` covers world `x in [OriginX + i*CellSize, +CellSize)`,
   `y` likewise; the sample point is the cell center.
 - `float.NaN` in a heightmap means "no material here" (outside a cylinder, or
