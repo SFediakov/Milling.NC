@@ -164,3 +164,18 @@
   The bash-only rule of the guide covers build and tool scripts; a Windows user double-clicks a
   `.cmd`, not a `.sh`. `Miller.sh` next to it serves Linux and Git Bash. Both only start
   `dist/`; they do not build.
+- Head collisions had two causes, not one: the head limit ignored rest material, and raster rows
+  skip the row nearest a wall (row step equals the cutter radius), so a strip beside every wall
+  was never cut at all. The fix pairs a profile pass per level (layer-complete strategy, now the
+  default) with a head limit from the closing of the tip map rounded UP to the roughing level the
+  material stands at until its pass (Slicer.CeilToLevel); the pure closing alone still collided
+  because the strip stays one level higher while the tool cuts the level below next to it.
+- ToolpathLinker orders the passes of each group by nearest neighbour; groups (one per level) never
+  interleave, one-way milling forbids reversing passes, closed loops keep their direction and are
+  only rotated. Tests on strategies must not assume plunge-per-loop or row order any more.
+- A Control that draws nothing is invisible to hit testing; Viewport3DControl fills its bounds with
+  the transparent brush under the GL surface so pointer events reach it, also in headless tests.
+  Headless drags need the button in the MouseMove modifiers, and Avalonia's click counter ignores
+  the button, so the double-click fit checks the left button itself.
+- The mouse harness (SetCursorPos, mouse_event) cannot produce drags the app sees; camera input is
+  verified by ViewportInputTests on the headless platform instead.

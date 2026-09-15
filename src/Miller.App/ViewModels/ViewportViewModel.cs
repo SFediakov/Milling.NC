@@ -63,11 +63,59 @@ public sealed partial class ViewportViewModel : ViewModelBase
 
     public bool FitPending { get; private set; }
 
+    // Placed bounds of every model the viewport shows, in machine space; the selection indexes it.
+    public IReadOnlyList<BoundingBox> ModelBounds { get; private set; } = Array.Empty<BoundingBox>();
+
+    public int SelectedModelIndex { get; private set; } = -1;
+
+    public event EventHandler? SelectionChanged;
+
+    // Picks the model whose bounds the ray hits first; a miss clears the selection.
+    public void Pick(Vector3 origin, Vector3 direction)
+    {
+        var best = -1;
+        var bestDistance = float.MaxValue;
+        for (var k = 0; k < ModelBounds.Count; k++)
+        {
+            var hit = ModelBounds[k].IntersectRay(origin, direction);
+            if (hit is float distance && distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = k;
+            }
+        }
+
+        Select(best);
+    }
+
+    public void Select(int index)
+    {
+        if (index < -1 || index >= ModelBounds.Count)
+        {
+            index = -1;
+        }
+
+        if (index == SelectedModelIndex)
+        {
+            return;
+        }
+
+        SelectedModelIndex = index;
+        SelectionChanged?.Invoke(this, EventArgs.Empty);
+        Invalidate();
+    }
+
     public void SetMesh(Mesh? mesh)
     {
         Mesh = mesh;
         MeshVersion++;
         FitPending = mesh is not null;
+        ModelBounds = mesh is null ? Array.Empty<BoundingBox>() : new[] { mesh.Bounds };
+        if (SelectedModelIndex >= ModelBounds.Count)
+        {
+            Select(-1);
+        }
+
         Invalidate();
     }
 

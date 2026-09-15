@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Media;
 using Avalonia.OpenGL;
 using Avalonia.OpenGL.Controls;
 using Miller.App.Rendering;
@@ -19,10 +20,15 @@ public sealed class Viewport3DControl : OpenGlControlBase
     public static readonly StyledProperty<ViewportViewModel?> ViewModelProperty =
         AvaloniaProperty.Register<Viewport3DControl, ViewportViewModel?>(nameof(ViewModel));
 
+    // A left press that moves less than this (pixels) before release is a pick, not a drag.
+    public const double ClickSlopPixels = 4;
+
     private SceneRenderer? _scene;
     private Point _lastPointer;
+    private Point _pressPointer;
     private bool _orbiting;
     private bool _panning;
+    private bool _picking;
 
     public Viewport3DControl()
     {
@@ -35,7 +41,8 @@ public sealed class Viewport3DControl : OpenGlControlBase
         set => SetValue(ViewModelProperty, value);
     }
 
-    public Camera? Camera => _scene?.Camera;
+    // Owned here, not by the scene: pointer input changes it with or without a GL context.
+    public Camera Camera { get; } = new();
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
@@ -60,7 +67,7 @@ public sealed class Viewport3DControl : OpenGlControlBase
     {
         try
         {
-            _scene = new SceneRenderer(gl, GlVersion);
+            _scene = new SceneRenderer(gl, GlVersion, Camera);
         }
         catch (InvalidOperationException ex)
         {
@@ -94,27 +101,39 @@ public sealed class Viewport3DControl : OpenGlControlBase
         }
     }
 
+    // A control without drawn content is invisible to hit testing; the transparent fill sits under
+    // the GL surface and makes every pointer event over the viewport ours, with or without GL.
+    public override void Render(DrawingContext context)
+    {
+        context.FillRectangle(Brushes.Transparent, new Rect(Bounds.Size));
+        base.Render(context);
+    }
+
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
         Focus();
         var point = e.GetCurrentPoint(this);
-        if (e.ClickCount == 2)
+        // Only a left double click fits; the click counter does not distinguish buttons.
+        if (e.ClickCount == 2 && point.Properties.IsLeftButtonPressed)
         {
             ViewModel?.RequestFit();
             return;
         }
 
-        _orbiting = point.Properties.IsLeftButtonPressed;
-        _panning = point.Properties.IsRightButtonPressed || point.Properties.IsMiddleButtonPressed;
+        // Right button rotates, the wheel button moves, the left button picks a model.
+        _orbiting = point.Properties.IsRightButtonPressed;
+        _panning = point.Properties.IsMiddleButtonPressed;
+        _picking = point.Properties.IsLeftButtonPressed;
         _lastPointer = point.Position;
+        _pressPointer = point.Position;
         e.Pointer.Capture(this);
     }
 
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
-        if (_scene is null || (!_orbiting && !_panning))
+        if (!_orbiting && !_panning)
         {
             return;
         }
@@ -125,12 +144,12 @@ public sealed class Viewport3DControl : OpenGlControlBase
         _lastPointer = position;
         if (_orbiting)
         {
-            _scene.Camera.Orbit(-dx * OrbitDegreesPerPixel, dy * OrbitDegreesPerPixel);
+            Camera.Orbit(-dx * OrbitDegreesPerPixel, dy * OrbitDegreesPerPixel);
         }
         else
         {
-            var scale = _scene.Camera.Distance * PanUnitsPerPixelPerDistance;
-            _scene.Camera.Pan(-dx * scale, dy * scale);
+            var scale = Camera.Distance * PanUnitsPerPixelPerDistance;
+            Camera.Pan(-dx * scale, dy * scale);
         }
 
         RequestNextFrameRendering();
@@ -139,20 +158,26 @@ public sealed class Viewport3DControl : OpenGlControlBase
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
+        var position = e.GetPosition(this);
+        if (_picking && ViewModel is { } viewModel
+            && Math.Abs(position.X - _pressPointer.X) <= ClickSlopPixels && Math.Abs(position.Y - _pressPointer.Y) <= ClickSlopPixels
+            && Bounds.Width > 0 && Bounds.Height > 0)
+        {
+            Camera.Aspect = (float)(Bounds.Width / Bounds.Height);
+            var (origin, direction) = Camera.PickRay((float)position.X, (float)position.Y, (float)Bounds.Width, (float)Bounds.Height);
+            viewModel.Pick(origin, direction);
+        }
+
         _orbiting = false;
         _panning = false;
+        _picking = false;
         e.Pointer.Capture(null);
     }
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);
-        if (_scene is null)
-        {
-            return;
-        }
-
-        _scene.Camera.Zoom(e.Delta.Y > 0 ? 1f / ZoomStepFactor : ZoomStepFactor);
+        Camera.Zoom(e.Delta.Y > 0 ? 1f / ZoomStepFactor : ZoomStepFactor);
         RequestNextFrameRendering();
     }
 
