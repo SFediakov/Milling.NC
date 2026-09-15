@@ -1,8 +1,22 @@
-// PLACEHOLDER - implemented by T-035 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.Toolpaths
-// Purpose: Everything a strategy needs, prepared by the pipeline.
-// Public interface (names only): sealed record ToolpathContext(HeightMap Model, HeightMap Tip,
-//     HeightMap EffectiveTip, HeightMap HeadLimit, HeightMap Stock, SlicePlan Plan, ToolDefinition
-//     Tool, ToolProfile Profile, CuttingParameters Parameters, float StockTop)
-// Depends on: HeightMap, SlicePlan, ToolDefinition, ToolProfile, CuttingParameters
-// Must not depend on: Avalonia, System.IO file dialogs, threads, timers
+using Miller.Core.HeightMaps;
+using Miller.Core.Setup;
+using Miller.Core.Slicing;
+
+namespace Miller.Core.Toolpaths;
+
+// Everything a strategy needs, prepared once by the pipeline. StockTop is the Z of the untouched
+// stock surface; SafeZ is the absolute rapid height (stock top + SafeHeight clearance).
+public sealed record ToolpathContext(
+    HeightMap Model,
+    HeightMap Tip,
+    HeightMap EffectiveTip,
+    HeightMap HeadLimit,
+    HeightMap Stock,
+    SlicePlan Plan,
+    ToolDefinition Tool,
+    ToolProfile Profile,
+    CuttingParameters Parameters,
+    float StockTop)
+{
+    public float SafeZ => StockTop + Parameters.SafeHeight;
+}
