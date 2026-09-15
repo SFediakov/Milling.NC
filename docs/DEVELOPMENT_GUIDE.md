@@ -1010,6 +1010,7 @@ check that decides done.
 - Input: placeholders
 - Output: fields for feed, plunge, rapid, spindle, stepover, finishing stepover, stepdown, safe height, cell size, tolerance, direction; a read-only estimate of the grid size (`Width x Height` cells) for the current stock and cell size with the validator's cell limit
 - Acceptance: screenshot; cell size 0.01 on a 100 mm stock shows the cell limit error
+- Status: done
 
 #### T-070 Strategy selection panel and generate command
 - Depends on: T-069, T-047
@@ -1017,6 +1018,7 @@ check that decides done.
 - Input: placeholders
 - Output: combos filled from `StrategyRegistry.All` filtered by operation and from `PostProcessorRegistry.All`; `GenerateCommand` running `PipelineService` with progress in the status bar and a cancel button; statistics block (lengths, counts, estimated time, levels)
 - Acceptance: screenshot; generating on the fixture fills the statistics and can be cancelled
+- Status: done
 
 #### T-071 Settings view model tests
 - Depends on: T-070
@@ -1024,6 +1026,7 @@ check that decides done.
 - Input: placeholder
 - Output: tests for the five settings view models: property change writes to the project and marks it dirty; validator message appears for an invalid value and disappears when fixed; strategy combos contain the registry ids
 - Acceptance: tests green
+- Status: done
 
 #### T-072 Save, load and export commands
 - Depends on: T-070, T-054, T-060
@@ -1031,6 +1034,7 @@ check that decides done.
 - Input: T-065 tests
 - Output: `NewProjectCommand`, `OpenProjectCommand`, `SaveProjectCommand`, `SaveProjectAsCommand`, `ExportNcCommand` (enabled only when a toolpath exists), `ExitCommand` asking to save when dirty; window title shows `*` when dirty; tests with the fake dialog service for each command
 - Acceptance: tests green; a project saved and reopened restores every panel value
+- Status: done
 
 #### T-073 About window and keyboard shortcuts
 - Depends on: T-072
