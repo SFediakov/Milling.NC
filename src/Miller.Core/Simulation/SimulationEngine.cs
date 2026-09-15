@@ -88,6 +88,23 @@ public sealed class SimulationEngine
 
     public StepResult RunToEnd() => Step(double.PositiveInfinity);
 
+    // Whole toolpath, checking the token once per segment.
+    public StepResult RunToEnd(CancellationToken cancellation)
+    {
+        var dirty = DirtyRect.Empty;
+        var result = new StepResult(ToolPosition, dirty, _index, IsFinished);
+        while (!IsFinished)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            var segment = _toolpath.Segments[_index];
+            var seconds = (segment.Length - _covered) / (segment.FeedRate / 60f);
+            result = Step(seconds > 0 ? seconds : 1e-6);
+            dirty = dirty.Union(result.Dirty);
+        }
+
+        return result with { Dirty = dirty };
+    }
+
     public void Reset(HeightMap freshStock)
     {
         ArgumentNullException.ThrowIfNull(freshStock);

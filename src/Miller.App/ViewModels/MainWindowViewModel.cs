@@ -43,6 +43,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         PipelineService pipeline,
         ExportService export,
         SimulationService simulation,
+        AnalysisService analysis,
         SettingsService settings,
         IFileDialogService dialogs,
         IErrorDialogService errors,
@@ -56,6 +57,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Pipeline = pipeline ?? throw new ArgumentNullException(nameof(pipeline));
         Export = export ?? throw new ArgumentNullException(nameof(export));
         Simulation = simulation ?? throw new ArgumentNullException(nameof(simulation));
+        AnalysisRunner = analysis ?? throw new ArgumentNullException(nameof(analysis));
         Settings = settings ?? throw new ArgumentNullException(nameof(settings));
         Dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         ErrorDialog = errors ?? throw new ArgumentNullException(nameof(errors));
@@ -86,6 +88,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             }
         };
         Viewport.PlayPauseRequested += (_, _) => SimulationPanel.TogglePlayPause();
+        Analysis = new AnalysisViewModel(AnalysisRunner, Viewport, Simulation);
+        SimulationPanel.PlaybackStarted += (_, _) => Analysis.ShowFinalModel = false;
         Models.SelectionChanged += (_, _) => Viewport.Select(Models.SelectedIndex);
         Viewport.SelectionChanged += (_, _) => Models.SelectedIndex = Viewport.SelectedModelIndex;
         Viewport.GlError += (_, message) =>
@@ -112,6 +116,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public SimulationService Simulation { get; }
 
+    public AnalysisService AnalysisRunner { get; }
+
     public SettingsService Settings { get; }
 
     public IFileDialogService Dialogs { get; }
@@ -137,6 +143,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     public ModelsViewModel Models { get; }
 
     public SimulationViewModel SimulationPanel { get; }
+
+    public AnalysisViewModel Analysis { get; }
 
     public ViewportViewModel Viewport { get; }
 
@@ -187,6 +195,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             Viewport.SetToolpath(result.Toolpath);
             Simulation.Load(result);
             SimulationPanel.OnLoadedChanged();
+            Analysis.SetPipeline(result);
             StatusText = string.Create(CultureInfo.InvariantCulture,
                 $"Toolpath ready: {result.Statistics.SegmentCount} segments, {result.Statistics.EstimatedMinutes:0.0} min");
             ToolpathGenerated?.Invoke(this, EventArgs.Empty);
@@ -304,6 +313,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         LastResult = null;
         Strategy.Clear();
         Simulation.Unload();
+        Analysis.SetPipeline(null);
         Viewport.SetToolpath(null);
         Viewport.SetStockMap(null, 0f);
         SimulationPanel.OnLoadedChanged();

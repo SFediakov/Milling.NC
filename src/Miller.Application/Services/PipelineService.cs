@@ -22,7 +22,8 @@ public sealed record PipelineResult(
     Toolpath Toolpath,
     ToolpathStatistics Statistics,
     ToolProfile Profile,
-    float Floor)
+    float Floor,
+    float Tolerance)
 {
     public float SafeZ => Stock.StockTop + Parameters.SafeHeight;
 
@@ -137,7 +138,7 @@ public sealed class PipelineService
         var statistics = ToolpathStatistics.Compute(toolpath, p);
         reporter.Done();
 
-        return new PipelineResult(machineMesh, stock, model, tip, effective, limit, headLimited, plan, toolpath, statistics, profile, floor)
+        return new PipelineResult(machineMesh, stock, model, tip, effective, limit, headLimited, plan, toolpath, statistics, profile, floor, p.Tolerance)
         {
             Parameters = p,
         };
