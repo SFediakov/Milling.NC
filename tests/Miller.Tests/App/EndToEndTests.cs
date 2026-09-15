@@ -5,9 +5,8 @@ using Xunit;
 
 namespace Miller.Tests.App;
 
-// The same run is verified on the Linux build inside Docker:
-//   docker build -t miller-build .
-//   docker run --rm miller-build sh -c "dist/linux-x64/Miller.sh --export samples/heart.miller.json /tmp/heart.nc >/dev/null && cat /tmp/heart.nc" > out/heart-linux.nc
+// The same run is verified on a Linux machine after bash build.sh:
+//   dist/linux-x64/Miller.sh --export samples/heart.miller.json out/heart-linux.nc
 //   diff <(tail -n +2 out/heart-linux.nc) <(tail -n +2 tests/Miller.Tests/Golden/heart_grbl.nc)
 // The diff must be empty; the first line (version comment) is skipped on both sides.
 public sealed class EndToEndTests

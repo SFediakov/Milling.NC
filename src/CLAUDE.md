@@ -10,7 +10,7 @@
 - One online reference exists on purpose: `scripts/vendor-packages.sh` names the
   public NuGet source for the one-time population of `third_party/nuget/`.
   Builds never use it; `NuGet.config` clears every source except the vendored
-  folder. The Docker base image is the second external fetch and is pinned.
+  folder.
 - `Avalonia.Diagnostics` is not referenced although `docs/ARCHITECTURE.md` 2.2 lists it at
   12.1.2. Avalonia 12 removed the package (its last version is 11.3.x); the replacement
   `AvaloniaUI.DiagnosticsSupport` is a different package outside the allowed list. It was
@@ -20,7 +20,7 @@
 
 ## Placeholder convention (architecture delivered without implementation)
 
-- `.cs`, `.sh`, `Dockerfile`, `.editorconfig` placeholders are comment-only
+- `.cs`, `.sh`, `.editorconfig` placeholders are comment-only
   files under their final names. They compile as empty files once the project
   files exist.
 - Formats that cannot hold a comment-only body (`.axaml`, `.csproj`, `.sln`,
@@ -95,8 +95,6 @@
   glDisableVertexAttribArray. GlConsts lacks GL_LINES, GL_LINE_STRIP, GL_LEQUAL, GL_BLEND,
   GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_POLYGON_OFFSET_FILL, GL_DYNAMIC_DRAW; those live in
   GlConstants. Probe the assembly strings before assuming a wrapper exists.
-- The Linux rendering check comes for free: the Docker build runs the test suite, so the render
-  captures exist inside the image under /src/out/ui-captures and can be extracted with tar.
 - Menu shortcuts are window-level KeyBindings in MainWindow.axaml; the MenuItem keeps only
   InputGesture for display. MenuItem.HotKey looked right but never fired from the window: an item in
   a closed submenu is not in the visual tree, reports IsEffectivelyEnabled false, and Avalonia's
@@ -110,8 +108,6 @@
   without one (plain tests) they run on the thread pool and can land after the awaited task,
   which made a status assertion flaky on Linux. The view model takes a progress factory: the
   application passes Progress<T> on the UI thread, tests pass a synchronous progress.
-- The base image behind mcr.microsoft.com/dotnet/sdk:10.0 is Ubuntu 24.04; the vendored .deb
-  files in third_party/debian match that image and must be refreshed when its digest changes.
 - Desktop capture of the GL viewport on this machine: the display is 3840 x 2160 at 250 percent.
   In a DPI-unaware PowerShell, MoveWindow and GetWindowRect use virtual pixels (1536 x 864 screen)
   while System.Drawing CopyFromScreen reads physical pixels, so capture the whole 3840 x 2160
@@ -134,7 +130,7 @@
 - The interactive cell limit is ProjectValidator.MaxInteractiveCells in the Application layer;
   HeightMapRenderer.MaxCellsForInteractiveFrame only mirrors it. The guide names the renderer as
   the owner, but Application cannot reference App, so the constant lives one layer down.
-- The GL viewport cannot be exercised on Linux inside Docker (no display); T-086 rests on the
+- The GL viewport has not been exercised on Linux (no Linux desktop here); T-086 rests on the
   Windows captures plus the shared code path. Frame budget is guarded on the CPU side by the build
   timing test in CameraTests, not by a GPU measurement.
 - SimulationEngine takes no CuttingParameters: every ToolpathSegment carries its own rate (rapids
@@ -160,3 +156,7 @@
   VS Code once). Menus opened by clicks work for View and Simulation; the first menu after start
   did not open, so generation is started by the Strategy tab button. RunToEnd blocks the UI, so a
   capture right after it shows the previous frame.
+- Docker is not part of this project: the root CLAUDE.md sentence about wiring packages to a
+  docker container was copied from another project (user statement). Dockerfile, .dockerignore,
+  third_party/debian and scripts/vendor-debian.sh were removed; the offline build is
+  third_party/nuget plus build.sh on either system, and Linux checks run on a Linux machine.

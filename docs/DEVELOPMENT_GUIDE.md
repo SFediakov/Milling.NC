@@ -57,7 +57,7 @@ fails; do not invent an alternative.
 | Math | `System.Numerics.Vector3`, `Matrix4x4` (float) |
 | Serialization | `System.Text.Json` |
 | Package source | `third_party/nuget/` only; `NuGet.config` clears every other source |
-| Linux build | Docker, base image `mcr.microsoft.com/dotnet/sdk:10.0` (the only external fetch, pinned by tag; record the digest in `Dockerfile` when first pulled) |
+| Linux build | `bash build.sh` on a Linux machine with the .NET 10 SDK; no container, no network (packages come from `third_party/nuget/`) |
 | Shell for scripts | bash (Git Bash on Windows). No PowerShell scripts, no `.cmd` files |
 
 No other package may be added. If a task seems to need one, the task is wrong;
@@ -73,7 +73,6 @@ NuGet.config                 single local source
 global.json                  SDK pin
 .editorconfig
 build.sh                     restore, build, test, publish (both RIDs), assemble dist/
-Dockerfile                   Linux build container
 launchers/Miller.sh          Linux start file (copied to dist/linux-x64/)
 scripts/vendor-packages.sh   one-time online download of packages into third_party/nuget/
 third_party/nuget/           vendored .nupkg files
@@ -114,18 +113,10 @@ Start files:
 - Windows: `dist/win-x64/Miller.exe`
 - Linux: `dist/linux-x64/Miller.sh`
 
-Docker (Linux build, reproducible):
-
-```bash
-docker build -t miller-build .
-docker create --name miller-tmp miller-build
-docker cp miller-tmp:/src/dist ./dist
-docker rm miller-tmp
-```
-
-The `Dockerfile` copies the repository, runs `bash build.sh`, and leaves
-`/src/dist`. Both RIDs are produced inside the Linux container; cross-publishing
-`win-x64` from Linux is supported by the .NET SDK.
+Linux build: the same `bash build.sh` on a Linux machine with the .NET 10 SDK
+installed. Both RIDs are produced there as well; cross-publishing `win-x64`
+from Linux is supported by the .NET SDK. No network is needed because
+`NuGet.config` restores from `third_party/nuget/` only.
 
 Headless verification of a Linux binary without a display:
 
@@ -384,7 +375,7 @@ Definition of done by task type:
 | Service | Same as Core plus cancellation and progress are asserted in tests |
 | View / view model | View model tests pass, headless test constructs the view, manual screenshot check done, no color literal outside `Colors.axaml` |
 | Rendering | Manual screenshot on Windows; camera math unit tests pass |
-| Script / Docker | The command in the acceptance line runs on Windows Git Bash and on Linux |
+| Script | The command in the acceptance line runs on Windows Git Bash and on Linux |
 
 Commit message: `T-0NN: <task title>`. One task, one commit. Version bump
 included in the same commit when the app changed.
@@ -423,9 +414,8 @@ included in the same commit when the app changed.
 11. The head-limit map is computed against the model map (final surface), not
     the current stock. The simulation's `CollisionDetector` checks against the
     current stock; both are needed and are different checks.
-12. SkiaSharp on Linux needs `libfontconfig`. The build container gets it from the vendored
-    packages in `third_party/debian/` (see `scripts/vendor-debian.sh`); a Linux desktop has it
-    from the distribution. Without it the rendering tests and the published binary fail to start.
+12. SkiaSharp on Linux needs `libfontconfig` from the distribution (`fontconfig` package).
+    Without it the rendering tests and the published binary fail to start.
 13. Never write settings or logs into the repository. Settings go to the
     per-user application data folder; logs go to `logs/` next to the
     executable.
@@ -434,15 +424,15 @@ included in the same commit when the app changed.
 
 | Milestone | Tasks | Verified by |
 |---|---|---|
-| M0 Skeleton builds on both OS | T-001 to T-010 | `bash build.sh` succeeds on Windows Git Bash and inside Docker; `Miller.sh --version` prints the version |
+| M0 Skeleton builds on both OS | T-001 to T-010 | `bash build.sh` succeeds on Windows Git Bash and on Linux; `Miller.sh --version` prints the version |
 | M1 Geometry and setup | T-011 to T-021 | Fixture STL loads with the recorded facts; project round-trips through JSON |
 | M2 Heightmaps | T-022 to T-032 | Tip map and head limit tests pass on the spike, slot and bump meshes |
 | M3 Slicing, strategies, linking | T-033 to T-049 | All three strategies pass the gouge check on the fixture |
-| M4 G-code and headless export | T-050 to T-056 | `Miller --export` reproduces the golden file inside Docker |
+| M4 G-code and headless export | T-050 to T-056 | `Miller --export` reproduces the golden file on Linux |
 | M5 UI skeleton and settings | T-057 to T-074 | Every panel edits the project; generate and export work from the menu |
 | M6 3D viewport | T-075 to T-086 | Model, stock, toolpath and tool visible; orbit, pan, zoom |
 | M7 Simulation and final model | T-087 to T-098 | Material removal animates at 0.1x to 1000x; final model colored by category |
-| M8 Packaging and release | T-099 to T-102 | `dist/` produced by Docker; end-to-end test green on both OS |
+| M8 Packaging and release | T-099 to T-102 | `dist/` produced by `build.sh` on both systems; end-to-end test green on both OS |
 
 ## 10. Task list
 
@@ -523,15 +513,15 @@ check that decides done.
 - Input: comment-only placeholder
 - Output: `#!/usr/bin/env bash`, `exec "$(dirname "$(readlink -f "$0")")/Miller" "$@"` (no `cd`: relative paths on the command line must keep their meaning); `build.sh` already copies it and sets the executable bit
 - Status: done
-- Acceptance: `bash -n launchers/Miller.sh` passes; `file launchers/Miller.sh` reports LF line endings; `dist/linux-x64/Miller.sh --version` prints the version when run on Linux (Docker or WSL)
+- Acceptance: `bash -n launchers/Miller.sh` passes; `file launchers/Miller.sh` reports LF line endings; `dist/linux-x64/Miller.sh --version` prints the version when run on Linux (or WSL)
 
-#### T-010 Dockerfile for the Linux build
+#### T-010 Dockerfile for the Linux build (removed)
 - Depends on: T-009
-- Files: `Dockerfile`
-- Input: comment-only placeholder
-- Output: `FROM mcr.microsoft.com/dotnet/sdk:10.0` (add the digest after the first pull as `@sha256:...`), `WORKDIR /src`, `COPY third_party/debian /tmp/debian` and `RUN dpkg -i /tmp/debian/*.deb` (fontconfig closure for SkiaSharp, vendored by `scripts/vendor-debian.sh`), `COPY . .`, `RUN bash build.sh`; no network use after the base image
-- Acceptance: `docker build -t miller-build .` succeeds; `docker run --rm miller-build dist/linux-x64/Miller.sh --version` prints the version
-- Status: done
+- Files: none
+- Input: none
+- Output: nothing. Docker is not part of the project; the Linux build is `bash build.sh` on a Linux machine and is verified by T-102
+- Acceptance: no Docker file, image or vendored Debian package in the repository
+- Status: removed
 
 ### M1 Geometry and setup
 
@@ -901,12 +891,12 @@ check that decides done.
 - Acceptance: `dotnet run --project src/Miller.App -- --export samples/heart.miller.json out/heart.nc` writes a file starting with `( Miller Build_`
 - Status: done
 
-#### T-056 Fixture golden and Docker verification
+#### T-056 Fixture golden and Linux verification
 - Depends on: T-055, T-010
 - Files: `tests/Miller.Tests/Golden/heart_grbl.nc`, `tests/Miller.Tests/App/EndToEndTests.cs`
 - Input: placeholders
-- Output: golden produced by the CLI on Windows, test runs the pipeline on the sample project in-process and compares to the golden after replacing the version comment line; Docker verification documented in the test file header: `docker run --rm miller-build dist/linux-x64/Miller.sh --export samples/heart.miller.json out/heart.nc` then `diff` with the golden ignoring the version line
-- Acceptance: test green on Windows; the Docker diff is empty
+- Output: golden produced by the CLI on Windows, test runs the pipeline on the sample project in-process and compares to the golden after replacing the version comment line; Linux verification documented in the test file header: run `dist/linux-x64/Miller.sh --export samples/heart.miller.json out/heart-linux.nc` on Linux and diff against the golden without the version line
+- Acceptance: test green on Windows; the Linux export diff is empty
 - Status: done
 
 ### M5 UI skeleton and settings
@@ -1051,7 +1041,7 @@ check that decides done.
 - Depends on: T-073
 - Files: none (manual check); record the result in the commit message of the next task
 - Input: the running application
-- Output: screenshots of every panel on Windows and on Linux (Docker with WSLg or a Linux desktop) compared against the field lists of T-063 to T-073
+- Output: screenshots of every panel on Windows and on Linux (a Linux desktop or WSLg) compared against the field lists of T-063 to T-073
 - Acceptance: every listed control visible on both systems; no layout overflow at 1280x720
 - Status: done
 
@@ -1151,7 +1141,7 @@ check that decides done.
 - Input: running application on Windows and Linux
 - Output: screenshots: heart mesh, stock outline, toolpath, tool; orbit, pan, zoom, fit verified
 - Acceptance: identical scene content on both systems (colors and geometry); no GL errors in the log
-- Status: done (Windows captures in batch 16: mesh, stock block, toolpath, toggles, no GL error logged; Linux has no display in Docker, the GL path is shared code)
+- Status: done (Windows captures in batch 16: mesh, stock block, toolpath, toggles, no GL error logged; the Linux viewport check waits for a Linux desktop, the GL path is shared code)
 
 ### M7 Simulation and final model
 
@@ -1280,5 +1270,5 @@ check that decides done.
 - Depends on: T-101, T-056, T-086
 - Files: none (verification); tag
 - Input: complete repository
-- Output: `bash build.sh` on Windows and `docker build` on Linux both green; `EndToEndTests` green on both; the Docker export diff empty; git tag `Build_1.0.X` on the final commit
+- Output: `bash build.sh` on Windows and on Linux both green; `EndToEndTests` green on both; the Linux export diff empty; git tag `Build_1.0.X` on the final commit
 - Acceptance: all of the above recorded in the tag message
