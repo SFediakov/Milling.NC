@@ -190,3 +190,12 @@
   the serializer's unknown-member rule still holds; the schema version is rewritten to 2 on load.
 - The end-to-end golden is read from the test output folder, which is refreshed by a build of the
   test project; regenerate the golden, then build tests before running the comparison.
+- The simulation commands live once, in SimulationViewModel; the menu binds to
+  SimulationPanel.* so menu and panel share the enable rules (play only when loaded, not playing,
+  not finished; pause only while playing). The main view model only forwards status text and
+  reloads the panel after Load and Unload.
+- Space is handled by Viewport3DControl.OnKeyDown (focused viewport only) and raised as
+  PlayPauseRequested; a window-level binding would fire while typing in a text box.
+- The speed slider binds through LogSliderConverter (four decades over one travel); the text box
+  parses invariant, clamps through the service and shows the clamped value with a message, and
+  every accepted value is written to the settings file at once.

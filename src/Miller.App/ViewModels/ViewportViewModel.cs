@@ -84,6 +84,11 @@ public sealed partial class ViewportViewModel : ViewModelBase
 
     public event EventHandler? SelectionChanged;
 
+    // Space in the viewport; the simulation panel decides between play and pause.
+    public event EventHandler? PlayPauseRequested;
+
+    public void RequestPlayPause() => PlayPauseRequested?.Invoke(this, EventArgs.Empty);
+
     // Picks the model whose bounds the ray hits first; a miss clears the selection.
     public void Pick(Vector3 origin, Vector3 direction)
     {

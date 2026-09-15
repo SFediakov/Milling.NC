@@ -20,11 +20,6 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 {
     public const string ReadyStatus = "Ready";
     public const string CancelledStatus = "Toolpath generation cancelled";
-    public const string SimulationPlayingStatus = "Simulation playing";
-    public const string SimulationPausedStatus = "Simulation paused";
-    public const string SimulationStoppedStatus = "Simulation stopped";
-    public const string SimulationFinishedStatus = "Simulation finished";
-    public const string SimulationRunningStatus = "Simulating the whole toolpath";
     public static readonly IReadOnlyList<string> StlExtensions = new[] { "stl" };
 
     [ObservableProperty]
@@ -81,6 +76,16 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Strategy = new StrategySelectionViewModel(Project, GenerateCommand, CancelGenerateCommand);
         Models = new ModelsViewModel(Project, MeshImport, OpenStlCommand);
         Viewport = new ViewportViewModel();
+        SimulationPanel = new SimulationViewModel(Simulation, Settings, Viewport);
+        SimulationPanel.StatusChanged += (_, status) => StatusText = status;
+        SimulationPanel.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(SimulationViewModel.IsRunningToEnd))
+            {
+                GenerateCommand.NotifyCanExecuteChanged();
+            }
+        };
+        Viewport.PlayPauseRequested += (_, _) => SimulationPanel.TogglePlayPause();
         Models.SelectionChanged += (_, _) => Viewport.Select(Models.SelectedIndex);
         Viewport.SelectionChanged += (_, _) => Models.SelectedIndex = Viewport.SelectedModelIndex;
         Viewport.GlError += (_, message) =>
@@ -131,6 +136,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public ModelsViewModel Models { get; }
 
+    public SimulationViewModel SimulationPanel { get; }
+
     public ViewportViewModel Viewport { get; }
 
     public PipelineResult? LastResult
@@ -147,7 +154,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public string Title => $"{App.WindowTitle} {AppVersion}{(Project.IsDirty ? " *" : string.Empty)}";
 
-    private bool CanGenerate => MeshImport.Matches(Project.Current) && !IsBusy;
+    private bool CanGenerate => MeshImport.Matches(Project.Current) && !IsBusy && !SimulationPanel.IsRunningToEnd;
 
     [RelayCommand]
     private async Task OpenStlAsync()
@@ -179,8 +186,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             Strategy.ShowResult(result);
             Viewport.SetToolpath(result.Toolpath);
             Simulation.Load(result);
-            ShowSimulationStock();
-            NotifySimulationCommands();
+            SimulationPanel.OnLoadedChanged();
             StatusText = string.Create(CultureInfo.InvariantCulture,
                 $"Toolpath ready: {result.Statistics.SegmentCount} segments, {result.Statistics.EstimatedMinutes:0.0} min");
             ToolpathGenerated?.Invoke(this, EventArgs.Empty);
@@ -210,7 +216,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         GenerateCommand.NotifyCanExecuteChanged();
         CancelGenerateCommand.NotifyCanExecuteChanged();
         ExportNcCommand.NotifyCanExecuteChanged();
-        NotifySimulationCommands();
+        SimulationPanel.Refresh();
     }
 
     public Task<bool> OpenStlFileAsync(string path) => AddModelAsync(path);
@@ -300,7 +306,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Simulation.Unload();
         Viewport.SetToolpath(null);
         Viewport.SetStockMap(null, 0f);
-        NotifySimulationCommands();
+        SimulationPanel.OnLoadedChanged();
     }
 
     // Runs on every project edit; the mesh is transformed and uploaded again only when its source or
@@ -353,66 +359,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         return true;
     }
 
-    // Simulation commands; the UI timer moves the simulation while it plays (T-092), the panel
-    // with speed and events arrives with T-094.
-    private bool CanSimulate => Simulation.IsLoaded && !IsBusy;
-
-    [RelayCommand(CanExecute = nameof(CanSimulate))]
-    private void Play()
-    {
-        Simulation.Play();
-        StatusText = Simulation.IsPlaying ? SimulationPlayingStatus : SimulationFinishedStatus;
-    }
-
-    [RelayCommand(CanExecute = nameof(CanSimulate))]
-    private void Pause()
-    {
-        Simulation.Pause();
-        StatusText = SimulationPausedStatus;
-    }
-
-    [RelayCommand(CanExecute = nameof(CanSimulate))]
-    private void Stop()
-    {
-        Simulation.Stop();
-        ShowSimulationStock();
-        StatusText = SimulationStoppedStatus;
-    }
-
-    // The whole heart toolpath takes about 20 s to sweep, so it runs off the UI thread; IsBusy keeps
-    // the other simulation commands and generation disabled meanwhile.
-    [RelayCommand(CanExecute = nameof(CanSimulate))]
-    private async Task RunToEndAsync()
-    {
-        IsBusy = true;
-        StatusText = SimulationRunningStatus;
-        try
-        {
-            await Task.Run(Simulation.RunToEnd);
-            ShowSimulationStock();
-            StatusText = string.Create(CultureInfo.InvariantCulture, $"{SimulationFinishedStatus}, {Simulation.Events.Count} events");
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
     [RelayCommand]
     private void ShowAbout() => AboutRequested?.Invoke(this, EventArgs.Empty);
 
-    // The engine cuts its own stock instance; Load and Stop replace it, so the viewport uploads it anew.
-    private void ShowSimulationStock()
-    {
-        Viewport.SetStockMap(Simulation.Stock, Simulation.Result!.Stock.StockBottom);
-        Viewport.SetToolProgress(Simulation.SegmentsCompleted, Simulation.ToolPosition);
-    }
-
-    private void NotifySimulationCommands()
-    {
-        PlayCommand.NotifyCanExecuteChanged();
-        PauseCommand.NotifyCanExecuteChanged();
-        StopCommand.NotifyCanExecuteChanged();
-        RunToEndCommand.NotifyCanExecuteChanged();
-    }
 }

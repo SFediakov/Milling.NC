@@ -61,7 +61,9 @@
       <TabItem Header="Strategy" Name="StrategyTab">
         <views:StrategySelectionView DataContext="{Binding Strategy}" />
       </TabItem>
-      <TabItem Header="Simulation" Name="SimulationTab" />
+      <TabItem Header="Simulation" Name="SimulationTab">
+        <views:SimulationControlsView DataContext="{Binding SimulationPanel}" />
+      </TabItem>
       <TabItem Header="Analysis" Name="AnalysisTab" />
     </TabControl>
 

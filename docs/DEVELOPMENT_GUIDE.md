@@ -1213,6 +1213,7 @@ check that decides done.
 - Input: placeholders
 - Output: `IValueConverter` mapping slider 0..1 to `10^(-1 + 4 t)` (0.1 to 1000) and back; test file gets converter tests: 0 -> 0.1, 0.25 -> 1, 1 -> 1000, round trip within 1e-4
 - Acceptance: tests green
+- Status: done
 
 #### T-094 Simulation controls panel
 - Depends on: T-092, T-093
@@ -1220,6 +1221,7 @@ check that decides done.
 - Input: placeholders
 - Output: buttons play, pause, stop, step, run to end; logarithmic slider with numeric text box (both bound to `SpeedFactor`); progress bar; simulated time; collision counter with the last event text; `Space` shortcut; speed persisted in settings
 - Acceptance: screenshot; speed 0.1 visibly slows, 1000 finishes the fixture toolpath within seconds
+- Status: done
 
 #### T-095 Simulation view model tests
 - Depends on: T-094
@@ -1227,6 +1229,7 @@ check that decides done.
 - Input: T-093 tests
 - Output: tests: commands enable and disable correctly in each state (no toolpath, loaded, playing, paused, finished); speed text `5000` clamps to 1000 and shows the validator message; stop resets progress to 0
 - Acceptance: tests green
+- Status: done
 
 #### T-096 Deviation map and final model analyzer
 - Depends on: T-089

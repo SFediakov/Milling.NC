@@ -27,10 +27,10 @@
       <MenuItem Header="Show Too_l" Name="ShowToolItem" Command="{Binding ToggleToolCommand}" InputGesture="Ctrl+D4" />
     </MenuItem>
     <MenuItem Header="_Simulation" Name="SimulationMenu">
-      <MenuItem Header="_Play" Name="PlayItem" Command="{Binding PlayCommand}" />
-      <MenuItem Header="P_ause" Name="PauseItem" Command="{Binding PauseCommand}" />
-      <MenuItem Header="_Stop" Name="StopItem" Command="{Binding StopCommand}" />
-      <MenuItem Header="_Run To End" Name="RunToEndItem" Command="{Binding RunToEndCommand}" />
+      <MenuItem Header="_Play" Name="PlayItem" Command="{Binding SimulationPanel.PlayCommand}" />
+      <MenuItem Header="P_ause" Name="PauseItem" Command="{Binding SimulationPanel.PauseCommand}" />
+      <MenuItem Header="_Stop" Name="StopItem" Command="{Binding SimulationPanel.StopCommand}" />
+      <MenuItem Header="_Run To End" Name="RunToEndItem" Command="{Binding SimulationPanel.RunToEndCommand}" />
     </MenuItem>
     <MenuItem Header="_Help" Name="HelpMenu">
       <MenuItem Header="_About" Name="AboutItem" Command="{Binding ShowAboutCommand}" />
