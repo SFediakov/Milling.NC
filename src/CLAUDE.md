@@ -88,3 +88,20 @@
 - Window.Width and Height are NaN until something sets them; persist ClientSize, and only when
   it is finite and positive.
 - Files written by the other agent use CRLF; text patches must detect and keep the line ending.
+- Avalonia 12 GlInterface already wraps buffers, vertex arrays, shaders, programs, uniforms
+  (Uniform1f, Uniform1i, UniformMatrix4fv), attribute pointers, draw calls, clear, viewport,
+  depth function and mask. Missing and loaded through GetProcAddress in GlFunctions:
+  glBufferSubData, glUniform3f, glUniform4f, glLineWidth, glCullFace, glPolygonOffset,
+  glDisableVertexAttribArray. GlConsts lacks GL_LINES, GL_LINE_STRIP, GL_LEQUAL, GL_BLEND,
+  GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_POLYGON_OFFSET_FILL, GL_DYNAMIC_DRAW; those live in
+  GlConstants. Probe the assembly strings before assuming a wrapper exists.
+- The Linux rendering check comes for free: the Docker build runs the test suite, so the render
+  captures exist inside the image under /src/out/ui-captures and can be extracted with tar.
+- Menu shortcuts use MenuItem.HotKey; Space is reserved for the viewport because a window-level
+  key binding would fire while typing in a text box.
+- Progress<T> delivers callbacks through the synchronization context captured at construction;
+  without one (plain tests) they run on the thread pool and can land after the awaited task,
+  which made a status assertion flaky on Linux. The view model takes a progress factory: the
+  application passes Progress<T> on the UI thread, tests pass a synchronous progress.
+- The base image behind mcr.microsoft.com/dotnet/sdk:10.0 is Ubuntu 24.04; the vendored .deb
+  files in third_party/debian match that image and must be refreshed when its digest changes.

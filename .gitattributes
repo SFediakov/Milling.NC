@@ -11,3 +11,5 @@
 # Dockerfile and editorconfig are parsed line by line; keep LF in the working copy on Windows.
 Dockerfile text eol=lf
 .editorconfig text eol=lf
+# Vendored Debian packages are binary archives.
+*.deb binary

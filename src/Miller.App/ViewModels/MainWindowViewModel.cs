@@ -9,7 +9,9 @@ using Miller.Application.Validation;
 namespace Miller.App.ViewModels;
 
 // Owns the services, the child panels and the state of the main window. Project, export and exit
-// commands live in MainWindowViewModel.Commands.cs.
+// commands live in MainWindowViewModel.Commands.cs. Progress reports from the pipeline thread reach
+// the view model through the injected progress factory: Progress<T> bound to the UI thread in the
+// application, a synchronous progress in tests, so the order of updates is deterministic in both.
 public sealed partial class MainWindowViewModel : ViewModelBase
 {
     public const string ReadyStatus = "Ready";
@@ -26,6 +28,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private float _progress;
 
+    private readonly Func<Action<ProgressReport>, IProgress<ProgressReport>> _progressFactory;
     private CancellationTokenSource? _generation;
     private PipelineResult? _lastResult;
 
@@ -38,6 +41,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         IFileDialogService dialogs,
         IErrorDialogService errors,
         IConfirmDialogService confirm,
+        Func<Action<ProgressReport>, IProgress<ProgressReport>> progressFactory,
         string appVersion)
     {
         Project = project ?? throw new ArgumentNullException(nameof(project));
@@ -48,6 +52,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         ErrorDialog = errors ?? throw new ArgumentNullException(nameof(errors));
         Confirm = confirm ?? throw new ArgumentNullException(nameof(confirm));
+        _progressFactory = progressFactory ?? throw new ArgumentNullException(nameof(progressFactory));
         AppVersion = appVersion ?? throw new ArgumentNullException(nameof(appVersion));
         Project.ProjectChanged += (_, _) => OnPropertyChanged(nameof(Title));
         MeshImport.MeshChanged += (_, _) => GenerateCommand.NotifyCanExecuteChanged();
@@ -61,6 +66,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     public event EventHandler? ExitRequested;
 
     public event EventHandler? ToolpathGenerated;
+
+    public event EventHandler? AboutRequested;
 
     public ProjectService Project { get; }
 
@@ -124,7 +131,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _generation = new CancellationTokenSource();
         IsBusy = true;
         Progress = 0;
-        var progress = new Progress<ProgressReport>(r =>
+        var progress = _progressFactory(r =>
         {
             Progress = r.Fraction;
             StatusText = r.Message;
@@ -192,7 +199,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }
     }
 
-    // Stubs replaced by T-073 (about), T-084 (view) and T-094 (simulation).
+    // Stubs replaced by T-084 (view) and T-094 (simulation).
     [RelayCommand]
     private void ResetCamera() => NotYet("Reset camera");
 
@@ -221,7 +228,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private void RunToEnd() => NotYet("Run to end");
 
     [RelayCommand]
-    private void ShowAbout() => NotYet("About");
+    private void ShowAbout() => AboutRequested?.Invoke(this, EventArgs.Empty);
 
     private void NotYet(string name) => StatusText = name + NotImplementedSuffix;
 }

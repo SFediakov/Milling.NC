@@ -35,7 +35,8 @@ public partial class App : Avalonia.Application
             var dialogs = new FileDialogService(() => desktop.MainWindow);
             var errors = new ErrorDialogService(log, () => desktop.MainWindow);
             var confirm = new ConfirmDialogService(() => desktop.MainWindow);
-            var viewModel = new MainWindowViewModel(project, meshImport, pipeline, export, settings, dialogs, errors, confirm, Program.AppVersion);
+            var viewModel = new MainWindowViewModel(project, meshImport, pipeline, export, settings, dialogs, errors, confirm,
+                handler => new Progress<Miller.Application.Progress.ProgressReport>(handler), Program.AppVersion);
             desktop.MainWindow = new MainWindow
             {
                 Width = settings.WindowWidth,
