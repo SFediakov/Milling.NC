@@ -1,8 +1,10 @@
 using System.Numerics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Miller.Core.Geometry;
+using Miller.Application.Services;
 using Miller.Core.HeightMaps;
 using Miller.Core.Setup;
+using Miller.Core.Simulation;
 using Miller.Core.Toolpaths;
 
 namespace Miller.App.ViewModels;
@@ -56,6 +58,9 @@ public sealed partial class ViewportViewModel : ViewModelBase
 
     public int StockMapVersion { get; private set; }
 
+    // Cells changed since the renderer last synced; applied as a partial buffer update.
+    public DirtyRect StockDirty { get; private set; } = DirtyRect.Empty;
+
     public bool FitPending { get; private set; }
 
     public void SetMesh(Mesh? mesh)
@@ -86,6 +91,7 @@ public sealed partial class ViewportViewModel : ViewModelBase
         StockMap = stockMap;
         StockFloorZ = floorZ;
         StockMapVersion++;
+        StockDirty = DirtyRect.Empty;
         Invalidate();
     }
 
@@ -96,6 +102,31 @@ public sealed partial class ViewportViewModel : ViewModelBase
         ToolpathProgressIndex = 0;
         ToolPosition = toolpath is { Count: > 0 } ? toolpath.Segments[0].Start : Vector3.Zero;
         Invalidate();
+    }
+
+    public void MarkStockDirty(DirtyRect dirty)
+    {
+        if (dirty.IsEmpty)
+        {
+            return;
+        }
+
+        StockDirty = StockDirty.Union(dirty);
+        Invalidate();
+    }
+
+    public DirtyRect TakeStockDirty()
+    {
+        var dirty = StockDirty;
+        StockDirty = DirtyRect.Empty;
+        return dirty;
+    }
+
+    public void ApplySimulation(SimulationSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        MarkStockDirty(snapshot.Dirty);
+        SetToolProgress(snapshot.SegmentsCompleted, snapshot.ToolPosition);
     }
 
     public void SetToolProgress(int progressIndex, Vector3 toolPosition)

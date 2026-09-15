@@ -85,6 +85,12 @@ public sealed class SceneRenderer : IDisposable
         {
             _stockMapVersion = viewModel.StockMapVersion;
             _stockMap.Upload(viewModel.StockMap, viewModel.StockFloorZ, ThemeColors.Get("StockColor"));
+            viewModel.TakeStockDirty();
+        }
+        else if (viewModel.StockMap is { } stockMap && !viewModel.StockDirty.IsEmpty)
+        {
+            var dirty = viewModel.TakeStockDirty();
+            _stockMap.Update(_functions, stockMap, dirty.I0, dirty.J0, dirty.I1, dirty.J1);
         }
 
         if (viewModel.ToolVersion != _toolVersion)

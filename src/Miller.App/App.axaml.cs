@@ -32,10 +32,11 @@ public partial class App : Avalonia.Application
             var meshImport = new MeshImportService();
             var pipeline = new PipelineService();
             var export = new ExportService();
+            var simulation = new SimulationService();
             var dialogs = new FileDialogService(() => desktop.MainWindow);
             var errors = new ErrorDialogService(log, () => desktop.MainWindow);
             var confirm = new ConfirmDialogService(() => desktop.MainWindow);
-            var viewModel = new MainWindowViewModel(project, meshImport, pipeline, export, settings, dialogs, errors, confirm,
+            var viewModel = new MainWindowViewModel(project, meshImport, pipeline, export, simulation, settings, dialogs, errors, confirm,
                 handler => new Progress<Miller.Application.Progress.ProgressReport>(handler), log, Program.AppVersion);
             desktop.MainWindow = new MainWindow
             {
@@ -43,6 +44,9 @@ public partial class App : Avalonia.Application
                 Height = settings.WindowHeight,
                 DataContext = viewModel,
             };
+            var timer = new UiTimer(simulation, viewModel.Viewport);
+            timer.Start();
+            desktop.Exit += (_, _) => timer.Dispose();
             log.Info($"started {Program.AppVersion}");
 
             // An STL path on the command line opens that file once the window is up.

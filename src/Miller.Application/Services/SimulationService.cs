@@ -91,11 +91,12 @@ public sealed class SimulationService
 
     public SimulationSnapshot StepOnce(double simSeconds) => Snapshot(Require().Step(simSeconds));
 
+    // Pauses first so a UI timer tick cannot step the engine while this runs on another thread.
     public SimulationSnapshot RunToEnd()
     {
-        var result = Require().RunToEnd();
+        var engine = Require();
         _clock.Pause();
-        return Snapshot(result);
+        return Snapshot(engine.RunToEnd());
     }
 
     // Real seconds since the last call; nothing moves while paused or before Load.
