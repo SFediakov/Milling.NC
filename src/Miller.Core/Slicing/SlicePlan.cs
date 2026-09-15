@@ -1,7 +1,27 @@
-// PLACEHOLDER - implemented by T-033 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.Slicing
-// Purpose: Ordered list of milling steps: roughing levels top-down, then one finishing step.
-// Public interface (names only): sealed class SlicePlan { IReadOnlyList<MillingStep> Steps; int
-//     RoughingLevels; bool HasFinishing; float LowestLevel }
-// Depends on: MillingStep
-// Must not depend on: Avalonia, System.IO file dialogs, threads, timers
+namespace Miller.Core.Slicing;
+
+// Roughing steps from the stock top downward, then the finishing step.
+public sealed class SlicePlan
+{
+    public SlicePlan(IReadOnlyList<MillingStep> steps, float lowestLevel)
+    {
+        ArgumentNullException.ThrowIfNull(steps);
+        Steps = steps;
+        LowestLevel = lowestLevel;
+        RoughingLevels = steps.Count(s => s.Operation == MillingOperation.Roughing);
+        HasFinishing = steps.Any(s => s.Operation == MillingOperation.Finishing);
+    }
+
+    public IReadOnlyList<MillingStep> Steps { get; }
+
+    public int RoughingLevels { get; }
+
+    public bool HasFinishing { get; }
+
+    // Lowest effective tip height: where the deepest cut ends.
+    public float LowestLevel { get; }
+
+    public IEnumerable<MillingStep> RoughingSteps => Steps.Where(s => s.Operation == MillingOperation.Roughing);
+
+    public MillingStep? FinishingStep => Steps.FirstOrDefault(s => s.Operation == MillingOperation.Finishing);
+}
