@@ -1,0 +1,47 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Miller.App.ViewModels"
+             x:Class="Miller.App.Views.CuttingParametersView"
+             x:DataType="vm:CuttingParametersViewModel">
+  <ScrollViewer>
+    <StackPanel Margin="8" Spacing="4">
+      <TextBlock Classes="header" Text="Speeds" />
+      <TextBlock Classes="label" Text="Feed rate (mm/min)" />
+      <TextBox Name="FeedRateBox" Classes="numeric" Text="{Binding FeedRate}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding FeedRateError}" IsVisible="{Binding FeedRateError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Classes="label" Text="Plunge rate (mm/min)" />
+      <TextBox Name="PlungeRateBox" Classes="numeric" Text="{Binding PlungeRate}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding PlungeRateError}" IsVisible="{Binding PlungeRateError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Classes="label" Text="Rapid rate (mm/min)" />
+      <TextBox Name="RapidRateBox" Classes="numeric" Text="{Binding RapidRate}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding RapidRateError}" IsVisible="{Binding RapidRateError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Classes="label" Text="Spindle speed (rpm)" />
+      <TextBox Name="SpindleRpmBox" Classes="numeric" Text="{Binding SpindleRpm}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding SpindleRpmError}" IsVisible="{Binding SpindleRpmError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+      <TextBlock Classes="header" Text="Clearances" />
+      <TextBlock Classes="label" Text="Roughing stepover (mm)" />
+      <TextBox Name="StepoverBox" Classes="numeric" Text="{Binding Stepover}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding StepoverError}" IsVisible="{Binding StepoverError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Classes="label" Text="Finishing stepover (mm)" />
+      <TextBox Name="FinishingStepoverBox" Classes="numeric" Text="{Binding FinishingStepover}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding FinishingStepoverError}" IsVisible="{Binding FinishingStepoverError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Classes="label" Text="Stepdown per roughing level (mm)" />
+      <TextBox Name="StepdownBox" Classes="numeric" Text="{Binding Stepdown}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding StepdownError}" IsVisible="{Binding StepdownError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Classes="label" Text="Safe height above the stock top (mm)" />
+      <TextBox Name="SafeHeightBox" Classes="numeric" Text="{Binding SafeHeight}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding SafeHeightError}" IsVisible="{Binding SafeHeightError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Classes="label" Text="Direction" />
+      <ComboBox Name="DirectionBox" ItemsSource="{Binding Directions}" SelectedItem="{Binding Direction}" Width="140" HorizontalAlignment="Left" />
+
+      <TextBlock Classes="header" Text="Resolution" />
+      <TextBlock Classes="label" Text="Cell size (mm)" />
+      <TextBox Name="CellSizeBox" Classes="numeric" Text="{Binding CellSize}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding CellSizeError}" IsVisible="{Binding CellSizeError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Name="GridSizeText" Text="{Binding GridSizeText}" TextWrapping="Wrap" />
+      <TextBlock Classes="label" Text="Tolerance (mm)" />
+      <TextBox Name="ToleranceBox" Classes="numeric" Text="{Binding Tolerance}" HorizontalAlignment="Left" />
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>
