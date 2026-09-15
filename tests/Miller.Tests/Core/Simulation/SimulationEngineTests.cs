@@ -41,7 +41,7 @@ public sealed class SimulationEngineTests
 
         var ran = Stock();
         var runEngine = new SimulationEngine(Path(), ran, Profile());
-        runEngine.RunToEnd();
+        runEngine.RunToEnd(TestContext.Current.CancellationToken);
         Assert.True(runEngine.IsFinished);
         Assert.Equal(stepped.Z, ran.Z);
         Assert.Contains(ran.Z, z => z == 3f);
@@ -90,7 +90,7 @@ public sealed class SimulationEngineTests
     {
         var first = Stock();
         var engine = new SimulationEngine(Path(), first, Profile());
-        engine.RunToEnd();
+        engine.RunToEnd(TestContext.Current.CancellationToken);
         var fresh = Stock();
         engine.Reset(fresh);
         Assert.Same(fresh, engine.Stock);
@@ -99,7 +99,7 @@ public sealed class SimulationEngineTests
         Assert.Equal(0f, engine.Progress);
         Assert.Equal(0, engine.CurrentSegmentIndex);
         Assert.False(engine.IsFinished);
-        engine.RunToEnd();
+        engine.RunToEnd(TestContext.Current.CancellationToken);
         Assert.Equal(first.Z, fresh.Z);
     }
 
@@ -112,7 +112,7 @@ public sealed class SimulationEngineTests
         var engine = new SimulationEngine(path, stock, Profile());
         var samples = new List<SimulationSample>();
         engine.Sampled += samples.Add;
-        var r = engine.RunToEnd();
+        var r = engine.RunToEnd(TestContext.Current.CancellationToken);
         Assert.True(r.Dirty.IsEmpty);
         Assert.All(stock.Z, z => Assert.Equal(Top, z));
         Assert.Equal(1f, engine.RapidSampleSpacing);

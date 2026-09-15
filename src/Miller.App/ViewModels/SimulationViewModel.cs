@@ -54,6 +54,9 @@ public sealed partial class SimulationViewModel : ViewModelBase
 
     public event EventHandler<string>? StatusChanged;
 
+    // Play started: the analysis view returns to the stock so the frames show the cut.
+    public event EventHandler? PlaybackStarted;
+
     public bool IsLoaded => _simulation.IsLoaded;
 
     public bool IsPlaying => _simulation.IsPlaying;
@@ -109,6 +112,7 @@ public sealed partial class SimulationViewModel : ViewModelBase
     {
         _simulation.Play();
         _finishAnnounced = false;
+        PlaybackStarted?.Invoke(this, EventArgs.Empty);
         Announce(PlayingStatus);
         Refresh();
     }

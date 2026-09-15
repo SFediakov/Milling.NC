@@ -61,6 +61,7 @@ public static class TestServices
             new PipelineService(),
             new ExportService(),
             new SimulationService(),
+            new AnalysisService(),
             new SettingsService(Path.Combine(tempRoot, "settings")),
             dialogs ?? new FakeFileDialogService(),
             errors ?? new FakeErrorDialogService(),
