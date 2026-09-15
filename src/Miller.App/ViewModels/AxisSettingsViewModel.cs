@@ -79,13 +79,12 @@ public sealed class AxisSettingsViewModel : SettingsViewModelBase
                 return MappingError ?? string.Empty;
             }
 
-            if (!_meshImport.HasMesh)
+            if (!_meshImport.Matches(Current))
             {
                 return NoModelText;
             }
 
-            var mesh = _meshImport.CurrentMesh!;
-            var bounds = AxisSetup.TransformBounds(mesh.Bounds, Current.Axes.ToMatrix(mesh.Bounds, Current.Stock));
+            var bounds = ModelLayout.MachineBounds(Current, _meshImport.Bounds);
             var size = bounds.Size;
             return string.Create(CultureInfo.InvariantCulture,
                 $"{size.X:0.000} x {size.Y:0.000} x {size.Z:0.000} mm, min ({bounds.Min.X:0.000}, {bounds.Min.Y:0.000}, {bounds.Min.Z:0.000})");

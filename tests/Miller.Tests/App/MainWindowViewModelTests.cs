@@ -66,7 +66,7 @@ public sealed class MainWindowViewModelTests : IDisposable
     {
         var vm = await CreateWithBoxAsync();
         var viewport = vm.Viewport;
-        Assert.NotNull(viewport.Mesh);
+        Assert.Single(viewport.Meshes);
         Assert.NotNull(viewport.StockBounds);
         Assert.NotNull(viewport.Tool);
         Assert.Null(viewport.Toolpath);
@@ -88,7 +88,7 @@ public sealed class MainWindowViewModelTests : IDisposable
         Assert.True(viewport.FitPending);
 
         vm.NewProjectCommand.Execute(null);
-        Assert.Null(viewport.Mesh);
+        Assert.Empty(viewport.Meshes);
         Assert.Null(viewport.Toolpath);
         Assert.Null(viewport.StockMap);
         Assert.True(viewport.MeshVersion > meshVersion);
@@ -174,7 +174,7 @@ public sealed class MainWindowViewModelTests : IDisposable
         await vm.OpenStlCommand.ExecuteAsync(null);
 
         Assert.Equal("4050 triangles, 20.482 x 5.000 x 21.971 mm", vm.StatusText);
-        Assert.Equal(fixture, vm.Project.Current.StlPath);
+        Assert.Equal(fixture, Assert.Single(vm.Project.Current.Models).StlPath);
         Assert.True(vm.Project.IsDirty);
         Assert.EndsWith(" *", vm.Title);
         Assert.Equal(Path.GetDirectoryName(fixture), vm.Settings.LastStlDirectory);
@@ -192,7 +192,7 @@ public sealed class MainWindowViewModelTests : IDisposable
         Assert.Equal(MainWindowViewModel.ReadyStatus, vm.StatusText);
         Assert.False(vm.Project.IsDirty);
         Assert.False(vm.MeshImport.HasMesh);
-        Assert.Equal(string.Empty, vm.Project.Current.StlPath);
+        Assert.Empty(vm.Project.Current.Models);
     }
 
     [Fact]

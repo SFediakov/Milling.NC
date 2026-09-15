@@ -48,12 +48,7 @@ public sealed partial class MainWindowViewModel
         MeshImport.Clear();
         UpdateViewportScene();
         StatusText = $"Opened {Path.GetFileName(path)}";
-        var stl = Project.Current.StlPath;
-        if (!string.IsNullOrEmpty(stl))
-        {
-            var resolved = Path.IsPathRooted(stl) ? stl : Path.Combine(Path.GetDirectoryName(path) ?? string.Empty, stl);
-            await ImportStlAsync(resolved, markDirty: false);
-        }
+        await LoadProjectMeshesAsync(path);
     }
 
     [RelayCommand]
@@ -74,7 +69,7 @@ public sealed partial class MainWindowViewModel
     [RelayCommand(CanExecute = nameof(CanExport))]
     private async Task ExportNcAsync()
     {
-        var stlName = Path.GetFileNameWithoutExtension(Project.Current.StlPath);
+        var stlName = Project.Current.Models.Count > 0 ? Path.GetFileNameWithoutExtension(Project.Current.Models[0].StlPath) : string.Empty;
         var defaultName = (string.IsNullOrEmpty(stlName) ? DefaultExportName : stlName) + NcExtensions[0].Insert(0, ".");
         var path = await Dialogs.SaveFileAsync("Export NC", defaultName, NcExtensions, Settings.LastExportDirectory);
         if (path is null)
