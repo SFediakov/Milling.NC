@@ -9,11 +9,11 @@ namespace Miller.Tests.App;
 
 public sealed class MainWindowHeadlessTests
 {
-    private static readonly string[] TopLevelMenus = { "FileMenu", "ViewMenu", "SimulationMenu", "HelpMenu" };
+    private static readonly string[] TopLevelMenus = { "FileMenu", "ToolpathMenu", "ViewMenu", "SimulationMenu", "HelpMenu" };
 
     private static readonly string[] MenuItems =
     {
-        "OpenStlItem", "OpenProjectItem", "SaveProjectItem", "SaveProjectAsItem", "ExportNcItem", "ExitItem",
+        "OpenStlItem", "OpenProjectItem", "SaveProjectItem", "SaveProjectAsItem", "ExportNcItem", "ExitItem", "GenerateItem", "CancelGenerateItem",
         "ResetCameraItem", "ShowModelItem", "ShowStockItem", "ShowToolpathItem", "ShowToolItem",
         "PlayItem", "PauseItem", "StopItem", "RunToEndItem", "AboutItem",
     };

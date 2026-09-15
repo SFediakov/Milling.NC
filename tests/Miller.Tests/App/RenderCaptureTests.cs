@@ -20,6 +20,25 @@ public sealed class RenderCaptureTests
         => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "out", "ui-captures"));
 
     [AvaloniaFact]
+    public void AboutWindow_RendersToPng()
+    {
+        var about = new AboutWindow { DataContext = new Miller.App.ViewModels.AboutViewModel(TestServices.Version) };
+        try
+        {
+            about.Show();
+            about.UpdateLayout();
+            var frame = about.CaptureRenderedFrame();
+            Assert.NotNull(frame);
+            Directory.CreateDirectory(CaptureDirectory);
+            frame.Save(Path.Combine(CaptureDirectory, "about.png"), PngBitmapEncoderOptions.Default);
+        }
+        finally
+        {
+            about.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void SettingsTabs_RenderToPng()
     {
         var root = Path.Combine(Path.GetTempPath(), $"miller-render-{Guid.NewGuid():N}");

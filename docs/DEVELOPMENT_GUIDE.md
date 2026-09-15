@@ -423,7 +423,10 @@ included in the same commit when the app changed.
 11. The head-limit map is computed against the model map (final surface), not
     the current stock. The simulation's `CollisionDetector` checks against the
     current stock; both are needed and are different checks.
-12. Never write settings or logs into the repository. Settings go to the
+12. SkiaSharp on Linux needs `libfontconfig`. The build container gets it from the vendored
+    packages in `third_party/debian/` (see `scripts/vendor-debian.sh`); a Linux desktop has it
+    from the distribution. Without it the rendering tests and the published binary fail to start.
+13. Never write settings or logs into the repository. Settings go to the
     per-user application data folder; logs go to `logs/` next to the
     executable.
 
@@ -526,7 +529,7 @@ check that decides done.
 - Depends on: T-009
 - Files: `Dockerfile`
 - Input: comment-only placeholder
-- Output: `FROM mcr.microsoft.com/dotnet/sdk:10.0` (add the digest after the first pull as `@sha256:...`), `WORKDIR /src`, `COPY . .`, `RUN bash build.sh`; no network use after the base image
+- Output: `FROM mcr.microsoft.com/dotnet/sdk:10.0` (add the digest after the first pull as `@sha256:...`), `WORKDIR /src`, `COPY third_party/debian /tmp/debian` and `RUN dpkg -i /tmp/debian/*.deb` (fontconfig closure for SkiaSharp, vendored by `scripts/vendor-debian.sh`), `COPY . .`, `RUN bash build.sh`; no network use after the base image
 - Acceptance: `docker build -t miller-build .` succeeds; `docker run --rm miller-build dist/linux-x64/Miller.sh --version` prints the version
 - Status: done
 
@@ -1042,6 +1045,7 @@ check that decides done.
 - Input: placeholders
 - Output: about window with the version, the package list and their licenses (MIT for Avalonia and the toolkit, Apache 2 for xunit); shortcuts `Ctrl+O` open STL, `Ctrl+S` save, `Ctrl+E` export, `F5` generate, `Space` play/pause
 - Acceptance: screenshot of the about window; each shortcut triggers its command
+- Status: done
 
 #### T-074 UI rendering check for M5
 - Depends on: T-073
@@ -1049,6 +1053,7 @@ check that decides done.
 - Input: the running application
 - Output: screenshots of every panel on Windows and on Linux (Docker with WSLg or a Linux desktop) compared against the field lists of T-063 to T-073
 - Acceptance: every listed control visible on both systems; no layout overflow at 1280x720
+- Status: done
 
 ### M6 3D viewport
 
@@ -1058,6 +1063,7 @@ check that decides done.
 - Input: placeholders; pitfall 3
 - Output: constants for the enums used by the renderers (`GL_ARRAY_BUFFER`, `GL_ELEMENT_ARRAY_BUFFER`, `GL_STATIC_DRAW`, `GL_DYNAMIC_DRAW`, `GL_TRIANGLES`, `GL_LINES`, `GL_FLOAT`, `GL_DEPTH_TEST`, `GL_COLOR_BUFFER_BIT`, `GL_DEPTH_BUFFER_BIT`, `GL_VERTEX_SHADER`, `GL_FRAGMENT_SHADER`, `GL_COMPILE_STATUS`, `GL_LINK_STATUS`); `GlFunctions(GlInterface)` resolving delegates with `GetProcAddress` for VAO, buffer sub-data, uniform matrix and vector functions, throwing when a name resolves to zero
 - Acceptance: compiles; used by T-076
+- Status: done
 
 #### T-076 Shader sources and program
 - Depends on: T-075
@@ -1065,6 +1071,7 @@ check that decides done.
 - Input: placeholders; pitfall 2
 - Output: one vertex and one fragment shader for lit triangles (position, normal, per-vertex color, uniforms model-view-projection and light direction) and one pair for lines (position, color); `Preamble(GlVersion)` returning the ES or core version line; `ShaderProgram` compiling, linking, throwing with the info log on failure, `Use()`, `Uniform(name)`
 - Acceptance: compiles; both shader pairs compile on Windows (ANGLE) and on Linux (GLX) in T-078
+- Status: done
 
 #### T-077 Orbit camera
 - Depends on: T-011
