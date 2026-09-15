@@ -1,9 +1,0 @@
-.git
-.claude
-bin
-obj
-build
-out
-dist
-**/bin
-**/obj

@@ -11,5 +11,5 @@ trim_trailing_whitespace = true
 [*.cs]
 dotnet_diagnostic.IDE0005.severity = warning
 
-[*.{sh,Dockerfile}]
+[*.sh]
 end_of_line = lf

@@ -198,7 +198,7 @@ placeholder; the task that implements it is written in the placeholder header.
 
 | Folder | File | Responsibility |
 |---|---|---|
-| root | `Program.cs` | Entry point. `AppVersion = "Build_1.0.0"`. CLI: `--version` prints the version and exits; `--export <project.json> <out.nc>` runs the pipeline headless and exits (used to verify the Linux build inside Docker). Otherwise starts Avalonia with `UsePlatformDetect()` |
+| root | `Program.cs` | Entry point. `AppVersion = "Build_1.0.0"`. CLI: `--version` prints the version and exits; `--export <project.json> <out.nc>` runs the pipeline headless and exits (used to verify the Linux build on a Linux machine). Otherwise starts Avalonia with `UsePlatformDetect()` |
 | root | `App.axaml`, `App.axaml.cs` | Fluent theme, includes `Styles/Colors.axaml` and `Styles/Theme.axaml`, composition root (manual construction of services and view models, no DI container) |
 | Styles | `Colors.axaml` | The only file with color literals |
 | Styles | `Theme.axaml` | Control styles referencing `Colors.axaml` resources |
@@ -247,7 +247,6 @@ Mirrors the source tree: `Core/<Folder>/<Type>Tests.cs`,
 | Path | Purpose |
 |---|---|
 | `build.sh` | The only build script. Restore, build, test, publish for `win-x64` and `linux-x64`, assemble `dist/`. Runs on Linux and on Git Bash for Windows |
-| `Dockerfile` | Linux build container based on the pinned .NET 10 SDK image; restores only from `third_party/nuget` |
 | `launchers/Miller.sh` | Copied to `dist/linux-x64/Miller.sh`; `cd` to its own directory and `exec ./Miller "$@"` |
 | `scripts/vendor-packages.sh` | One-time, online: downloads every package in `Directory.Packages.props` with dependencies into `third_party/nuget/` |
 | `third_party/nuget/` | Vendored `.nupkg` files; the only NuGet source |
@@ -334,10 +333,10 @@ file test in `tests/Miller.Tests/Golden/`.
 - Linux start file: `dist/linux-x64/Miller.sh` (executable bit set by `build.sh`).
 - The Linux build also runs on Windows through WSLg; this is not the primary
   path, only a consequence of G1.
-- `Dockerfile` reproduces the Linux build. The base image
-  `mcr.microsoft.com/dotnet/sdk:10.0` is the one external fetch of the project;
-  packages come from `third_party/nuget` only (`NuGet.config` clears all other
-  sources).
+- The Linux build is the same `bash build.sh` on a Linux machine with the .NET 10
+  SDK installed; packages come from `third_party/nuget` only (`NuGet.config`
+  clears all other sources), so the build needs no network. No container is
+  part of the project.
 - Headless verification of the Linux binary: `./Miller --version` and
   `./Miller --export samples/heart.miller.json out.nc` compared with the golden
   file.
@@ -347,7 +346,7 @@ file test in `tests/Miller.Tests/Golden/`.
 The repository is delivered as an architecture with placeholders and no
 implementation. Two placeholder forms exist:
 
-1. Files whose format allows a comment-only body (`.cs`, `.sh`, `Dockerfile`)
+1. Files whose format allows a comment-only body (`.cs`, `.sh`)
    exist under their final name and contain only a header comment:
    purpose, responsibilities, public interface names, dependencies, forbidden
    dependencies, implementing task id. They compile as empty files.

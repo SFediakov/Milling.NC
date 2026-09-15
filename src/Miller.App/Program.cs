@@ -7,7 +7,7 @@ namespace Miller.App;
 
 public static class Program
 {
-    public const string AppVersion = "Build_1.0.59";
+    public const string AppVersion = "Build_1.0.60";
     public const string VersionFlag = "--version";
     public const string ExportFlag = "--export";
 
@@ -33,7 +33,7 @@ public static class Program
             .UsePlatformDetect()
             .WithInterFont();
 
-    // Runs the pipeline without a window: used to verify the Linux build inside Docker and by the
+    // Runs the pipeline without a window: used to verify the Linux build without a display and by the
     // end-to-end test. The STL path in the project is resolved relative to the project file.
     public static int HeadlessExport(string projectPath, string outputPath)
     {

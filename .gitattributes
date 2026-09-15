@@ -8,8 +8,5 @@
 *.nupkg binary
 # Golden G-code files are compared byte for byte; keep LF.
 *.nc text eol=lf
-# Dockerfile and editorconfig are parsed line by line; keep LF in the working copy on Windows.
-Dockerfile text eol=lf
+# editorconfig is parsed line by line; keep LF in the working copy on Windows.
 .editorconfig text eol=lf
-# Vendored Debian packages are binary archives.
-*.deb binary
