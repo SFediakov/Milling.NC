@@ -1,5 +1,6 @@
 using System.Numerics;
 using Avalonia.OpenGL;
+using Miller.Application.Validation;
 using Miller.Core.HeightMaps;
 
 namespace Miller.App.Rendering;
@@ -12,8 +13,8 @@ namespace Miller.App.Rendering;
 // cover it without a GL context.
 public sealed class HeightMapRenderer : IDisposable
 {
-    // Measured in T-085; above this the validator warns about slow interaction.
-    public const int MaxCellsForInteractiveFrame = 1_000_000;
+    // Measured in T-085 (tests/Miller.Tests/App/CameraTests.cs); the validator warns above it.
+    public const int MaxCellsForInteractiveFrame = (int)ProjectValidator.MaxInteractiveCells;
     public const int FloatsPerVertex = 10;
     private static readonly (int Di, int Dj)[] Sides = { (1, 0), (-1, 0), (0, 1), (0, -1) };
 

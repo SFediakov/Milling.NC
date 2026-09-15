@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.VisualTree;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Media.Imaging;
@@ -45,6 +46,8 @@ public sealed class RenderCaptureTests
         var viewModel = TestServices.MainWindowViewModel(root);
         viewModel.MeshImport.Import(TestMeshes.FixturePath());
         viewModel.Tool.HeadDiameter = 5f;
+        // 100 x 100 stock at 0.05 mm: allowed, but the cutting tab shows the interactive-limit warning.
+        viewModel.Cutting.CellSize = 0.05f;
         var window = new MainWindow { DataContext = viewModel, Width = Width, Height = Height };
         try
         {
@@ -60,6 +63,17 @@ public sealed class RenderCaptureTests
                 Assert.Equal(Width, frame.PixelSize.Width);
                 Assert.Equal(Height, frame.PixelSize.Height);
                 frame.Save(Path.Combine(CaptureDirectory, $"tab-{tab.Name}.png"), PngBitmapEncoderOptions.Default);
+
+                // Long panels scroll: a second frame shows their end (validation text sits below the fields).
+                foreach (var scroll in tabs.GetVisualDescendants().OfType<ScrollViewer>().Where(v => v.IsEffectivelyVisible))
+                {
+                    scroll.ScrollToEnd();
+                    window.UpdateLayout();
+                    if (scroll.Offset.Y > 0)
+                    {
+                        window.CaptureRenderedFrame()!.Save(Path.Combine(CaptureDirectory, $"tab-{tab.Name}-end.png"), PngBitmapEncoderOptions.Default);
+                    }
+                }
             }
         }
         finally

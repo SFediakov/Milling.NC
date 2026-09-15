@@ -12,6 +12,10 @@ public static class ProjectValidator
     public const float MaxCellSize = 5f;
     public const long MaxCells = 4_000_000;
 
+    // Above this the viewport upload and draw of the stock grid stop being interactive (T-085);
+    // the App layer reads it as HeightMapRenderer.MaxCellsForInteractiveFrame.
+    public const long MaxInteractiveCells = 1_000_000;
+
     public static ValidationResult Validate(MillingProject project, BoundingBox? modelBoundsMachine)
     {
         ArgumentNullException.ThrowIfNull(project);
@@ -54,6 +58,11 @@ public static class ProjectValidator
             {
                 errors.Add(new ValidationMessage("Parameters.CellSize",
                     $"Cell size {F(p.CellSize)} gives {cells} cells over the stock; the limit is {MaxCells}."));
+            }
+            else if (cells > MaxInteractiveCells)
+            {
+                warnings.Add(new ValidationMessage("Parameters.CellSize",
+                    $"Cell size {F(p.CellSize)} gives {cells} cells over the stock; above {MaxInteractiveCells} the viewport responds slowly."));
             }
         }
 
