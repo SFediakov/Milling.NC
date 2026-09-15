@@ -89,6 +89,39 @@ public sealed class PipelineServiceTests
     }
 
     [Fact]
+    public async Task Fixture_RunsWithinTheBudgetWithoutGouges()
+    {
+        var project = MillingProject.Default();
+        project.Parameters.CellSize = 0.2f;
+        var mesh = new MeshImportService();
+        mesh.Import(TestMeshes.FixturePath());
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var result = await new PipelineService().RunAsync(project, mesh.CurrentMesh!, null, CancellationToken.None);
+        watch.Stop();
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(60), $"fixture pipeline took {watch.Elapsed}");
+
+        Assert.Empty(GougeChecker.Verify(result.Toolpath, result.EffectiveTip, project.Parameters.Tolerance));
+
+        // Rest material the tool cannot reach: concave regions narrower than the cutter.
+        var rest = 0;
+        for (var k = 0; k < result.Model.CellCount; k++)
+        {
+            if (result.Model.Z[k] > result.Floor && result.EffectiveTip.Z[k] - result.Model.Z[k] > project.Parameters.Tolerance)
+            {
+                rest++;
+            }
+        }
+
+        Assert.True(rest > 0, "the heart has concave regions the 6 mm cutter cannot reach");
+
+        var bounds = result.Toolpath.Bounds;
+        Assert.True(bounds.Min.X >= result.Stock.Bounds.Min.X - 1e-3f && bounds.Max.X <= result.Stock.Bounds.Max.X + 1e-3f);
+        Assert.True(bounds.Min.Y >= result.Stock.Bounds.Min.Y - 1e-3f && bounds.Max.Y <= result.Stock.Bounds.Max.Y + 1e-3f);
+        Assert.True(bounds.Min.Z >= result.Floor - 1e-3f && bounds.Max.Z <= result.SafeZ + 1e-3f);
+    }
+
+    [Fact]
     public async Task Cancellation_BeforeCompletion_Throws()
     {
         using var cts = new CancellationTokenSource();

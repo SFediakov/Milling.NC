@@ -846,6 +846,7 @@ check that decides done.
 - Input: T-048 tests
 - Output: test running the fixture with cell size 0.2 and the default tool within 60 seconds, zero gouges, rest-material area above zero (the heart has overhangs), toolpath bounds inside stock bounds plus safe height
 - Acceptance: test green and finishes under 60 s on the development machine (record the time in the test output)
+- Status: done
 
 ### M4 G-code and headless export
 
@@ -855,6 +856,7 @@ check that decides done.
 - Input: placeholders; section 6.5
 - Output: `Format(float) -> string` (invariant, 3 decimals, trimmed, `-0` becomes `0`), `Word(char, float)`; tests: `12.5`, `0`, `-3.125`, `0.0004 -> 0`, culture with comma decimal separator set on the thread still yields a dot
 - Acceptance: tests green
+- Status: done
 
 #### T-051 Post-processor interface and registry
 - Depends on: T-050, T-031
@@ -862,6 +864,7 @@ check that decides done.
 - Input: placeholders
 - Output: interface `Id`, `DisplayName`, `FileExtension`, `Write(Toolpath, MillingProject, TextWriter)`; registry with the same shape and rules as `StrategyRegistry`
 - Acceptance: compiles
+- Status: done
 
 #### T-052 Grbl post-processor
 - Depends on: T-051, T-020
@@ -869,6 +872,7 @@ check that decides done.
 - Input: placeholder; section 6.5 template
 - Output: id `grbl`, extension `.nc`, header comments with version, tool and stock, modal preamble, spindle on, moves per segment kind (`G0` for rapid, `G1` with `F` on change), spindle off, `M30`, `\n` endings; registered
 - Acceptance: compiles; tests in T-053
+- Status: done
 
 #### T-053 Golden tests for the Grbl post-processor
 - Depends on: T-052
