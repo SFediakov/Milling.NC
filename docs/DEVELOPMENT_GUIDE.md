@@ -495,6 +495,7 @@ check that decides done.
 - Input: placeholders; package list section 2.2
 - Output: `OutputType=WinExe`, references `Miller.Application` and the Avalonia, Fluent, Inter, toolkit packages (Diagnostics only in Debug); `Program.cs` with `public const string AppVersion = "Build_1.0.0"`, `--version` printing it and exiting 0, otherwise `BuildAvaloniaApp().StartWithClassicDesktopLifetime(args)` using `UsePlatformDetect()`; `App.axaml` with Fluent theme and an empty `MainWindow`
 - Acceptance: `dotnet run --project src/Miller.App -- --version` prints `Build_1.0.0`; running without arguments opens an empty window titled `Miller`
+- Status: done
 
 #### T-007 Test project with smoke tests
 - Depends on: T-006
