@@ -1,13 +1,14 @@
-using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Miller.App.Services;
 using Miller.App.ViewModels;
+using Miller.App.Views;
 using Miller.Application.Services;
 
 namespace Miller.App;
 
 // Composition root: every service and view model is constructed here, by hand, in dependency
-// order. There is no container.
+// order. There is no container. Unhandled exceptions are logged before the process ends.
 public partial class App : Avalonia.Application
 {
     public const string WindowTitle = "Miller";
@@ -21,20 +22,26 @@ public partial class App : Avalonia.Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            var log = new LogService(LogService.DefaultDirectory());
+            AppDomain.CurrentDomain.UnhandledException += (_, e) => log.Error("Unhandled exception", e.ExceptionObject as Exception);
+            TaskScheduler.UnobservedTaskException += (_, e) => log.Error("Unobserved task exception", e.Exception);
+
             var settings = new SettingsService(SettingsService.DefaultDirectory());
             settings.Load();
             var project = new ProjectService();
             var meshImport = new MeshImportService();
             var pipeline = new PipelineService();
             var export = new ExportService();
-            var viewModel = new MainWindowViewModel(project, meshImport, pipeline, export, settings, Program.AppVersion);
-            desktop.MainWindow = new Window
+            var dialogs = new FileDialogService(() => desktop.MainWindow);
+            var errors = new ErrorDialogService(log, () => desktop.MainWindow);
+            var viewModel = new MainWindowViewModel(project, meshImport, pipeline, export, settings, dialogs, errors, Program.AppVersion);
+            desktop.MainWindow = new MainWindow
             {
-                Title = viewModel.Title,
                 Width = settings.WindowWidth,
                 Height = settings.WindowHeight,
                 DataContext = viewModel,
             };
+            log.Info($"started {Program.AppVersion}");
         }
 
         base.OnFrameworkInitializationCompleted();

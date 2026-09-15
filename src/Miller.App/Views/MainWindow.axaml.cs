@@ -1,8 +1,43 @@
-// PLACEHOLDER - implemented by T-063 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.App.Views
-// Purpose: Code-behind for MainWindow.axaml: InitializeComponent only, plus event wiring that XAML
-//     cannot express.
-// Public interface (names only): partial class MainWindow
-// Depends on: MainWindow.axaml
-// Must not depend on: Miller.Core algorithms called directly from views or view models (go through
-//     Miller.Application services); business logic in code-behind
+using Avalonia.Controls;
+using Miller.App.ViewModels;
+
+namespace Miller.App.Views;
+
+public partial class MainWindow : Window
+{
+    private MainWindowViewModel? _viewModel;
+
+    public MainWindow()
+    {
+        InitializeComponent();
+        DataContextChanged += (_, _) => Attach(DataContext as MainWindowViewModel);
+    }
+
+    private void Attach(MainWindowViewModel? viewModel)
+    {
+        if (_viewModel is not null)
+        {
+            _viewModel.ExitRequested -= OnExitRequested;
+        }
+
+        _viewModel = viewModel;
+        if (_viewModel is not null)
+        {
+            _viewModel.ExitRequested += OnExitRequested;
+        }
+    }
+
+    private void OnExitRequested(object? sender, EventArgs e) => Close();
+
+    // The window size is user state, stored with the other preferences.
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        base.OnClosing(e);
+        if (_viewModel is not null && WindowState == WindowState.Normal)
+        {
+            _viewModel.Settings.WindowWidth = Width;
+            _viewModel.Settings.WindowHeight = Height;
+            _viewModel.Settings.Save();
+        }
+    }
+}

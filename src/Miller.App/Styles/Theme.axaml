@@ -5,6 +5,11 @@
     <Setter Property="Background" Value="{DynamicResource WindowBackgroundBrush}" />
     <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
   </Style>
+  <Style Selector="TabItem">
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="MinHeight" Value="32" />
+    <Setter Property="Padding" Value="10,4" />
+  </Style>
   <Style Selector="TextBlock.header">
     <Setter Property="FontWeight" Value="Bold" />
     <Setter Property="FontSize" Value="14" />
