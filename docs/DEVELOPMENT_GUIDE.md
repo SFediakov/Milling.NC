@@ -1079,6 +1079,7 @@ check that decides done.
 - Input: placeholders
 - Output: `Camera` with `Target`, `Yaw`, `Pitch` (clamped), `Distance` (clamped), `Aspect`; `View`, `Projection` (perspective, near and far from distance), `Orbit(dx, dy)`, `Pan(dx, dy)`, `Zoom(factor)`, `FitToBounds(BoundingBox)`; tests: after `FitToBounds` the bounds corners project inside the clip volume; pitch clamp; zoom factor changes distance multiplicatively
 - Acceptance: tests green
+- Status: done
 
 #### T-078 Viewport control and scene renderer skeleton
 - Depends on: T-076, T-077
@@ -1086,6 +1087,7 @@ check that decides done.
 - Input: placeholders; pitfall 4
 - Output: `Viewport3DControl : OpenGlControlBase` creating `SceneRenderer` in `OnOpenGlInit`, calling `Render(gl, width, height)` in `OnOpenGlRender`, disposing in `OnOpenGlDeinit`; mouse: left drag orbit, right drag pan, wheel zoom, double click fit; `SceneRenderer` clearing with the viewport background color from resources and drawing nothing else yet; control placed in the central border of `MainWindow`
 - Acceptance: screenshot shows the viewport background color; no GL error logged on Windows and Linux
+- Status: done
 
 #### T-079 Axis triad and stock outline renderer
 - Depends on: T-078
@@ -1093,6 +1095,7 @@ check that decides done.
 - Input: placeholders
 - Output: lines for X, Y, Z (colors from resources) at the machine origin and the stock outline (box edges or cylinder rings and verticals) from the current project; `ViewportViewModel` holding what to show (flags for model, stock, toolpath, tool) and the data references, raising a `RequestRender` event
 - Acceptance: screenshot with triad and stock outline for the default project
+- Status: done
 
 #### T-080 Mesh renderer
 - Depends on: T-079, T-064
@@ -1100,6 +1103,7 @@ check that decides done.
 - Input: placeholder
 - Output: VBO with position, normal, color per vertex (flat shading, model color), index-free `GL_TRIANGLES`, uploaded when the mesh changes, drawn with the lit shader; camera fits to the mesh bounds when a new mesh arrives
 - Acceptance: screenshot of the fixture heart in the viewport, lit, correct orientation for the default axis setup
+- Status: done
 
 #### T-081 Toolpath renderer
 - Depends on: T-080, T-070
