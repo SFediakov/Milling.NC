@@ -487,6 +487,7 @@ check that decides done.
 - Input: comment-only script placeholder; README describing the procedure
 - Output: script that creates a temporary project under `out/vendor/` referencing every package from `Directory.Packages.props`, restores it online (`--source https://api.nuget.org/v3/index.json --packages out/vendor/cache`) for no RID, `win-x64` and `linux-x64`, then copies every `*.nupkg` from the cache into `third_party/nuget/` (flat). The script is the only place that names the online source
 - Acceptance: after running the script once online, `dotnet restore Miller.sln` succeeds with the network disabled; `third_party/nuget/` contains the Avalonia, toolkit, xunit packages and the runtime and host packs for both RIDs
+- Status: done
 
 #### T-006 Avalonia application project with version constant and CLI flags
 - Depends on: T-004, T-005
