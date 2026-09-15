@@ -1,10 +1,47 @@
-// PLACEHOLDER - implemented by T-017 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.Setup
-// Purpose: Raw material block: box (cubic or rectangular) or cylinder, with placement relative to
-//     the model.
-// Public interface (names only): enum StockShape { Box, Cylinder }; enum StockPlacement {
-//     AutoFitWithMargin, Explicit }; sealed class StockDefinition { StockShape Shape; float SizeX;
-//     float SizeY; float SizeZ; float Diameter; float Height; StockPlacement Placement; float
-//     Margin; Vector3 ExplicitOrigin; static StockDefinition Default() }
-// Depends on: none
-// Must not depend on: Avalonia, System.IO file dialogs, threads, timers
+using System.Numerics;
+
+namespace Miller.Core.Setup;
+
+public enum StockShape
+{
+    Box,
+    Cylinder,
+}
+
+public enum StockPlacement
+{
+    AutoFitWithMargin,
+    Explicit,
+}
+
+public sealed class StockDefinition
+{
+    public const float DefaultSizeX = 100f;
+    public const float DefaultSizeY = 100f;
+    public const float DefaultSizeZ = 30f;
+    public const float DefaultDiameter = 100f;
+    public const float DefaultHeight = 30f;
+    public const float DefaultMargin = 5f;
+
+    public StockShape Shape { get; set; } = StockShape.Box;
+
+    public float SizeX { get; set; } = DefaultSizeX;
+
+    public float SizeY { get; set; } = DefaultSizeY;
+
+    public float SizeZ { get; set; } = DefaultSizeZ;
+
+    public float Diameter { get; set; } = DefaultDiameter;
+
+    public float Height { get; set; } = DefaultHeight;
+
+    public StockPlacement Placement { get; set; } = StockPlacement.AutoFitWithMargin;
+
+    public float Margin { get; set; } = DefaultMargin;
+
+    // Machine-space position of the stock's minimum X, minimum Y, bottom Z corner (box) or of the
+    // circle center at the bottom (cylinder); used only with Placement = Explicit.
+    public Vector3 ExplicitOrigin { get; set; } = Vector3.Zero;
+
+    public static StockDefinition Default() => new();
+}

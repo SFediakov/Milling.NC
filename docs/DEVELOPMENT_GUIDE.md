@@ -585,6 +585,7 @@ check that decides done.
 - Input: placeholders; sections 6.2 and 6.4
 - Output: three mutable classes with the properties named in `docs/ARCHITECTURE.md` 4.1, default values (tool 6 mm flat, length 20, head 10; stock box 100x100x30 auto-fit margin 5; feed 800, plunge 200, rapid 3000, spindle 12000, stepover 3, finishing stepover 0.5, stepdown 2, safe height 5, cell size 0.2, tolerance 0.05, zigzag)
 - Acceptance: compiles; defaults asserted in T-020
+- Status: done
 
 #### T-018 Axis setup and transform matrix
 - Depends on: T-017
