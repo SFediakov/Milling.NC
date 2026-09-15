@@ -68,6 +68,27 @@ public sealed class ViewportInputTests
     }
 
     [AvaloniaFact]
+    public void Space_InTheFocusedViewport_RequestsPlayPause()
+    {
+        var (window, viewport, viewModel) = Show();
+        try
+        {
+            var requests = 0;
+            viewModel.PlayPauseRequested += (_, _) => requests++;
+            viewport.Focus();
+            window.KeyPressQwerty(PhysicalKey.Space, RawInputModifiers.None);
+            window.KeyReleaseQwerty(PhysicalKey.Space, RawInputModifiers.None);
+            Assert.Equal(1, requests);
+            window.KeyPressQwerty(PhysicalKey.A, RawInputModifiers.None);
+            Assert.Equal(1, requests);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void Wheel_Zooms_AndLeftClick_PicksTheModelUnderTheCursor()
     {
         var (window, viewport, viewModel) = Show();
