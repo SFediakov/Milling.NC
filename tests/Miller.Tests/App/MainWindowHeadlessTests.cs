@@ -125,7 +125,7 @@ public sealed class MainWindowHeadlessTests
             timer.Tick(1);
             Assert.Equal(0, ticks);
 
-            viewModel.PlayCommand.Execute(null);
+            viewModel.SimulationPanel.PlayCommand.Execute(null);
             viewModel.Simulation.SpeedFactor = 100f;
             timer.Tick(0.5);
             Assert.Equal(1, ticks);
