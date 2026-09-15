@@ -13,6 +13,20 @@ public sealed class SlicerTests
 
     private static CuttingParameters Parameters(float stepdown) => new() { Stepdown = stepdown };
 
+    [Theory]
+    [InlineData(3.5f, 4f)]
+    [InlineData(2.5f, 3f)]
+    [InlineData(3f, 3f)]
+    [InlineData(3.00001f, 3f)]
+    [InlineData(5f, 5f)]
+    [InlineData(6f, 6f)]
+    [InlineData(0.2f, 1f)]
+    [InlineData(float.NaN, float.NaN)]
+    public void CeilToLevel_LiftsToTheLevelStandingAboveTheSurface(float z, float expected)
+    {
+        Assert.Equal(expected, Slicer.CeilToLevel(z, 5f, 1f));
+    }
+
     [Fact]
     public void Levels_StepDownFromTheStockTopAndClampToTheLowestTip()
     {

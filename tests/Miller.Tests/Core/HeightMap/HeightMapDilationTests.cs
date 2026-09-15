@@ -22,6 +22,75 @@ public sealed class HeightMapDilationTests
         return map;
     }
 
+    private static HeightMap SlottedPlateModel()
+    {
+        var mesh = TestMeshes.SlottedPlate();
+        var model = MeshRasterizer.CreateGridFor(mesh.Bounds, CellSize, 0f);
+        MeshRasterizer.Rasterize(mesh, model, 0f);
+        return model;
+    }
+
+    private static ToolDefinition SlotTool(float diameter, TipType tip = TipType.Flat)
+        => new() { TipType = tip, CutterDiameter = diameter, HeadDiameter = diameter + 4f, CutterLength = 20f };
+
+    [Fact]
+    public void Remaining_OfASpike_IsTheSpikeItself()
+    {
+        var model = FlatMapWithSpike();
+        var profile = ToolProfile.Create(Tool(TipType.Flat), CellSize);
+        var remaining = HeightMapDilation.ComputeRemaining(HeightMapDilation.ComputeTipMap(model, profile), profile);
+        Assert.Equal(model.Z, remaining.Z);
+    }
+
+    [Fact]
+    public void Remaining_FillsASlotNarrowerThanTheCutter_AndKeepsAWiderOne()
+    {
+        var model = SlottedPlateModel();
+        var slotFloor = TestMeshes.SlottedPlateHeight - TestMeshes.SlotDepth;
+
+        var wide = ToolProfile.Create(SlotTool(6f), CellSize);
+        var filled = HeightMapDilation.ComputeRemaining(HeightMapDilation.ComputeTipMap(model, wide), wide);
+        var narrow = ToolProfile.Create(SlotTool(3f), CellSize);
+        var kept = HeightMapDilation.ComputeRemaining(HeightMapDilation.ComputeTipMap(model, narrow), narrow);
+
+        for (var j = 0; j < model.Height; j++)
+        {
+            for (var i = 0; i < model.Width; i++)
+            {
+                Assert.True(filled[i, j] >= model[i, j] - 1e-4f, $"closing below the model at ({i}, {j})");
+                Assert.True(kept[i, j] >= model[i, j] - 1e-4f, $"closing below the model at ({i}, {j})");
+                var inSlot = MathF.Abs(model[i, j] - slotFloor) < 1e-4f;
+                if (inSlot)
+                {
+                    // 6 mm cutter cannot enter a 4 mm slot: the slot stays full; 3 mm cutter clears it.
+                    Assert.Equal(TestMeshes.SlottedPlateHeight, filled[i, j], 3);
+                    Assert.Equal(slotFloor, kept[i, j], 3);
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void Remaining_BallTool_LeavesARoundedGrooveInANarrowSlot()
+    {
+        var model = SlottedPlateModel();
+        var profile = ToolProfile.Create(SlotTool(6f, TipType.Ball), CellSize);
+        var remaining = HeightMapDilation.ComputeRemaining(HeightMapDilation.ComputeTipMap(model, profile), profile);
+        var slotFloor = TestMeshes.SlottedPlateHeight - TestMeshes.SlotDepth;
+        var (ci, cj) = model.CellOf(TestMeshes.SlottedPlateSize / 2, TestMeshes.SlottedPlateSize / 2);
+        Assert.True(remaining[ci, cj] > slotFloor, "the ball cannot reach the slot floor");
+        Assert.True(remaining[ci, cj] < TestMeshes.SlottedPlateHeight, "the ball dips into the slot");
+        Assert.All(remaining.Z.Zip(model.Z), pair => Assert.True(pair.First >= pair.Second - 1e-4f));
+    }
+
+    [Fact]
+    public void Remaining_WithoutMaterial_StaysEmpty()
+    {
+        var profile = ToolProfile.Create(Tool(TipType.Flat), CellSize);
+        var empty = new HeightMap(0, 0, CellSize, 4, 4, float.NaN);
+        Assert.All(HeightMapDilation.ComputeRemaining(empty, profile).Z, z => Assert.True(float.IsNaN(z)));
+    }
+
     [Fact]
     public void FlatTool_TurnsASpikeIntoAPlateauOfTheFootprintDiameter()
     {

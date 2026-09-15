@@ -47,6 +47,9 @@ public sealed class PipelineService
         ("statistics", 0.05f),
     };
 
+    // Head limit iterations rarely need more than two rounds; the cap keeps a pathological grid finite.
+    public const int MaxHeadIterations = 8;
+
     public Task<PipelineResult> RunAsync(MillingProject project, Mesh mesh, IProgress<ProgressReport>? progress, CancellationToken cancellation)
         => Task.Run(() => Run(project, mesh, progress, cancellation), cancellation);
 
@@ -88,10 +91,27 @@ public sealed class PipelineService
         cancellation.ThrowIfCancellationRequested();
 
         reporter.Begin(5);
-        var limit = HeadClearance.ComputeHeadLimit(model, profile, project.Tool.CutterLength);
-        var effective = HeadClearance.ApplyHeadLimit(tip, limit);
+        // The head must clear what the cutter leaves, not only the model: the limit comes from the
+        // remaining material (closing of the tip map), rounded up to the roughing level it stands at
+        // until the pass that reaches it, since neighbours are cut level by level. A raised tip leaves
+        // more, so iterate until the effective tip settles; limits only rise, so the loop is bounded.
+        var effective = tip;
+        HeightMap limit;
+        for (var iteration = 1; ; iteration++)
+        {
+            var remaining = Slicer.CeilToLevels(HeightMapDilation.ComputeRemaining(effective, profile), stock.StockTop, p.Stepdown);
+            limit = HeadClearance.ComputeHeadLimit(remaining, profile, project.Tool.CutterLength);
+            var next = HeadClearance.ApplyHeadLimit(tip, limit);
+            var settled = SameWithin(next, effective, p.Tolerance);
+            effective = next;
+            cancellation.ThrowIfCancellationRequested();
+            if (settled || iteration >= MaxHeadIterations)
+            {
+                break;
+            }
+        }
+
         var headLimited = HeadClearance.HeadLimitedMask(tip, limit, p.Tolerance);
-        cancellation.ThrowIfCancellationRequested();
 
         reporter.Begin(6);
         var plan = Slicer.Build(effective, stock.Map, p);
@@ -135,6 +155,21 @@ public sealed class PipelineService
 
         result.AddRange(finishing.Segments);
         return result;
+    }
+
+    private static bool SameWithin(HeightMap a, HeightMap b, float tolerance)
+    {
+        for (var k = 0; k < a.Z.Length; k++)
+        {
+            var x = a.Z[k];
+            var y = b.Z[k];
+            if (float.IsNaN(x) != float.IsNaN(y) || (!float.IsNaN(x) && MathF.Abs(x - y) > tolerance))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static IToolpathStrategy RequireStrategy(string id, MillingOperation operation)

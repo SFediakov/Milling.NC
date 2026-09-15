@@ -45,4 +45,48 @@ public static class HeightMapDilation
 
         return tip;
     }
+
+    // Material left once the tip has been everywhere the tip map allows: the closing of the model
+    // by the footprint, min over the footprint of (tip[i+dx, j+dy] + dz). Never below the model,
+    // higher than it wherever the cutter does not fit (strips beside walls, inner corners).
+    // Positions outside the grid or with a NaN tip cannot hold the tool and do not lower the result.
+    public static HeightMap ComputeRemaining(HeightMap tip, ToolProfile profile)
+    {
+        ArgumentNullException.ThrowIfNull(tip);
+        ArgumentNullException.ThrowIfNull(profile);
+        var remaining = new HeightMap(tip.OriginX, tip.OriginY, tip.CellSize, tip.Width, tip.Height, float.NaN);
+        var offsets = profile.Offsets;
+        for (var j = 0; j < tip.Height; j++)
+        {
+            for (var i = 0; i < tip.Width; i++)
+            {
+                var best = float.NaN;
+                foreach (var o in offsets)
+                {
+                    var ii = i + o.Dx;
+                    var jj = j + o.Dy;
+                    if (!tip.InBounds(ii, jj))
+                    {
+                        continue;
+                    }
+
+                    var t = tip[ii, jj];
+                    if (float.IsNaN(t))
+                    {
+                        continue;
+                    }
+
+                    var candidate = t + o.Dz;
+                    if (float.IsNaN(best) || candidate < best)
+                    {
+                        best = candidate;
+                    }
+                }
+
+                remaining[i, j] = best;
+            }
+        }
+
+        return remaining;
+    }
 }
