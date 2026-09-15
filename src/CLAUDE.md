@@ -77,3 +77,6 @@
 - InvariantGlobalization is on, so named cultures such as de-DE do not exist at run time.
   Tests that need a comma decimal separator clone the invariant culture and change its
   NumberFormat.
+- The Bash tool also collapses a doubled backslash inside a heredoc into one, so a C# character
+  literal for the backslash arrives broken. Files that need backslashes go through the Write tool,
+  and path code uses Path.DirectorySeparatorChar instead of the literal.
