@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Miller.Core.Slicing;
+using Miller.Core.Toolpaths.Strategies;
 
 namespace Miller.Core.Toolpaths;
 
@@ -9,6 +10,7 @@ public static class StrategyRegistry
     public static IReadOnlyList<IToolpathStrategy> All { get; } = RegistryRules.Validate(
         new IToolpathStrategy[]
         {
+            new RasterRoughingStrategy(),
         },
         s => s.Id,
         s => s.DisplayName,
