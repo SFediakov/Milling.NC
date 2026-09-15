@@ -1,9 +1,32 @@
-// PLACEHOLDER - implemented by T-017 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.Setup
-// Purpose: Cutter and head geometry. CutterLength is the usable length from the tip to the
-//     underside of the head; HeadDiameter is larger than CutterDiameter.
-// Public interface (names only): enum TipType { Flat, Ball }; sealed class ToolDefinition { string
-//     Name; float CutterDiameter; float CutterLength; float HeadDiameter; TipType TipType; float
-//     CutterRadius; float HeadRadius; static ToolDefinition Default() }
-// Depends on: none
-// Must not depend on: Avalonia, System.IO file dialogs, threads, timers
+namespace Miller.Core.Setup;
+
+public enum TipType
+{
+    Flat,
+    Ball,
+}
+
+// CutterLength is the usable length from the tip to the underside of the head.
+public sealed class ToolDefinition
+{
+    public const string DefaultName = "6 mm flat end mill";
+    public const float DefaultCutterDiameter = 6f;
+    public const float DefaultCutterLength = 20f;
+    public const float DefaultHeadDiameter = 10f;
+
+    public string Name { get; set; } = DefaultName;
+
+    public float CutterDiameter { get; set; } = DefaultCutterDiameter;
+
+    public float CutterLength { get; set; } = DefaultCutterLength;
+
+    public float HeadDiameter { get; set; } = DefaultHeadDiameter;
+
+    public TipType TipType { get; set; } = TipType.Flat;
+
+    public float CutterRadius => CutterDiameter / 2;
+
+    public float HeadRadius => HeadDiameter / 2;
+
+    public static ToolDefinition Default() => new();
+}
