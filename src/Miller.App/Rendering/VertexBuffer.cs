@@ -2,15 +2,17 @@ using Avalonia.OpenGL;
 
 namespace Miller.App.Rendering;
 
-// One vertex array over one interleaved float buffer. The layout lists (attribute location,
-// component count) in buffer order; every attribute is float.
+// One vertex array over one interleaved float buffer, with an optional index buffer. The layout
+// lists (attribute location, component count) in buffer order; every attribute is float.
 public sealed unsafe class VertexBuffer : IDisposable
 {
     private const int FloatBytes = sizeof(float);
+    private const int IndexBytes = sizeof(uint);
 
     private readonly GlInterface _gl;
     private readonly int _vao;
     private readonly int _vbo;
+    private readonly int _ebo;
     private bool _disposed;
 
     public VertexBuffer(GlInterface gl, params (int Location, int Components)[] layout)
@@ -24,8 +26,10 @@ public sealed unsafe class VertexBuffer : IDisposable
         Stride = layout.Sum(a => a.Components);
         _vao = gl.GenVertexArray();
         _vbo = gl.GenBuffer();
+        _ebo = gl.GenBuffer();
         gl.BindVertexArray(_vao);
         gl.BindBuffer(GlConsts.GL_ARRAY_BUFFER, _vbo);
+        gl.BindBuffer(GlConsts.GL_ELEMENT_ARRAY_BUFFER, _ebo);
         var offset = 0;
         foreach (var (location, components) in layout)
         {
@@ -42,6 +46,8 @@ public sealed unsafe class VertexBuffer : IDisposable
 
     public int VertexCount { get; private set; }
 
+    public int IndexCount { get; private set; }
+
     public void Upload(float[] data, int floatCount, int usage)
     {
         ArgumentNullException.ThrowIfNull(data);
@@ -57,6 +63,20 @@ public sealed unsafe class VertexBuffer : IDisposable
         }
 
         VertexCount = floatCount / Stride;
+    }
+
+    public void UploadIndices(uint[] indices, int indexCount, int usage)
+    {
+        ArgumentNullException.ThrowIfNull(indices);
+        _gl.BindVertexArray(_vao);
+        _gl.BindBuffer(GlConsts.GL_ELEMENT_ARRAY_BUFFER, _ebo);
+        fixed (uint* p = indices)
+        {
+            _gl.BufferData(GlConsts.GL_ELEMENT_ARRAY_BUFFER, (IntPtr)(indexCount * IndexBytes), (IntPtr)p, usage);
+        }
+
+        _gl.BindVertexArray(0);
+        IndexCount = indexCount;
     }
 
     // Replaces a float range inside an already uploaded buffer.
@@ -89,6 +109,18 @@ public sealed unsafe class VertexBuffer : IDisposable
         _gl.BindVertexArray(0);
     }
 
+    public void DrawIndexed(int mode)
+    {
+        if (IndexCount <= 0)
+        {
+            return;
+        }
+
+        _gl.BindVertexArray(_vao);
+        _gl.DrawElements(mode, IndexCount, GlConstants.GL_UNSIGNED_INT, IntPtr.Zero);
+        _gl.BindVertexArray(0);
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -97,6 +129,7 @@ public sealed unsafe class VertexBuffer : IDisposable
         }
 
         _disposed = true;
+        _gl.DeleteBuffer(_ebo);
         _gl.DeleteBuffer(_vbo);
         _gl.DeleteVertexArray(_vao);
     }
