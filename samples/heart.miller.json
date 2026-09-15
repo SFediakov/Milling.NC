@@ -1,0 +1,51 @@
+{
+  "SchemaVersion": 1,
+  "StlPath": "../Milling_Heart_V2.STL",
+  "Tool": {
+    "Name": "6 mm flat end mill",
+    "CutterDiameter": 6,
+    "CutterLength": 20,
+    "HeadDiameter": 10,
+    "TipType": "Flat"
+  },
+  "Stock": {
+    "Shape": "Box",
+    "SizeX": 30,
+    "SizeY": 15,
+    "SizeZ": 25,
+    "Diameter": 100,
+    "Height": 30,
+    "Placement": "AutoFitWithMargin",
+    "Margin": 5,
+    "ExplicitOrigin": { "X": 0, "Y": 0, "Z": 0 }
+  },
+  "Axes": {
+    "MapX": "X",
+    "MapY": "Y",
+    "MapZ": "Z",
+    "FlipX": false,
+    "FlipY": false,
+    "FlipZ": false,
+    "RotationX": 0,
+    "RotationY": 0,
+    "RotationZ": 0,
+    "OriginMode": "StockCornerMinXYMinZ",
+    "CustomOffset": { "X": 0, "Y": 0, "Z": 0 }
+  },
+  "Parameters": {
+    "FeedRate": 800,
+    "PlungeRate": 200,
+    "RapidRate": 3000,
+    "SpindleRpm": 12000,
+    "Stepover": 3,
+    "FinishingStepover": 0.5,
+    "Stepdown": 2,
+    "SafeHeight": 5,
+    "CellSize": 0.2,
+    "Tolerance": 0.05,
+    "Direction": "Zigzag"
+  },
+  "RoughingStrategyId": "raster-roughing",
+  "FinishingStrategyId": "raster-finishing",
+  "PostProcessorId": "grbl"
+}
