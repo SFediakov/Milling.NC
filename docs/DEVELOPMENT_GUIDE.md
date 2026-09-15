@@ -684,6 +684,7 @@ check that decides done.
 - Input: placeholder; slotted plate fixture (4 mm wide, 10 mm deep slot)
 - Output: tests: with cutter 3 mm, head 8 mm, cutter length 6 mm, the slot floor is head-limited (effective tip = plate top - 6); with cutter length 12 mm the slot floor is reachable; open areas are never head-limited
 - Acceptance: tests green
+- Status: done
 
 #### T-030 Stock model
 - Depends on: T-028, T-018
@@ -691,6 +692,7 @@ check that decides done.
 - Input: placeholders
 - Output: `StockModel.Create(StockDefinition, BoundingBox modelBoundsMachine, float cellSize) -> HeightMap` (box: all cells at top; cylinder: NaN outside the circle) and `StockTop`, `StockBottom`; auto-fit placement centers the model in XY with margin and puts the model top at the stock top; tests: box cell count, cylinder NaN fraction close to `1 - pi/4`, auto-fit bounds contain the model bounds
 - Acceptance: tests green
+- Status: done
 
 #### T-031 Toolpath types and statistics
 - Depends on: T-017
@@ -698,6 +700,7 @@ check that decides done.
 - Input: placeholders
 - Output: `enum MoveKind { Rapid, Feed, Plunge }` in `ToolpathSegment.cs`, `ToolpathSegment` (readonly struct), `Toolpath` (list, `Add`, `Bounds`, `TotalLength(MoveKind)`), `ToolpathStatistics.Compute(Toolpath, CuttingParameters)` with lengths, counts, estimated minutes
 - Acceptance: compiles; tests in T-032
+- Status: done
 
 #### T-032 Tests for toolpath statistics
 - Depends on: T-031
@@ -705,6 +708,7 @@ check that decides done.
 - Input: placeholder
 - Output: tests: three segments of known length and kind give the expected totals; estimated time = sum(length / rate)
 - Acceptance: tests green
+- Status: done
 
 ### M3 Slicing, strategies, linking
 
