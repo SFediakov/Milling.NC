@@ -11,6 +11,12 @@
   public NuGet source for the one-time population of `third_party/nuget/`.
   Builds never use it; `NuGet.config` clears every source except the vendored
   folder. The Docker base image is the second external fetch and is pinned.
+- `Avalonia.Diagnostics` is not referenced although `docs/ARCHITECTURE.md` 2.2 lists it at
+  12.1.2. Avalonia 12 removed the package (its last version is 11.3.x); the replacement
+  `AvaloniaUI.DiagnosticsSupport` is a different package outside the allowed list. It was
+  Debug-only developer tooling with no shipped feature behind it, so it is dropped from
+  `Directory.Packages.props`, `Miller.App.csproj` and `third_party/nuget/`. Adding
+  `AvaloniaUI.DiagnosticsSupport` later is a one-line change in T-002 and T-006.
 
 ## Placeholder convention (architecture delivered without implementation)
 
