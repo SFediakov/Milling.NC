@@ -25,6 +25,17 @@ public sealed class StrategyRegistryTests
     }
 
     [Fact]
+    public void Registry_HoldsExactlyTheThreeBuiltInStrategies()
+    {
+        Assert.Equal(new[] { "raster-roughing", "raster-finishing", "contour-finishing" }, StrategyRegistry.All.Select(s => s.Id));
+        Assert.Equal(
+            new[] { MillingOperation.Roughing, MillingOperation.Finishing, MillingOperation.Finishing },
+            StrategyRegistry.All.Select(s => s.Operation));
+        Assert.Single(StrategyRegistry.ForOperation(MillingOperation.Roughing));
+        Assert.Equal(2, StrategyRegistry.ForOperation(MillingOperation.Finishing).Count());
+    }
+
+    [Fact]
     public void GetById_UnknownId_ThrowsNamingTheKnownIds()
     {
         var ex = Assert.Throws<KeyNotFoundException>(() => StrategyRegistry.GetById("missing"));
