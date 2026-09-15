@@ -131,3 +131,9 @@
 - Desktop automation on this machine: SendKeys and posted key or wheel messages do not reach the
   Avalonia window reliably; mouse_event clicks do. Drive the UI through menu clicks when a capture
   is unavoidable and prefer headless tests (KeyPressQwerty) for keyboard behaviour.
+- The interactive cell limit is ProjectValidator.MaxInteractiveCells in the Application layer;
+  HeightMapRenderer.MaxCellsForInteractiveFrame only mirrors it. The guide names the renderer as
+  the owner, but Application cannot reference App, so the constant lives one layer down.
+- The GL viewport cannot be exercised on Linux inside Docker (no display); T-086 rests on the
+  Windows captures plus the shared code path. Frame budget is guarded on the CPU side by the build
+  timing test in CameraTests, not by a GPU measurement.

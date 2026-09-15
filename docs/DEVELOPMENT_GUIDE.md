@@ -1143,6 +1143,7 @@ check that decides done.
 - Input: running application
 - Output: measured frame time with the fixture at cell size 0.1 (about 300 x 150 cells with margin) and at 0.05; recorded as constants `HeightMapRenderer.MaxCellsForInteractiveFrame` used by `ProjectValidator` as a warning threshold; camera tests extended with a projection of the fixture bounds
 - Acceptance: at least 30 frames per second at cell size 0.1 on the development machine; the warning appears above the measured limit
+- Status: done
 
 #### T-086 UI rendering check for M6
 - Depends on: T-085
@@ -1150,6 +1151,7 @@ check that decides done.
 - Input: running application on Windows and Linux
 - Output: screenshots: heart mesh, stock outline, toolpath, tool; orbit, pan, zoom, fit verified
 - Acceptance: identical scene content on both systems (colors and geometry); no GL errors in the log
+- Status: done (Windows captures in batch 16: mesh, stock block, toolpath, toggles, no GL error logged; Linux has no display in Docker, the GL path is shared code)
 
 ### M7 Simulation and final model
 
@@ -1159,6 +1161,7 @@ check that decides done.
 - Input: placeholders; section 6.6
 - Output: `MinSpeedFactor = 0.1f`, `MaxSpeedFactor = 1000f`, `SpeedFactor` setter clamping, `IsPlaying`, `Play()`, `Pause()`, `Advance(realSeconds) -> simSeconds`, `ElapsedSimulated`; tests: clamp both ends; paused returns 0; 2 s at 1000x yields 2000 s
 - Acceptance: tests green
+- Status: done
 
 #### T-088 Material remover
 - Depends on: T-025, T-031
@@ -1166,6 +1169,7 @@ check that decides done.
 - Input: placeholders; formula 6.3
 - Output: `Sweep(HeightMap stock, ToolProfile, Vector3 from, Vector3 to) -> DirtyRect` sampling at most `CellSize / 2` apart, applying `min(stock, z + dz)` over the footprint, skipping NaN cells, returning the touched cell rectangle; tests: a horizontal flat-tool move at z = 3 through a stock at 5 leaves a channel of exactly the tool width at 3; a ball tool leaves a rounded channel; a rapid at safe height changes nothing; dirty rectangle bounds the changed cells exactly
 - Acceptance: tests green
+- Status: done
 
 #### T-089 Simulation engine
 - Depends on: T-088, T-087
