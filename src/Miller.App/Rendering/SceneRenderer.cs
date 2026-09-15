@@ -1,6 +1,7 @@
 using System.Numerics;
 using Avalonia.OpenGL;
 using Miller.App.ViewModels;
+using Miller.Core.Toolpaths;
 
 namespace Miller.App.Rendering;
 
@@ -22,10 +23,20 @@ public sealed class SceneRenderer : IDisposable
     private readonly Vector4 _background;
     private readonly AxisTriadRenderer _axes;
     private readonly MeshRenderer _mesh;
+    private readonly ToolpathRenderer _toolpath;
+    private readonly HeightMapRenderer _stockMap;
+    private readonly ToolRenderer _tool;
     private int _meshVersion = -1;
     private int _stockVersion = -1;
+    private int _toolpathVersion = -1;
+    private int _stockMapVersion = -1;
+    private int _toolVersion = -1;
     private bool _showModel = true;
     private bool _showStock = true;
+    private bool _showToolpath = true;
+    private bool _showTool = true;
+    private int _progressIndex;
+    private Vector3 _toolPosition;
 
     public SceneRenderer(GlInterface gl, GlVersion version)
     {
@@ -40,6 +51,17 @@ public sealed class SceneRenderer : IDisposable
         _background = ThemeColors.Get("ViewportBackgroundColor");
         _axes = new AxisTriadRenderer(gl, ThemeColors.Get("AxisXColor"), ThemeColors.Get("AxisYColor"), ThemeColors.Get("AxisZColor"), ThemeColors.Get("StockColor"));
         _mesh = new MeshRenderer(gl, ThemeColors.Get("ModelColor"));
+        _toolpath = new ToolpathRenderer(
+            gl,
+            new Dictionary<MoveKind, Vector4>
+            {
+                [MoveKind.Rapid] = ThemeColors.Get("ToolpathRapidColor"),
+                [MoveKind.Feed] = ThemeColors.Get("ToolpathFeedColor"),
+                [MoveKind.Plunge] = ThemeColors.Get("ToolpathPlungeColor"),
+            },
+            _background);
+        _stockMap = new HeightMapRenderer(gl);
+        _tool = new ToolRenderer(gl, ThemeColors.Get("ToolCutterColor"), ThemeColors.Get("ToolHeadColor"));
     }
 
     public Camera Camera { get; } = new();
@@ -49,6 +71,27 @@ public sealed class SceneRenderer : IDisposable
         ArgumentNullException.ThrowIfNull(viewModel);
         _showModel = viewModel.ShowModel;
         _showStock = viewModel.ShowStock;
+        _showToolpath = viewModel.ShowToolpath;
+        _showTool = viewModel.ShowTool;
+        _progressIndex = viewModel.ToolpathProgressIndex;
+        _toolPosition = viewModel.ToolPosition;
+        if (viewModel.ToolpathVersion != _toolpathVersion)
+        {
+            _toolpathVersion = viewModel.ToolpathVersion;
+            _toolpath.Upload(viewModel.Toolpath);
+        }
+
+        if (viewModel.StockMapVersion != _stockMapVersion)
+        {
+            _stockMapVersion = viewModel.StockMapVersion;
+            _stockMap.Upload(viewModel.StockMap, viewModel.StockFloorZ, ThemeColors.Get("StockColor"));
+        }
+
+        if (viewModel.ToolVersion != _toolVersion)
+        {
+            _toolVersion = viewModel.ToolVersion;
+            _tool.Build(viewModel.Tool);
+        }
         if (viewModel.MeshVersion != _meshVersion)
         {
             _meshVersion = viewModel.MeshVersion;
@@ -88,23 +131,40 @@ public sealed class SceneRenderer : IDisposable
         _gl.Clear(GlConsts.GL_COLOR_BUFFER_BIT | GlConsts.GL_DEPTH_BUFFER_BIT);
 
         var viewProjection = Camera.ViewProjection;
+        _lit.Use();
+        _lit.SetMatrix(_litMvp, viewProjection);
+        _functions.Uniform3f(_litLight, LightDirection.X, LightDirection.Y, LightDirection.Z);
+        _lit.SetFloat(_litAmbient, AmbientLight);
         if (_showModel)
         {
-            _lit.Use();
-            _lit.SetMatrix(_litMvp, viewProjection);
-            _functions.Uniform3f(_litLight, LightDirection.X, LightDirection.Y, LightDirection.Z);
-            _lit.SetFloat(_litAmbient, AmbientLight);
             _mesh.Draw();
+        }
+
+        if (_showStock)
+        {
+            _stockMap.Draw();
+        }
+
+        if (_showTool && _toolpath.SegmentCount > 0 && _tool.HasGeometry)
+        {
+            _tool.Draw(_lit, _litMvp, viewProjection, _toolPosition);
         }
 
         _lines.Use();
         _lines.SetMatrix(_linesMvp, viewProjection);
         _axes.Draw(_showStock);
+        if (_showToolpath)
+        {
+            _toolpath.Draw(_progressIndex);
+        }
         return _gl.GetError();
     }
 
     public void Dispose()
     {
+        _tool.Dispose();
+        _stockMap.Dispose();
+        _toolpath.Dispose();
         _mesh.Dispose();
         _axes.Dispose();
         _lines.Dispose();

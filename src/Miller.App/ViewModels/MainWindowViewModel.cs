@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -32,6 +33,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     private readonly Func<Action<ProgressReport>, IProgress<ProgressReport>> _progressFactory;
     private CancellationTokenSource? _generation;
+    private Mesh? _sceneSourceMesh;
+    private Matrix4x4 _sceneMatrix;
     private PipelineResult? _lastResult;
 
     public MainWindowViewModel(
@@ -156,6 +159,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             var result = await Pipeline.RunAsync(Project.Current, MeshImport.CurrentMesh!, progress, _generation.Token);
             LastResult = result;
             Strategy.ShowResult(result);
+            Viewport.SetToolpath(result.Toolpath);
+            Viewport.SetStockMap(result.Stock.Map, result.Stock.StockBottom);
             StatusText = string.Create(CultureInfo.InvariantCulture,
                 $"Toolpath ready: {result.Statistics.SegmentCount} segments, {result.Statistics.EstimatedMinutes:0.0} min");
             ToolpathGenerated?.Invoke(this, EventArgs.Empty);
@@ -202,8 +207,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
             Settings.LastStlDirectory = Path.GetDirectoryName(path);
             Settings.Save();
-            LastResult = null;
-            Strategy.Clear();
+            ClearResult();
             UpdateViewportScene();
             var size = report.Bounds.Size;
             StatusText = string.Create(CultureInfo.InvariantCulture,
@@ -234,21 +238,44 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     // The viewport shows the model in machine space with the stock placed around it; both follow
     // the axis and stock settings, so any project change recomputes them.
+    // A new project state invalidates the last toolpath and the stock it was cut from.
+    private void ClearResult()
+    {
+        LastResult = null;
+        Strategy.Clear();
+        Viewport.SetToolpath(null);
+        Viewport.SetStockMap(null, 0f);
+    }
+
+    // Runs on every project edit; the mesh is transformed and uploaded again only when its source or
+    // the axis transform changed, so typing in a panel does not refit the camera.
     private void UpdateViewportScene()
     {
+        Viewport.SetTool(Project.Current.Tool);
         if (!MeshImport.HasMesh || !Project.Current.Axes.IsPermutation)
         {
-            Viewport.SetMesh(null);
+            if (Viewport.Mesh is not null)
+            {
+                Viewport.SetMesh(null);
+            }
+
+            _sceneSourceMesh = null;
             Viewport.SetStock(null, null);
             return;
         }
 
         var mesh = MeshImport.CurrentMesh!;
         var stock = Project.Current.Stock;
-        var machineMesh = mesh.Transform(Project.Current.Axes.ToMatrix(mesh.Bounds, stock));
-        var corner = AxisSetup.StockCorner(machineMesh.Bounds, stock);
+        var matrix = Project.Current.Axes.ToMatrix(mesh.Bounds, stock);
+        if (!ReferenceEquals(mesh, _sceneSourceMesh) || matrix != _sceneMatrix)
+        {
+            _sceneSourceMesh = mesh;
+            _sceneMatrix = matrix;
+            Viewport.SetMesh(mesh.Transform(matrix));
+        }
+
+        var corner = AxisSetup.StockCorner(Viewport.Mesh!.Bounds, stock);
         var bounds = new BoundingBox(corner, corner + AxisSetup.StockBoundingSize(stock));
-        Viewport.SetMesh(machineMesh);
         Viewport.SetStock(bounds, stock);
     }
 

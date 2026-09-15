@@ -18,8 +18,7 @@ public sealed partial class MainWindowViewModel
     {
         Project.New();
         MeshImport.Clear();
-        LastResult = null;
-        Strategy.Clear();
+        ClearResult();
         UpdateViewportScene();
         StatusText = NewProjectStatus;
     }
@@ -45,8 +44,7 @@ public sealed partial class MainWindowViewModel
 
         Settings.LastProjectDirectory = Path.GetDirectoryName(path);
         Settings.Save();
-        LastResult = null;
-        Strategy.Clear();
+        ClearResult();
         MeshImport.Clear();
         UpdateViewportScene();
         StatusText = $"Opened {Path.GetFileName(path)}";

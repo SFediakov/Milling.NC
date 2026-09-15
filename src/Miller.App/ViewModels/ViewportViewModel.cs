@@ -1,6 +1,7 @@
 using System.Numerics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Miller.Core.Geometry;
+using Miller.Core.HeightMaps;
 using Miller.Core.Setup;
 using Miller.Core.Toolpaths;
 
@@ -47,6 +48,14 @@ public sealed partial class ViewportViewModel : ViewModelBase
 
     public ToolDefinition? Tool { get; private set; }
 
+    public int ToolVersion { get; private set; }
+
+    public HeightMap? StockMap { get; private set; }
+
+    public float StockFloorZ { get; private set; }
+
+    public int StockMapVersion { get; private set; }
+
     public bool FitPending { get; private set; }
 
     public void SetMesh(Mesh? mesh)
@@ -65,10 +74,24 @@ public sealed partial class ViewportViewModel : ViewModelBase
         Invalidate();
     }
 
-    public void SetToolpath(Toolpath? toolpath, ToolDefinition? tool)
+    public void SetTool(ToolDefinition? tool)
+    {
+        Tool = tool;
+        ToolVersion++;
+        Invalidate();
+    }
+
+    public void SetStockMap(HeightMap? stockMap, float floorZ)
+    {
+        StockMap = stockMap;
+        StockFloorZ = floorZ;
+        StockMapVersion++;
+        Invalidate();
+    }
+
+    public void SetToolpath(Toolpath? toolpath)
     {
         Toolpath = toolpath;
-        Tool = tool;
         ToolpathVersion++;
         ToolpathProgressIndex = 0;
         ToolPosition = toolpath is { Count: > 0 } ? toolpath.Segments[0].Start : Vector3.Zero;

@@ -20,6 +20,6 @@
       </ItemsControl.ItemTemplate>
     </ItemsControl>
     <TextBlock Name="LicensesText" Text="{Binding LicensesNote}" TextWrapping="Wrap" Margin="0,8,0,0" />
-    <TextBlock Text="Shortcuts: Ctrl+O open STL, Ctrl+S save project, Ctrl+E export NC, F5 generate toolpath." TextWrapping="Wrap" />
+    <TextBlock Text="Shortcuts: Ctrl+O open STL, Ctrl+S save project, Ctrl+E export NC, F5 generate toolpath, Ctrl+0 reset camera, Ctrl+1 to Ctrl+4 show or hide model, stock, toolpath and tool." TextWrapping="Wrap" />
   </StackPanel>
 </Window>
