@@ -978,6 +978,7 @@ check that decides done.
 - Input: placeholders
 - Output: `[AvaloniaFact]` constructing `MainWindow` with a real view model and a fake `IFileDialogService`, asserting the menu contains the four top-level menus and every item; view model tests: `OpenStlCommand` with the fake dialog returning the fixture sets the status text and the project path; returning null leaves the state unchanged
 - Acceptance: tests green
+- Status: done
 
 #### T-066 Tool settings panel
 - Depends on: T-063, T-021
@@ -985,6 +986,7 @@ check that decides done.
 - Input: placeholders
 - Output: numeric text boxes for cutter diameter, cutter length, head diameter, combo for tip type, name; two-way binding to `ProjectService.Current.Tool`; validation messages from `ProjectValidator` shown under the field; a small schematic drawn with shapes bound to the values (head wider than cutter)
 - Acceptance: screenshot; entering head diameter below cutter diameter shows the validator message
+- Status: done
 
 #### T-067 Stock settings panel
 - Depends on: T-066
@@ -992,6 +994,7 @@ check that decides done.
 - Input: placeholders
 - Output: shape combo (Box, Cylinder) switching the visible dimension fields, placement combo, margin, `Fit to model` button computing the box or cylinder that contains the transformed model bounds plus margin
 - Acceptance: screenshot; fit button on the fixture yields 30.482 x 15.000 x 21.971 for a box with margin 5
+- Status: done
 
 #### T-068 Axis settings panel
 - Depends on: T-067
@@ -999,6 +1002,7 @@ check that decides done.
 - Input: placeholders
 - Output: three combos for mapping, three check boxes for direction, three numeric rotations, origin mode combo with custom offset fields, a read-only line showing the machine-space bounds of the model for the current setup
 - Acceptance: screenshot; swapping Y and Z on the fixture shows bounds 20.482 x 21.971 x 5.000
+- Status: done
 
 #### T-069 Cutting parameters panel
 - Depends on: T-068
