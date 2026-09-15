@@ -1,7 +1,18 @@
-// PLACEHOLDER - implemented by T-051 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.GCode
-// Purpose: Explicit list of post-processors; same rules as StrategyRegistry.
-// Public interface (names only): static class PostProcessorRegistry { static
-//     IReadOnlyList<IPostProcessor> All; static IPostProcessor GetById(string id) }
-// Depends on: IPostProcessor, GrblPostProcessor
-// Must not depend on: Avalonia, System.IO file dialogs, threads, timers
+using Miller.Core.Toolpaths;
+
+namespace Miller.Core.GCode;
+
+// Explicit list of every post-processor. Adding one = a new file in GCode plus one entry here.
+public static class PostProcessorRegistry
+{
+    public static IReadOnlyList<IPostProcessor> All { get; } = RegistryRules.Validate(
+        new IPostProcessor[]
+        {
+            new GrblPostProcessor(),
+        },
+        p => p.Id,
+        p => p.DisplayName,
+        "post-processor");
+
+    public static IPostProcessor GetById(string id) => RegistryRules.FindById(All, p => p.Id, id, "post-processor");
+}
