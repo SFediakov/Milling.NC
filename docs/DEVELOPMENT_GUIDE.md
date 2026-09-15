@@ -455,6 +455,7 @@ check that decides done.
 - Input: placeholders `global.json.placeholder.md`, `Directory.Build.props.placeholder.md`, `.editorconfig`
 - Output: SDK pin `10.0.100` with `rollForward: latestFeature`; props with `net10.0`, `Nullable=enable`, `ImplicitUsings=enable`, `TreatWarningsAsErrors=true`, `LangVersion=latest`, `InvariantGlobalization=true`, `Deterministic=true`; editorconfig with 4-space indent, LF, `dotnet_diagnostic` severity for unused usings
 - Acceptance: `dotnet --version` prints a 10.0.x version in the repository root; the three files exist and the placeholders are deleted
+- Status: done
 
 #### T-002 Central package versions and single NuGet source
 - Depends on: T-001
