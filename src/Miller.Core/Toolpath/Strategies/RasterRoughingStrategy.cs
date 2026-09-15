@@ -13,9 +13,6 @@ public sealed class RasterRoughingStrategy : IToolpathStrategy
 {
     public const string StrategyId = "raster-roughing";
 
-    // Guards floor() against 3 / 0.5 evaluating to 5.9999995.
-    private const float RowStepEpsilon = 1e-4f;
-
     public string Id => StrategyId;
 
     public string DisplayName => "Raster roughing (Z levels)";
@@ -27,7 +24,7 @@ public sealed class RasterRoughingStrategy : IToolpathStrategy
         ArgumentNullException.ThrowIfNull(context);
         var p = context.Parameters;
         var map = context.EffectiveTip;
-        var rowStep = RowStepCells(p.Stepover, map.CellSize);
+        var rowStep = RasterRows.RowStepCells(p.Stepover, map.CellSize);
         var steps = context.Plan.RoughingSteps.ToList();
         var passes = new List<Toolpath>();
 
@@ -36,10 +33,11 @@ public sealed class RasterRoughingStrategy : IToolpathStrategy
             var step = steps[s];
             var forward = true;
             Toolpath? current = null;
-            foreach (var j in RowIndices(map.Height, rowStep))
+            foreach (var j in RasterRows.RowIndices(map.Height, rowStep))
             {
                 cancellation.ThrowIfCancellationRequested();
-                foreach (var (i0, i1) in Runs(step.Mask, j, map.Width, forward))
+                var row = j;
+                foreach (var (i0, i1) in RasterRows.Runs(i => step.Mask[i, row], map.Width, forward))
                 {
                     var start = Point(map, i0, j, step.Level);
                     var end = Point(map, i1, j, step.Level);
@@ -66,57 +64,7 @@ public sealed class RasterRoughingStrategy : IToolpathStrategy
             progress?.Report((s + 1f) / steps.Count);
         }
 
-        return ToolpathLinker.Link(passes, p, context.SafeZ);
-    }
-
-    public static int RowStepCells(float stepover, float cellSize)
-        => Math.Max(1, (int)MathF.Floor(stepover / cellSize + RowStepEpsilon));
-
-    public static IEnumerable<int> RowIndices(int height, int rowStep)
-    {
-        var last = -1;
-        for (var j = 0; j < height; j += rowStep)
-        {
-            last = j;
-            yield return j;
-        }
-
-        if (last != height - 1)
-        {
-            yield return height - 1;
-        }
-    }
-
-    // Runs of consecutive masked cells in row j as (first, last) in travel order.
-    public static IEnumerable<(int First, int Last)> Runs(bool[,] mask, int j, int width, bool forward)
-    {
-        var runs = new List<(int, int)>();
-        var i = 0;
-        while (i < width)
-        {
-            if (!mask[i, j])
-            {
-                i++;
-                continue;
-            }
-
-            var start = i;
-            while (i + 1 < width && mask[i + 1, j])
-            {
-                i++;
-            }
-
-            runs.Add((start, i));
-            i++;
-        }
-
-        if (forward)
-        {
-            return runs;
-        }
-
-        runs.Reverse();
-        return runs.Select(r => (r.Item2, r.Item1));
+        return ToolpathLinker.Link(passes, p, context.SafeZ, map);
     }
 
     // Every half-cell sample of the straight join lies on a masked cell.

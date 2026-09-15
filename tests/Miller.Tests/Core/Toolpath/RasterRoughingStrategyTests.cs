@@ -87,10 +87,10 @@ public sealed class RasterRoughingStrategyTests
     [Fact]
     public void Helpers_ComputeRowsAndRuns()
     {
-        Assert.Equal(6, RasterRoughingStrategy.RowStepCells(3f, 0.5f));
-        Assert.Equal(1, RasterRoughingStrategy.RowStepCells(0.1f, 0.5f));
-        Assert.Equal(new[] { 0, 6, 12, 18, 19 }, RasterRoughingStrategy.RowIndices(20, 6));
-        Assert.Equal(new[] { 0, 6, 12, 18 }, RasterRoughingStrategy.RowIndices(19, 6));
+        Assert.Equal(6, RasterRows.RowStepCells(3f, 0.5f));
+        Assert.Equal(1, RasterRows.RowStepCells(0.1f, 0.5f));
+        Assert.Equal(new[] { 0, 6, 12, 18, 19 }, RasterRows.RowIndices(20, 6));
+        Assert.Equal(new[] { 0, 6, 12, 18 }, RasterRows.RowIndices(19, 6));
 
         var mask = new bool[8, 1];
         foreach (var i in new[] { 1, 2, 3, 5, 7 })
@@ -98,8 +98,8 @@ public sealed class RasterRoughingStrategyTests
             mask[i, 0] = true;
         }
 
-        Assert.Equal(new[] { (1, 3), (5, 5), (7, 7) }, RasterRoughingStrategy.Runs(mask, 0, 8, true));
-        Assert.Equal(new[] { (7, 7), (5, 5), (3, 1) }, RasterRoughingStrategy.Runs(mask, 0, 8, false));
+        Assert.Equal(new[] { (1, 3), (5, 5), (7, 7) }, RasterRows.Runs(i => mask[i, 0], 8, true));
+        Assert.Equal(new[] { (7, 7), (5, 5), (3, 1) }, RasterRows.Runs(i => mask[i, 0], 8, false));
     }
 
     private static bool InsideBox(Vector3 p) => p.X > 5 && p.X < 15 && p.Y > 5 && p.Y < 15;

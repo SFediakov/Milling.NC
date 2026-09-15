@@ -61,3 +61,13 @@
   assigned values (floor, NaN) compare exactly. Sampling a ridge at cell centers
   loses up to one cell size of height, so a fixture peak is asserted within the
   cell size, not within 0.01 mm.
+- Gouge model: GougeChecker treats every cell as a flat plateau at its tip value and judges a
+  sample by the cell it falls in. Strategies must be safe under that model: raster finishing
+  crosses a cell boundary at the higher of the two tips, contour finishing traces the mask of
+  allowed cells pulled into those cells, and a square with three allowed corners needs an elbow
+  vertex or the chord cuts the forbidden cell. The linker joins passes only when the join feed is
+  clear against the tip map.
+- Rasterized heights carry float rounding (a 5.0 top reads 5.0000005). Tests compare interpolated
+  values with a tolerance, and a mask at the exact stock top needs a small margin.
+- The Bash tool truncates commands above roughly 8 KB, which cuts a heredoc mid-way and fails
+  with an unmatched quote error. Write files larger than a few KB with the Write tool.
