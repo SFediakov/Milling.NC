@@ -1,4 +1,5 @@
 using System.Numerics;
+using Miller.Core.HeightMaps;
 using Miller.Core.Setup;
 using Miller.Core.Toolpaths;
 using Xunit;
@@ -8,6 +9,7 @@ namespace Miller.Tests.Core.Toolpaths;
 public sealed class ToolpathLinkerTests
 {
     private const float SafeZ = 10f;
+    private static readonly HeightMap Clear = new(-50, -50, 0.5f, 400, 400, -100f);
     private static readonly CuttingParameters Parameters = new() { CellSize = 0.5f, FeedRate = 800, PlungeRate = 200, RapidRate = 3000 };
 
     private static Toolpath Pass(params Vector3[] points)
@@ -26,7 +28,7 @@ public sealed class ToolpathLinkerTests
     {
         var a = Pass(new Vector3(0, 0, -1), new Vector3(10, 0, -1));
         var b = Pass(new Vector3(20, 5, -1), new Vector3(30, 5, -1));
-        var linked = ToolpathLinker.Link(new[] { a, b }, Parameters, SafeZ);
+        var linked = ToolpathLinker.Link(new[] { a, b }, Parameters, SafeZ, Clear);
 
         Assert.Equal(new[]
         {
@@ -47,7 +49,7 @@ public sealed class ToolpathLinkerTests
     {
         var a = Pass(new Vector3(0, 0, -1), new Vector3(10, 0, -1));
         var b = Pass(new Vector3(10, 0.4f, -1), new Vector3(0, 0.4f, -1));
-        var linked = ToolpathLinker.Link(new[] { a, b }, Parameters, SafeZ);
+        var linked = ToolpathLinker.Link(new[] { a, b }, Parameters, SafeZ, Clear);
         Assert.Equal(new[] { MoveKind.Plunge, MoveKind.Feed, MoveKind.Feed, MoveKind.Feed, MoveKind.Rapid }, linked.Segments.Select(s => s.Kind));
         Assert.Equal(new Vector3(10, 0, -1), linked.Segments[2].Start);
         Assert.Equal(new Vector3(10, 0.4f, -1), linked.Segments[2].End);
@@ -58,23 +60,35 @@ public sealed class ToolpathLinkerTests
     {
         var a = Pass(new Vector3(0, 0, -1), new Vector3(10, 0, -1));
         var b = Pass(new Vector3(10, 0, -1), new Vector3(10, 10, -1));
-        var linked = ToolpathLinker.Link(new[] { a, b }, Parameters, SafeZ);
+        var linked = ToolpathLinker.Link(new[] { a, b }, Parameters, SafeZ, Clear);
         Assert.Equal(4, linked.Count);
     }
 
     [Fact]
     public void EmptyPasses_AreSkipped_AndNoPassGivesAnEmptyToolpath()
     {
-        Assert.Equal(0, ToolpathLinker.Link(new[] { new Toolpath() }, Parameters, SafeZ).Count);
+        Assert.Equal(0, ToolpathLinker.Link(new[] { new Toolpath() }, Parameters, SafeZ, Clear).Count);
         var a = Pass(new Vector3(0, 0, -1), new Vector3(10, 0, -1));
-        var linked = ToolpathLinker.Link(new[] { new Toolpath(), a, new Toolpath() }, Parameters, SafeZ);
+        var linked = ToolpathLinker.Link(new[] { new Toolpath(), a, new Toolpath() }, Parameters, SafeZ, Clear);
         Assert.Equal(3, linked.Count);
+    }
+
+    [Fact]
+    public void AdjacentPasses_AreNotJoinedWhenTheJoinWouldGouge()
+    {
+        var a = Pass(new Vector3(0, 0, -1), new Vector3(10, 0, -1));
+        var b = Pass(new Vector3(10, 0.4f, -1), new Vector3(0, 0.4f, -1));
+        var wall = Clear.Clone();
+        var (i, j) = wall.CellOf(10, 0.4f);
+        wall[i, j] = 0f;
+        var linked = ToolpathLinker.Link(new[] { a, b }, Parameters, SafeZ, wall);
+        Assert.Equal(new[] { MoveKind.Plunge, MoveKind.Feed, MoveKind.Rapid, MoveKind.Rapid, MoveKind.Plunge, MoveKind.Feed, MoveKind.Rapid }, linked.Segments.Select(s => s.Kind));
     }
 
     [Fact]
     public void PointsAboveSafeZ_AreRejected()
     {
         var high = Pass(new Vector3(0, 0, 11), new Vector3(10, 0, 11));
-        Assert.Throws<ArgumentException>(() => ToolpathLinker.Link(new[] { high }, Parameters, SafeZ));
+        Assert.Throws<ArgumentException>(() => ToolpathLinker.Link(new[] { high }, Parameters, SafeZ, Clear));
     }
 }

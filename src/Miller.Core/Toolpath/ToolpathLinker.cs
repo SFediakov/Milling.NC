@@ -1,18 +1,20 @@
 using System.Numerics;
+using Miller.Core.HeightMaps;
 using Miller.Core.Setup;
 
 namespace Miller.Core.Toolpaths;
 
 // Joins passes into one toolpath. A pass is a chain of feed segments a strategy produced. Between
-// passes whose end and start are farther apart than one cell the tool retracts to safe Z, rapids
-// over and plunges; closer passes are joined by one feed. The program starts above the first pass
-// at safe Z and ends with a retract.
+// passes whose end and start are farther apart than one cell, or whose straight join would gouge
+// the effective tip map, the tool retracts to safe Z, rapids over and plunges; otherwise the passes
+// are joined by one feed. The program starts above the first pass at safe Z and ends with a retract.
 public static class ToolpathLinker
 {
-    public static Toolpath Link(IReadOnlyList<Toolpath> passes, CuttingParameters parameters, float safeZ)
+    public static Toolpath Link(IReadOnlyList<Toolpath> passes, CuttingParameters parameters, float safeZ, HeightMap effectiveTip)
     {
         ArgumentNullException.ThrowIfNull(passes);
         ArgumentNullException.ThrowIfNull(parameters);
+        ArgumentNullException.ThrowIfNull(effectiveTip);
         var result = new Toolpath();
         var joinDistance = parameters.CellSize + ToolProfileEpsilon;
         Vector3? position = null;
@@ -29,7 +31,8 @@ public static class ToolpathLinker
             {
                 result.Add(new ToolpathSegment(new Vector3(first.X, first.Y, safeZ), first, MoveKind.Plunge, parameters.PlungeRate));
             }
-            else if (Vector3.Distance(position.Value, first) <= joinDistance)
+            else if (Vector3.Distance(position.Value, first) <= joinDistance
+                && GougeChecker.IsClear(new ToolpathSegment(position.Value, first, MoveKind.Feed, parameters.FeedRate), effectiveTip, parameters.Tolerance))
             {
                 if (position.Value != first)
                 {

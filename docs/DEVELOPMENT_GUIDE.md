@@ -782,6 +782,7 @@ check that decides done.
 - Input: placeholders
 - Output: id `raster-finishing`; rows along X at `FinishingStepover`; Z per cell from the effective tip map; consecutive collinear points merged (tolerance); rows skipped where the whole row is NaN; tests: zero gouges on the bump plate; every covered cell within one stepover of a pass; segment count is smaller than the cell count (merging works)
 - Acceptance: tests green; strategy registered
+- Status: done
 
 #### T-042 Marching squares
 - Depends on: T-022
@@ -789,6 +790,7 @@ check that decides done.
 - Input: placeholders; pitfall 10
 - Output: `Contours(HeightMap, float level) -> IReadOnlyList<IReadOnlyList<Vector2>>` closed loops with linear interpolation, NaN treated as below the level; tests: a circular hill gives one closed loop with perimeter close to `2 pi r` (5 percent); two hills give two loops; a level above the maximum gives none
 - Acceptance: tests green
+- Status: done
 
 #### T-043 Contour finishing strategy
 - Depends on: T-042, T-041
@@ -796,6 +798,7 @@ check that decides done.
 - Input: placeholders
 - Output: id `contour-finishing`; levels from stock top down by `FinishingStepover` (used as vertical step); contours of the effective tip map at each level become feed loops at that Z; linked with retracts; tests: zero gouges on the bump plate; loop count per level matches marching squares; loops are closed (first point equals last)
 - Acceptance: tests green; strategy registered
+- Status: done
 
 #### T-044 Registry tests with the three strategies
 - Depends on: T-043
@@ -803,6 +806,7 @@ check that decides done.
 - Input: T-036 tests
 - Output: tests extended: `All` contains exactly `raster-roughing`, `raster-finishing`, `contour-finishing`; operations are Roughing, Finishing, Finishing
 - Acceptance: tests green
+- Status: done
 
 #### T-045 Progress report type
 - Depends on: T-004
