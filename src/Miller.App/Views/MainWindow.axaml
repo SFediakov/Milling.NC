@@ -1,0 +1,44 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Miller.App.ViewModels"
+        xmlns:views="using:Miller.App.Views"
+        x:Class="Miller.App.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="{Binding Title}"
+        MinWidth="960"
+        MinHeight="600">
+  <DockPanel>
+    <views:MainMenu DockPanel.Dock="Top" />
+
+    <Border DockPanel.Dock="Bottom" Name="StatusBar" Classes="panel" Padding="8,4">
+      <DockPanel>
+        <ProgressBar DockPanel.Dock="Right"
+                     Name="ProgressBar"
+                     Width="200"
+                     Minimum="0"
+                     Maximum="1"
+                     Value="{Binding Progress}"
+                     IsVisible="{Binding IsBusy}"
+                     Margin="8,0,0,0" />
+        <Button DockPanel.Dock="Right"
+                Name="CancelButton"
+                Content="Cancel"
+                Command="{Binding CancelGenerateCommand}"
+                IsVisible="{Binding IsBusy}" />
+        <TextBlock Name="StatusText" Text="{Binding StatusText}" VerticalAlignment="Center" />
+      </DockPanel>
+    </Border>
+
+    <TabControl DockPanel.Dock="Left" Name="SettingsTabs" Width="360">
+      <TabItem Header="Tool" Name="ToolTab" />
+      <TabItem Header="Stock" Name="StockTab" />
+      <TabItem Header="Axes" Name="AxesTab" />
+      <TabItem Header="Cutting" Name="CuttingTab" />
+      <TabItem Header="Strategy" Name="StrategyTab" />
+      <TabItem Header="Simulation" Name="SimulationTab" />
+      <TabItem Header="Analysis" Name="AnalysisTab" />
+    </TabControl>
+
+    <Border Name="ViewportHost" Background="{DynamicResource ViewportBackgroundBrush}" />
+  </DockPanel>
+</Window>

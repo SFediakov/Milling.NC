@@ -1,0 +1,35 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Miller.App.ViewModels"
+             x:Class="Miller.App.Views.MainMenu"
+             x:DataType="vm:MainWindowViewModel">
+  <Menu Name="Menu">
+    <MenuItem Header="_File" Name="FileMenu">
+      <MenuItem Header="Open _STL..." Name="OpenStlItem" Command="{Binding OpenStlCommand}" />
+      <MenuItem Header="_Open Project..." Name="OpenProjectItem" Command="{Binding OpenProjectCommand}" />
+      <MenuItem Header="_Save Project" Name="SaveProjectItem" Command="{Binding SaveProjectCommand}" />
+      <MenuItem Header="Save Project _As..." Name="SaveProjectAsItem" Command="{Binding SaveProjectAsCommand}" />
+      <Separator />
+      <MenuItem Header="_Export NC..." Name="ExportNcItem" Command="{Binding ExportNcCommand}" />
+      <Separator />
+      <MenuItem Header="E_xit" Name="ExitItem" Command="{Binding ExitCommand}" />
+    </MenuItem>
+    <MenuItem Header="_View" Name="ViewMenu">
+      <MenuItem Header="_Reset Camera" Name="ResetCameraItem" Command="{Binding ResetCameraCommand}" />
+      <Separator />
+      <MenuItem Header="Show _Model" Name="ShowModelItem" Command="{Binding ToggleModelCommand}" />
+      <MenuItem Header="Show _Stock" Name="ShowStockItem" Command="{Binding ToggleStockCommand}" />
+      <MenuItem Header="Show _Toolpath" Name="ShowToolpathItem" Command="{Binding ToggleToolpathCommand}" />
+      <MenuItem Header="Show Too_l" Name="ShowToolItem" Command="{Binding ToggleToolCommand}" />
+    </MenuItem>
+    <MenuItem Header="_Simulation" Name="SimulationMenu">
+      <MenuItem Header="_Play" Name="PlayItem" Command="{Binding PlayCommand}" />
+      <MenuItem Header="P_ause" Name="PauseItem" Command="{Binding PauseCommand}" />
+      <MenuItem Header="_Stop" Name="StopItem" Command="{Binding StopCommand}" />
+      <MenuItem Header="_Run To End" Name="RunToEndItem" Command="{Binding RunToEndCommand}" />
+    </MenuItem>
+    <MenuItem Header="_Help" Name="HelpMenu">
+      <MenuItem Header="_About" Name="AboutItem" Command="{Binding ShowAboutCommand}" />
+    </MenuItem>
+  </Menu>
+</UserControl>
