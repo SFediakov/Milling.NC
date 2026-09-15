@@ -518,7 +518,7 @@ check that decides done.
 - Depends on: T-008
 - Files: `launchers/Miller.sh`
 - Input: comment-only placeholder
-- Output: `#!/usr/bin/env bash`, `cd "$(dirname "$(readlink -f "$0")")"`, `exec ./Miller "$@"`; `build.sh` already copies it and sets the executable bit
+- Output: `#!/usr/bin/env bash`, `exec "$(dirname "$(readlink -f "$0")")/Miller" "$@"` (no `cd`: relative paths on the command line must keep their meaning); `build.sh` already copies it and sets the executable bit
 - Status: done
 - Acceptance: `bash -n launchers/Miller.sh` passes; `file launchers/Miller.sh` reports LF line endings; `dist/linux-x64/Miller.sh --version` prints the version when run on Linux (Docker or WSL)
 
@@ -880,6 +880,7 @@ check that decides done.
 - Input: placeholders (`square_grbl.nc.placeholder.md` describes the toolpath: a 10 mm square at Z -1 with retract, plunge, four feeds)
 - Output: golden file written once from the implementation and reviewed by hand against section 6.5; test compares byte for byte; a second test asserts `F` appears exactly twice (plunge rate, feed rate)
 - Acceptance: tests green; golden file reviewed line by line and matching the template
+- Status: done
 
 #### T-054 Export service
 - Depends on: T-053, T-047
@@ -887,6 +888,7 @@ check that decides done.
 - Input: placeholders
 - Output: `Export(Toolpath, MillingProject, string path)` selecting the post-processor by `PostProcessorId`, writing with UTF-8 without BOM, creating the directory; tests: file written, extension enforced, unknown post-processor id throws before creating the file
 - Acceptance: tests green
+- Status: done
 
 #### T-055 Headless export CLI
 - Depends on: T-054, T-006
@@ -894,6 +896,7 @@ check that decides done.
 - Input: placeholder `samples/heart.miller.json.placeholder.md`
 - Output: `--export <project.json> <out.nc>` loads the project, resolves `StlPath` relative to the project file, runs `PipelineService` synchronously with progress printed as `stage fraction` lines, exports, exits 0; any error prints the message and exits 1; sample project pointing at `../Milling_Heart_V2.STL` with cell size 0.2
 - Acceptance: `dotnet run --project src/Miller.App -- --export samples/heart.miller.json out/heart.nc` writes a file starting with `( Miller Build_`
+- Status: done
 
 #### T-056 Fixture golden and Docker verification
 - Depends on: T-055, T-010
@@ -901,6 +904,7 @@ check that decides done.
 - Input: placeholders
 - Output: golden produced by the CLI on Windows, test runs the pipeline on the sample project in-process and compares to the golden after replacing the version comment line; Docker verification documented in the test file header: `docker run --rm miller-build dist/linux-x64/Miller.sh --export samples/heart.miller.json out/heart.nc` then `diff` with the golden ignoring the version line
 - Acceptance: test green on Windows; the Docker diff is empty
+- Status: done
 
 ### M5 UI skeleton and settings
 
