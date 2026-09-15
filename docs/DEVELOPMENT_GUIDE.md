@@ -463,6 +463,7 @@ check that decides done.
 - Input: package table in `docs/ARCHITECTURE.md` section 2.2
 - Output: `ManagePackageVersionsCentrally=true` with every listed package and version; `NuGet.config` with `<clear />` and one source `third_party/nuget`
 - Acceptance: `dotnet nuget list source --configfile NuGet.config` shows exactly one enabled source pointing at `third_party/nuget`
+- Status: done
 
 #### T-003 Core class library project
 - Depends on: T-002
