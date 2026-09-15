@@ -1,9 +1,55 @@
-// PLACEHOLDER - implemented by T-059 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.App.ViewModels
-// Purpose: ObservableObject base with per-field error dictionary used by every settings view model.
-// Public interface (names only): abstract class ViewModelBase : ObservableObject {
-//     IReadOnlyDictionary<string, string> Errors; void SetError(string field, string message); void
-//     ClearErrors(); void ApplyValidation(ValidationResult result, string prefix) }
-// Depends on: Miller.Application services, CommunityToolkit.Mvvm
-// Must not depend on: Miller.Core algorithms called directly from views or view models (go through
-//     Miller.Application services)
+using CommunityToolkit.Mvvm.ComponentModel;
+using Miller.Application.Validation;
+
+namespace Miller.App.ViewModels;
+
+// Per-field validation messages shared by every settings view model.
+public abstract class ViewModelBase : ObservableObject
+{
+    private readonly Dictionary<string, string> _errors = new(StringComparer.Ordinal);
+
+    public IReadOnlyDictionary<string, string> Errors => _errors;
+
+    public bool HasErrors => _errors.Count > 0;
+
+    public string? ErrorFor(string field) => _errors.GetValueOrDefault(field);
+
+    public void SetError(string field, string message)
+    {
+        _errors[field] = message;
+        OnErrorsChanged();
+    }
+
+    public void ClearErrors()
+    {
+        if (_errors.Count == 0)
+        {
+            return;
+        }
+
+        _errors.Clear();
+        OnErrorsChanged();
+    }
+
+    // Keeps the messages whose field starts with the prefix, for example "Tool." for the tool panel.
+    public void ApplyValidation(ValidationResult result, string prefix)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        _errors.Clear();
+        foreach (var error in result.Errors)
+        {
+            if (error.Field.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                _errors[error.Field] = error.Message;
+            }
+        }
+
+        OnErrorsChanged();
+    }
+
+    protected virtual void OnErrorsChanged()
+    {
+        OnPropertyChanged(nameof(Errors));
+        OnPropertyChanged(nameof(HasErrors));
+    }
+}
