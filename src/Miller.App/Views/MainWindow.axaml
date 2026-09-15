@@ -49,6 +49,8 @@
       <TabItem Header="Analysis" Name="AnalysisTab" />
     </TabControl>
 
-    <Border Name="ViewportHost" Background="{DynamicResource ViewportBackgroundBrush}" />
+    <Border Name="ViewportHost" Background="{DynamicResource ViewportBackgroundBrush}">
+      <views:Viewport3DControl Name="Viewport" ViewModel="{Binding Viewport}" />
+    </Border>
   </DockPanel>
 </Window>
