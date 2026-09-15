@@ -29,6 +29,12 @@ public static class ProjectValidator
                 $"Head diameter {F(tool.HeadDiameter)} must be larger than the cutter diameter {F(tool.CutterDiameter)}."));
         }
 
+        if (!project.Axes.IsPermutation)
+        {
+            errors.Add(new ValidationMessage("Axes.MapX",
+                $"Axis mapping must use each model axis once, got X={project.Axes.MapX}, Y={project.Axes.MapY}, Z={project.Axes.MapZ}."));
+        }
+
         InRange(errors, "Parameters.Stepover", p.Stepover, tool.CutterDiameter);
         InRange(errors, "Parameters.FinishingStepover", p.FinishingStepover, tool.CutterDiameter);
         Positive(errors, "Parameters.Stepdown", p.Stepdown);

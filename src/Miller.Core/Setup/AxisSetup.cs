@@ -51,9 +51,12 @@ public sealed class AxisSetup
 
     public static AxisSetup Default() => new();
 
+    // Each model axis used exactly once.
+    public bool IsPermutation => MapX != MapY && MapY != MapZ && MapX != MapZ;
+
     public Matrix4x4 ToOrientationMatrix()
     {
-        if (MapX == MapY || MapY == MapZ || MapX == MapZ)
+        if (!IsPermutation)
         {
             throw new ArgumentException($"Axis mapping must be a permutation, got X={MapX}, Y={MapY}, Z={MapZ}.");
         }
