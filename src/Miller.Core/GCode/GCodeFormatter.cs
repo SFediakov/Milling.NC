@@ -1,8 +1,31 @@
-// PLACEHOLDER - implemented by T-050 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.GCode
-// Purpose: Number formatting for G-code: invariant culture, 3 decimals, trailing zeros trimmed,
-//     negative zero normalized.
-// Public interface (names only): static class GCodeFormatter { const int Decimals = 3; static
-//     string Format(float value); static string Word(char letter, float value) }
-// Depends on: none
-// Must not depend on: Avalonia, System.IO file dialogs, threads, timers
+using System.Globalization;
+
+namespace Miller.Core.GCode;
+
+// Number formatting for G-code: invariant culture, three decimals, trailing zeros trimmed, negative
+// zero normalized to 0.
+public static class GCodeFormatter
+{
+    public const int Decimals = 3;
+
+    private const string Pattern = "0.###";
+
+    public static string Format(float value)
+    {
+        if (!float.IsFinite(value))
+        {
+            throw new ArgumentException($"G-code numbers must be finite, got {value}.", nameof(value));
+        }
+
+        var rounded = MathF.Round(value, Decimals, MidpointRounding.AwayFromZero);
+        if (rounded == 0)
+        {
+            rounded = 0;
+        }
+
+        var text = rounded.ToString(Pattern, CultureInfo.InvariantCulture);
+        return text == "-0" ? "0" : text;
+    }
+
+    public static string Word(char letter, float value) => letter + Format(value);
+}
