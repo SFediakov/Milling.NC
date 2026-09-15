@@ -750,6 +750,7 @@ check that decides done.
 - Input: placeholders; section 5 gouge definition
 - Output: `Verify(Toolpath, HeightMap effectiveTip, float tolerance) -> IReadOnlyList<GougeViolation>` sampling feed and plunge segments at `CellSize / 2`; tests: a segment on the tip map has zero violations; one dipped below by 2 x tolerance has at least one; rapids are ignored
 - Acceptance: tests green
+- Status: done
 
 #### T-038 Toolpath linker
 - Depends on: T-031
@@ -757,6 +758,7 @@ check that decides done.
 - Input: placeholders; section 6.4
 - Output: `Link(IReadOnlyList<Toolpath> passes, CuttingParameters, float safeHeight) -> Toolpath`: for consecutive passes whose end and start differ by more than `CellSize`, insert retract (`Rapid` up to safe height), `Rapid` in XY at safe height, `Plunge` down to the pass start; a final retract; tests: two disjoint passes produce exactly retract, rapid, plunge between them; adjacent passes are joined by one feed segment; first move starts at safe height
 - Acceptance: tests green
+- Status: done
 
 #### T-039 Raster roughing strategy
 - Depends on: T-037, T-038
@@ -764,6 +766,7 @@ check that decides done.
 - Input: placeholder; section 6.4
 - Output: id `raster-roughing`; for each roughing level: rows along X spaced by `Stepover`; per row collect runs of masked cells; each run is one feed segment at `z = level`; `Zigzag` alternates direction; passes handed to `ToolpathLinker`; progress reported per level; cancellation checked per row
 - Acceptance: compiles; registered in `StrategyRegistry`; tests in T-040
+- Status: done
 
 #### T-040 Tests for raster roughing
 - Depends on: T-039, T-036
@@ -771,6 +774,7 @@ check that decides done.
 - Input: placeholder
 - Output: tests: on the 10x10x5 box centered in a 20x20x5 stock the roughing removes the ring around the box (all feed segments outside the box footprint), zero gouges, feed Z equals a level, cancellation throws `OperationCanceledException`
 - Acceptance: tests green
+- Status: done
 
 #### T-041 Raster finishing strategy
 - Depends on: T-039
