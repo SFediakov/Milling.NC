@@ -40,7 +40,7 @@ public sealed class ToolpathStatisticsTests
     public void EmptyToolpath_GivesZeros()
     {
         var stats = ToolpathStatistics.Compute(new Toolpath(), Parameters);
-        Assert.Equal(new ToolpathStatistics(0, 0, 0, 0, 0), stats);
+        Assert.Equal(new ToolpathStatistics(0, 0, 0, 0, 0, 0), stats);
     }
 
     [Fact]

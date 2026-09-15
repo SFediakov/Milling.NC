@@ -83,7 +83,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
             var text = new StringBuilder();
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Segments: {Statistics.SegmentCount}\n"));
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Feed: {Statistics.FeedLength:0.0} mm, plunge: {Statistics.PlungeLength:0.0} mm, rapid: {Statistics.RapidLength:0.0} mm\n"));
-            text.Append(string.Create(CultureInfo.InvariantCulture, $"Estimated time: {Statistics.EstimatedMinutes:0.0} min\n"));
+            text.Append(string.Create(CultureInfo.InvariantCulture, $"Estimated time: {Statistics.EstimatedMinutes:0.0} min, retracts: {Statistics.RetractCount}\n"));
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Roughing levels: {Plan.RoughingLevels}, lowest level: {Plan.LowestLevel:0.000} mm"));
             return text.ToString();
         }

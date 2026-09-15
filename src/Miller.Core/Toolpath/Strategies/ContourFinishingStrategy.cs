@@ -24,16 +24,16 @@ public sealed class ContourFinishingStrategy : IToolpathStrategy
         var p = context.Parameters;
         var map = context.EffectiveTip;
         var levels = Slicer.RoughingLevels(context.StockTop, context.Plan.LowestLevel, p.FinishingStepover).ToList();
-        var passes = new List<Toolpath>();
+        var groups = new List<IReadOnlyList<Toolpath>>();
         for (var k = 0; k < levels.Count; k++)
         {
             cancellation.ThrowIfCancellationRequested();
             var level = levels[k];
-            passes.AddRange(LoopPasses(AllowedMask(map, level), map, level, p));
+            groups.Add(LoopPasses(AllowedMask(map, level), map, level, p));
             progress?.Report((k + 1f) / levels.Count);
         }
 
-        return ToolpathLinker.Link(passes, p, context.SafeZ, map);
+        return ToolpathLinker.Link(groups, p, context.SafeZ, map);
     }
 
     // One closed feed loop at the level per outline of the mask, pulled into the allowed cells.

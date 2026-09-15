@@ -7,7 +7,8 @@ public sealed record ToolpathStatistics(
     float FeedLength,
     float PlungeLength,
     int SegmentCount,
-    float EstimatedMinutes)
+    float EstimatedMinutes,
+    int RetractCount)
 {
     public float TotalLength => RapidLength + FeedLength + PlungeLength;
 
@@ -24,6 +25,7 @@ public sealed record ToolpathStatistics(
 
         float rapid = 0, feed = 0, plunge = 0;
         double minutes = 0;
+        var retracts = 0;
         foreach (var s in toolpath.Segments)
         {
             var length = s.Length;
@@ -32,6 +34,11 @@ public sealed record ToolpathStatistics(
                 case MoveKind.Rapid:
                     rapid += length;
                     minutes += length / parameters.RapidRate;
+                    if (s.End.Z > s.Start.Z)
+                    {
+                        retracts++;
+                    }
+
                     break;
                 case MoveKind.Feed:
                     feed += length;
@@ -46,6 +53,6 @@ public sealed record ToolpathStatistics(
             }
         }
 
-        return new ToolpathStatistics(rapid, feed, plunge, toolpath.Count, (float)minutes);
+        return new ToolpathStatistics(rapid, feed, plunge, toolpath.Count, (float)minutes, retracts);
     }
 }
