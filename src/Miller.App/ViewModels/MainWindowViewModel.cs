@@ -42,6 +42,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         ErrorDialog = errors ?? throw new ArgumentNullException(nameof(errors));
         AppVersion = appVersion ?? throw new ArgumentNullException(nameof(appVersion));
         Project.ProjectChanged += (_, _) => OnPropertyChanged(nameof(Title));
+        Tool = new ToolSettingsViewModel(Project);
+        Stock = new StockSettingsViewModel(Project, MeshImport);
+        Axes = new AxisSettingsViewModel(Project, MeshImport);
     }
 
     public event EventHandler? ExitRequested;
@@ -61,6 +64,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     public IErrorDialogService ErrorDialog { get; }
 
     public string AppVersion { get; }
+
+    public ToolSettingsViewModel Tool { get; }
+
+    public StockSettingsViewModel Stock { get; }
+
+    public AxisSettingsViewModel Axes { get; }
 
     public PipelineResult? LastResult { get; private set; }
 
