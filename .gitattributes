@@ -1,6 +1,8 @@
 * text=auto
 # Hook scripts run under bash; a CRLF checkout (core.autocrlf=true on Windows) breaks every guard and fails the session closed.
 *.sh text eol=lf
+# The Windows root launcher is read by cmd.exe, which expects CRLF.
+*.cmd text eol=crlf
 # STL may be binary; never apply line-ending conversion.
 *.STL binary
 *.stl binary

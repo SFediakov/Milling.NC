@@ -58,7 +58,7 @@ fails; do not invent an alternative.
 | Serialization | `System.Text.Json` |
 | Package source | `third_party/nuget/` only; `NuGet.config` clears every other source |
 | Linux build | `bash build.sh` on a Linux machine with the .NET 10 SDK; no container, no network (packages come from `third_party/nuget/`) |
-| Shell for scripts | bash (Git Bash on Windows). No PowerShell scripts, no `.cmd` files |
+| Shell for scripts | bash (Git Bash on Windows). No PowerShell scripts; the one `.cmd` file is the root `Miller.cmd` start file for Explorer |
 
 No other package may be added. If a task seems to need one, the task is wrong;
 report it.
@@ -73,6 +73,8 @@ NuGet.config                 single local source
 global.json                  SDK pin
 .editorconfig
 build.sh                     restore, build, test, publish (both RIDs), assemble dist/
+Miller.sh                    root start file for Linux and Git Bash: runs dist/<rid>/Miller with the arguments
+Miller.cmd                   root start file for Windows Explorer and cmd: runs dist\win-x64\Miller.exe
 launchers/Miller.sh          Linux start file (copied to dist/linux-x64/)
 scripts/vendor-packages.sh   one-time online download of packages into third_party/nuget/
 third_party/nuget/           vendored .nupkg files
@@ -112,6 +114,10 @@ Start files:
 
 - Windows: `dist/win-x64/Miller.exe`
 - Linux: `dist/linux-x64/Miller.sh`
+- Root launchers (after `bash build.sh`): `Miller.cmd` for Windows Explorer or cmd,
+  `Miller.sh` for Linux and Git Bash. Both forward every argument to the published
+  binary (`Miller.cmd Milling_Heart_V2.STL`, `./Miller.sh --version`) and print a
+  one-line hint to run `bash build.sh` when `dist/` is missing.
 
 Linux build: the same `bash build.sh` on a Linux machine with the .NET 10 SDK
 installed. Both RIDs are produced there as well; cross-publishing `win-x64`
