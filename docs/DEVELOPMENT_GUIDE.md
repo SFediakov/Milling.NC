@@ -718,6 +718,7 @@ check that decides done.
 - Input: placeholders
 - Output: `MillingStep` (`Level`, `Operation` enum `{ Roughing, Finishing }`, `bool[,] Mask`, `MaskCount`), `SlicePlan` (ordered steps, `RoughingLevels`, `HasFinishing`)
 - Acceptance: compiles
+- Status: done
 
 #### T-034 Slicer
 - Depends on: T-033, T-030
@@ -725,6 +726,7 @@ check that decides done.
 - Input: placeholders; section 6.4
 - Output: `Slicer.Build(HeightMap effectiveTip, HeightMap stock, CuttingParameters) -> SlicePlan`; tests: stock top 5, min tip 0, stepdown 2 gives levels 3, 1, 0; masks shrink monotonically with depth; a flat tip map equal to stock top gives zero roughing levels and one finishing step
 - Acceptance: tests green
+- Status: done
 
 #### T-035 Strategy interface, context and registry
 - Depends on: T-034, T-031
@@ -732,6 +734,7 @@ check that decides done.
 - Input: placeholders; `docs/ARCHITECTURE.md` 6.1
 - Output: interface with `Id`, `DisplayName`, `Operation`, `Generate(ToolpathContext, IProgress<float>?, CancellationToken)`; context record with tip, effective tip, head limit, stock, plan, tool, profile, parameters; registry as a static readonly list, `All`, `GetById` (throws `KeyNotFoundException` listing known ids), constructor-time duplicate check
 - Acceptance: compiles; tests in T-036
+- Status: done
 
 #### T-036 Tests for the registry
 - Depends on: T-035
@@ -739,6 +742,7 @@ check that decides done.
 - Input: placeholder
 - Output: tests: ids are unique and lowercase-hyphen; `GetById("missing")` throws with the known ids in the message; every registered strategy has a non-empty display name
 - Acceptance: tests green (the list may still be empty at this point; the uniqueness test must handle that)
+- Status: done
 
 #### T-037 Gouge checker
 - Depends on: T-035
