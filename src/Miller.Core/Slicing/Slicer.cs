@@ -1,9 +1,92 @@
-// PLACEHOLDER - implemented by T-034 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.Slicing
-// Purpose: Decomposes the job into steps: levels z_k = stockTop - k * Stepdown until the lowest
-//     effective tip (last level clamped), roughing mask = cells with effectiveTip < level and stock
-//     above level, one finishing step.
-// Public interface (names only): static class Slicer { static SlicePlan Build(HeightMap
-//     effectiveTip, HeightMap stock, CuttingParameters parameters) }
-// Depends on: HeightMap, CuttingParameters, MillingStep, SlicePlan
-// Must not depend on: Avalonia, System.IO file dialogs, threads, timers
+using Miller.Core.HeightMaps;
+using Miller.Core.Setup;
+
+namespace Miller.Core.Slicing;
+
+// Decomposes the job into steps. Roughing levels are z_k = stockTop - k * Stepdown while z_k is above
+// the lowest effective tip; the last level is clamped to that lowest tip. A cell takes part in a
+// roughing level when the cutter may sit at that level there (effectiveTip <= level) and the stock
+// still has material above it (stock > level). One finishing step always follows.
+public static class Slicer
+{
+    public static SlicePlan Build(HeightMap effectiveTip, HeightMap stock, CuttingParameters parameters)
+    {
+        ArgumentNullException.ThrowIfNull(effectiveTip);
+        ArgumentNullException.ThrowIfNull(stock);
+        ArgumentNullException.ThrowIfNull(parameters);
+        if (!effectiveTip.SameGridAs(stock))
+        {
+            throw new ArgumentException("Tip map and stock map must share the same grid.", nameof(stock));
+        }
+
+        if (!(parameters.Stepdown > 0))
+        {
+            throw new ArgumentException($"Stepdown must be positive, got {parameters.Stepdown}.", nameof(parameters));
+        }
+
+        var stockTop = stock.Max();
+        var lowest = effectiveTip.Min();
+        if (float.IsNaN(stockTop) || float.IsNaN(lowest))
+        {
+            throw new ArgumentException("Stock or tip map holds no material at all.", nameof(stock));
+        }
+
+        var steps = new List<MillingStep>();
+        foreach (var level in RoughingLevels(stockTop, lowest, parameters.Stepdown))
+        {
+            steps.Add(new MillingStep(level, MillingOperation.Roughing, RoughingMask(effectiveTip, stock, level)));
+        }
+
+        steps.Add(new MillingStep(lowest, MillingOperation.Finishing, MaterialMask(effectiveTip)));
+        return new SlicePlan(steps, lowest);
+    }
+
+    public static IEnumerable<float> RoughingLevels(float stockTop, float lowest, float stepdown)
+    {
+        for (var k = 1; ; k++)
+        {
+            var level = stockTop - k * stepdown;
+            if (level <= lowest)
+            {
+                if (lowest < stockTop)
+                {
+                    yield return lowest;
+                }
+
+                yield break;
+            }
+
+            yield return level;
+        }
+    }
+
+    private static bool[,] RoughingMask(HeightMap tip, HeightMap stock, float level)
+    {
+        var mask = new bool[tip.Width, tip.Height];
+        for (var j = 0; j < tip.Height; j++)
+        {
+            for (var i = 0; i < tip.Width; i++)
+            {
+                var t = tip[i, j];
+                var s = stock[i, j];
+                mask[i, j] = !float.IsNaN(t) && !float.IsNaN(s) && t <= level && s > level;
+            }
+        }
+
+        return mask;
+    }
+
+    private static bool[,] MaterialMask(HeightMap tip)
+    {
+        var mask = new bool[tip.Width, tip.Height];
+        for (var j = 0; j < tip.Height; j++)
+        {
+            for (var i = 0; i < tip.Width; i++)
+            {
+                mask[i, j] = !float.IsNaN(tip[i, j]);
+            }
+        }
+
+        return mask;
+    }
+}
