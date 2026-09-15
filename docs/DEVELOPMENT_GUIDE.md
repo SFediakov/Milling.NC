@@ -561,6 +561,7 @@ check that decides done.
 - Input: placeholders; format facts in section 5
 - Output: parser reading header, count, 50-byte records with `BinaryPrimitives` little-endian; report with count, bounds, degenerate count, `Format=Binary`; throws `InvalidDataException` when the size formula fails
 - Acceptance: compiles; tests in T-016
+- Status: done
 
 #### T-015 STL ASCII parser
 - Depends on: T-014
