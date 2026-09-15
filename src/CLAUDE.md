@@ -199,3 +199,17 @@
 - The speed slider binds through LogSliderConverter (four decades over one travel); the text box
   parses invariant, clamps through the service and shows the clamped value with a message, and
   every accepted value is written to the settings file at once.
+- UncuttableRegions.CornerLimited compares the model with the closing of the effective tip
+  (the material the cutter leaves), not with the effective tip as guide 6.3 wrote: the tip map is
+  high beside every wall although the cutter edge reaches the wall, so the older formula would
+  flag reachable floor next to walls. Head-limited cells take precedence over corner-limited.
+- An overhang is any downward face above the floor that is hidden from +Z; a part whose bottom
+  floats above the stock bottom counts as overhang under its whole footprint. Tests that want no
+  overhang must put the part on the floor (stock height equal to the part height).
+- The analysis runs its own SimulationEngine on a stock clone (AnalysisService) and never touches
+  the interactive simulation; RunToEnd(CancellationToken) checks the token once per segment.
+  xUnit's analyzer wants TestContext.Current.CancellationToken wherever a token overload exists.
+- The final model view and the simulation compete for the viewport stock map: playing switches the
+  analysis view off (SimulationViewModel.PlaybackStarted), and the analysis returns the simulation
+  stock when its view is switched off, so the dirty-rectangle updates always target the map that
+  the engine mutates.
