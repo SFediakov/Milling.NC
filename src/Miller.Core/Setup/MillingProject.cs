@@ -4,7 +4,8 @@ namespace Miller.Core.Setup;
 public sealed class MillingProject
 {
     public const int CurrentSchemaVersion = 1;
-    public const string DefaultRoughingStrategyId = "raster-roughing";
+    // Layer complete clears the strip beside walls at every level, which the head limit relies on.
+    public const string DefaultRoughingStrategyId = "layer-complete";
     public const string DefaultFinishingStrategyId = "raster-finishing";
     public const string DefaultPostProcessorId = "grbl";
 

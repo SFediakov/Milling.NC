@@ -72,7 +72,7 @@ public sealed class ProjectSerializerTests
         Assert.Equal(1, MillingProject.CurrentSchemaVersion);
         Assert.Equal(MillingProject.CurrentSchemaVersion, project.SchemaVersion);
         Assert.Equal(string.Empty, project.StlPath);
-        Assert.Equal("raster-roughing", project.RoughingStrategyId);
+        Assert.Equal(MillingProject.DefaultRoughingStrategyId, project.RoughingStrategyId);
         Assert.Equal("raster-finishing", project.FinishingStrategyId);
         Assert.Equal("grbl", project.PostProcessorId);
 
@@ -213,6 +213,6 @@ public sealed class ProjectSerializerTests
     {
         var project = ProjectSerializer.Deserialize("{ \"SchemaVersion\": 1 }");
         Assert.Equal(6f, project.Tool.CutterDiameter);
-        Assert.Equal("raster-roughing", project.RoughingStrategyId);
+        Assert.Equal(MillingProject.DefaultRoughingStrategyId, project.RoughingStrategyId);
     }
 }
