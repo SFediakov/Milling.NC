@@ -213,12 +213,46 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     [Fact]
-    public void Stubs_ReportNotImplemented_AndExitRaisesTheEvent()
+    public async Task SimulationCommands_FollowTheGeneratedToolpath()
+    {
+        var vm = await CreateWithBoxAsync();
+        Assert.False(vm.PlayCommand.CanExecute(null));
+        Assert.False(vm.RunToEndCommand.CanExecute(null));
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+        Assert.True(vm.PlayCommand.CanExecute(null));
+        Assert.True(vm.Simulation.IsLoaded);
+        Assert.Same(vm.Simulation.Stock, vm.Viewport.StockMap);
+        Assert.NotSame(vm.LastResult!.Stock.Map, vm.Viewport.StockMap);
+        Assert.Equal(0, vm.Viewport.ToolpathProgressIndex);
+
+        vm.PlayCommand.Execute(null);
+        Assert.True(vm.Simulation.IsPlaying);
+        Assert.Equal(MainWindowViewModel.SimulationPlayingStatus, vm.StatusText);
+        vm.PauseCommand.Execute(null);
+        Assert.False(vm.Simulation.IsPlaying);
+
+        await vm.RunToEndCommand.ExecuteAsync(null);
+        Assert.True(vm.Simulation.IsFinished);
+        Assert.False(vm.IsBusy);
+        Assert.Equal(vm.LastResult.Toolpath.Count, vm.Viewport.ToolpathProgressIndex);
+        Assert.StartsWith(MainWindowViewModel.SimulationFinishedStatus, vm.StatusText);
+        Assert.Contains(vm.Viewport.StockMap!.Z, z => z < vm.LastResult.Stock.StockTop);
+        Assert.All(vm.LastResult.Stock.Map.Z, z => Assert.Equal(vm.LastResult.Stock.StockTop, z));
+
+        vm.StopCommand.Execute(null);
+        Assert.Equal(0, vm.Viewport.ToolpathProgressIndex);
+        Assert.All(vm.Viewport.StockMap!.Z, z => Assert.Equal(vm.LastResult.Stock.StockTop, z));
+
+        vm.NewProjectCommand.Execute(null);
+        Assert.False(vm.Simulation.IsLoaded);
+        Assert.False(vm.PlayCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void Exit_RaisesTheEvent()
     {
         var vm = Create();
-        vm.PlayCommand.Execute(null);
-        Assert.EndsWith(MainWindowViewModel.NotImplementedSuffix, vm.StatusText);
-
         var raised = 0;
         vm.ExitRequested += (_, _) => raised++;
         vm.ExitCommand.Execute(null);

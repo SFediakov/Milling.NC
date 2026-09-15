@@ -19,7 +19,11 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 {
     public const string ReadyStatus = "Ready";
     public const string CancelledStatus = "Toolpath generation cancelled";
-    public const string NotImplementedSuffix = ": not implemented yet";
+    public const string SimulationPlayingStatus = "Simulation playing";
+    public const string SimulationPausedStatus = "Simulation paused";
+    public const string SimulationStoppedStatus = "Simulation stopped";
+    public const string SimulationFinishedStatus = "Simulation finished";
+    public const string SimulationRunningStatus = "Simulating the whole toolpath";
     public static readonly IReadOnlyList<string> StlExtensions = new[] { "stl" };
 
     [ObservableProperty]
@@ -42,6 +46,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         MeshImportService meshImport,
         PipelineService pipeline,
         ExportService export,
+        SimulationService simulation,
         SettingsService settings,
         IFileDialogService dialogs,
         IErrorDialogService errors,
@@ -54,6 +59,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         MeshImport = meshImport ?? throw new ArgumentNullException(nameof(meshImport));
         Pipeline = pipeline ?? throw new ArgumentNullException(nameof(pipeline));
         Export = export ?? throw new ArgumentNullException(nameof(export));
+        Simulation = simulation ?? throw new ArgumentNullException(nameof(simulation));
         Settings = settings ?? throw new ArgumentNullException(nameof(settings));
         Dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         ErrorDialog = errors ?? throw new ArgumentNullException(nameof(errors));
@@ -90,6 +96,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     public PipelineService Pipeline { get; }
 
     public ExportService Export { get; }
+
+    public SimulationService Simulation { get; }
 
     public SettingsService Settings { get; }
 
@@ -160,7 +168,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             LastResult = result;
             Strategy.ShowResult(result);
             Viewport.SetToolpath(result.Toolpath);
-            Viewport.SetStockMap(result.Stock.Map, result.Stock.StockBottom);
+            Simulation.Load(result);
+            ShowSimulationStock();
+            NotifySimulationCommands();
             StatusText = string.Create(CultureInfo.InvariantCulture,
                 $"Toolpath ready: {result.Statistics.SegmentCount} segments, {result.Statistics.EstimatedMinutes:0.0} min");
             ToolpathGenerated?.Invoke(this, EventArgs.Empty);
@@ -190,6 +200,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         GenerateCommand.NotifyCanExecuteChanged();
         CancelGenerateCommand.NotifyCanExecuteChanged();
         ExportNcCommand.NotifyCanExecuteChanged();
+        NotifySimulationCommands();
     }
 
     public Task<bool> OpenStlFileAsync(string path) => ImportStlAsync(path, markDirty: true);
@@ -243,8 +254,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     {
         LastResult = null;
         Strategy.Clear();
+        Simulation.Unload();
         Viewport.SetToolpath(null);
         Viewport.SetStockMap(null, 0f);
+        NotifySimulationCommands();
     }
 
     // Runs on every project edit; the mesh is transformed and uploaded again only when its source or
@@ -279,22 +292,66 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Viewport.SetStock(bounds, stock);
     }
 
-    // Stubs replaced by T-094 (simulation).
+    // Simulation commands; the UI timer moves the simulation while it plays (T-092), the panel
+    // with speed and events arrives with T-094.
+    private bool CanSimulate => Simulation.IsLoaded && !IsBusy;
 
-    [RelayCommand]
-    private void Play() => NotYet("Play");
+    [RelayCommand(CanExecute = nameof(CanSimulate))]
+    private void Play()
+    {
+        Simulation.Play();
+        StatusText = Simulation.IsPlaying ? SimulationPlayingStatus : SimulationFinishedStatus;
+    }
 
-    [RelayCommand]
-    private void Pause() => NotYet("Pause");
+    [RelayCommand(CanExecute = nameof(CanSimulate))]
+    private void Pause()
+    {
+        Simulation.Pause();
+        StatusText = SimulationPausedStatus;
+    }
 
-    [RelayCommand]
-    private void Stop() => NotYet("Stop");
+    [RelayCommand(CanExecute = nameof(CanSimulate))]
+    private void Stop()
+    {
+        Simulation.Stop();
+        ShowSimulationStock();
+        StatusText = SimulationStoppedStatus;
+    }
 
-    [RelayCommand]
-    private void RunToEnd() => NotYet("Run to end");
+    // The whole heart toolpath takes about 20 s to sweep, so it runs off the UI thread; IsBusy keeps
+    // the other simulation commands and generation disabled meanwhile.
+    [RelayCommand(CanExecute = nameof(CanSimulate))]
+    private async Task RunToEndAsync()
+    {
+        IsBusy = true;
+        StatusText = SimulationRunningStatus;
+        try
+        {
+            await Task.Run(Simulation.RunToEnd);
+            ShowSimulationStock();
+            StatusText = string.Create(CultureInfo.InvariantCulture, $"{SimulationFinishedStatus}, {Simulation.Events.Count} events");
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
 
     [RelayCommand]
     private void ShowAbout() => AboutRequested?.Invoke(this, EventArgs.Empty);
 
-    private void NotYet(string name) => StatusText = name + NotImplementedSuffix;
+    // The engine cuts its own stock instance; Load and Stop replace it, so the viewport uploads it anew.
+    private void ShowSimulationStock()
+    {
+        Viewport.SetStockMap(Simulation.Stock, Simulation.Result!.Stock.StockBottom);
+        Viewport.SetToolProgress(Simulation.SegmentsCompleted, Simulation.ToolPosition);
+    }
+
+    private void NotifySimulationCommands()
+    {
+        PlayCommand.NotifyCanExecuteChanged();
+        PauseCommand.NotifyCanExecuteChanged();
+        StopCommand.NotifyCanExecuteChanged();
+        RunToEndCommand.NotifyCanExecuteChanged();
+    }
 }

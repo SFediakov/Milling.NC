@@ -137,3 +137,26 @@
 - The GL viewport cannot be exercised on Linux inside Docker (no display); T-086 rests on the
   Windows captures plus the shared code path. Frame budget is guarded on the CPU side by the build
   timing test in CameraTests, not by a GPU measurement.
+- SimulationEngine takes no CuttingParameters: every ToolpathSegment carries its own rate (rapids
+  the rapid rate), so the engine covers distance = segment rate * seconds / 60 from the segment.
+  The engine raises Sampled at the end of each covered part and along rapids at max(cell size,
+  cutter radius); the service runs CollisionDetector there and keeps one event per segment and
+  kind. Checking the head annulus at every sweep sample would cost more than the sweep itself.
+- The simulation cuts a clone of the pipeline stock; Load and Stop replace the instance, so the
+  main view model re-uploads Viewport.StockMap after both, and per-frame changes go through
+  ViewportViewModel.MarkStockDirty into HeightMapRenderer.Update (reference-equal map required).
+- A simulation test fixture must use a tool that fits the gaps: a 6 mm cutter around an 8 mm box
+  in a 12 mm stock leaves nothing reachable, the plan degenerates to one finishing pass on the
+  stock top and the tool cuts air for the whole path.
+- SimulationService.RunToEnd takes about 20 s for the heart with the default stock (79 m of feed
+  at 0.1 mm sample spacing), so the main view model runs it in Task.Run with IsBusy set; the
+  service pauses the clock before sweeping so the 60 Hz timer cannot step the engine concurrently.
+- The first simulation of the heart found 1404 head collisions: HeadClearance limits the tip by the
+  model, but the cutter leaves a strip of stock next to every wall (cells closer than the cutter
+  radius to the wall keep the level of the last pass that reached them) and the head hits that
+  strip. Recorded as T-090a in the guide; until it is done the collision list is the warning.
+- Desktop capture: PrintWindow(PW_RENDERFULLCONTENT) on the app window in a per-monitor DPI aware
+  PowerShell renders the app itself even when another window covers it (a full screen copy showed
+  VS Code once). Menus opened by clicks work for View and Simulation; the first menu after start
+  did not open, so generation is started by the Strategy tab button. RunToEnd blocks the UI, so a
+  capture right after it shows the previous frame.

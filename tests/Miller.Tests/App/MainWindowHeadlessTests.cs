@@ -4,6 +4,7 @@ using Avalonia.Input;
 using Avalonia.Headless.XUnit;
 using Avalonia.LogicalTree;
 using Avalonia.VisualTree;
+using Miller.App.Services;
 using Miller.App.Views;
 using Miller.Tests.Fixtures;
 using Xunit;
@@ -94,6 +95,54 @@ public sealed class MainWindowHeadlessTests
         finally
         {
             window.Close();
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task UiTimer_MovesTheSimulationIntoTheViewport()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"miller-headless-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var viewModel = TestServices.MainWindowViewModel(root);
+        using var timer = new UiTimer(viewModel.Simulation, viewModel.Viewport);
+        try
+        {
+            var stl = Path.Combine(root, "box.stl");
+            File.WriteAllText(stl, TestMeshes.AsciiCubeText());
+            Assert.True(await viewModel.OpenStlFileAsync(stl));
+            viewModel.Stock.SizeX = 10;
+            viewModel.Stock.SizeY = 10;
+            viewModel.Stock.SizeZ = 3;
+            viewModel.Cutting.CellSize = 0.5f;
+            await viewModel.GenerateCommand.ExecuteAsync(null);
+
+            var ticks = 0;
+            timer.Ticked += (_, _) => ticks++;
+            timer.Tick(1);
+            Assert.Equal(0, ticks);
+
+            viewModel.PlayCommand.Execute(null);
+            viewModel.Simulation.SpeedFactor = 100f;
+            timer.Tick(0.5);
+            Assert.Equal(1, ticks);
+            Assert.True(viewModel.Viewport.ToolpathProgressIndex > 0);
+            Assert.False(viewModel.Viewport.StockDirty.IsEmpty);
+            Assert.Equal(viewModel.Simulation.ToolPosition, viewModel.Viewport.ToolPosition);
+            var taken = viewModel.Viewport.TakeStockDirty();
+            Assert.False(taken.IsEmpty);
+            Assert.True(viewModel.Viewport.StockDirty.IsEmpty);
+
+            timer.Start();
+            Assert.True(timer.IsRunning);
+            timer.Stop();
+            Assert.False(timer.IsRunning);
+        }
+        finally
+        {
             if (Directory.Exists(root))
             {
                 Directory.Delete(root, true);

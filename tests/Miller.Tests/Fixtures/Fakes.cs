@@ -60,6 +60,7 @@ public static class TestServices
             new MeshImportService(),
             new PipelineService(),
             new ExportService(),
+            new SimulationService(),
             new SettingsService(Path.Combine(tempRoot, "settings")),
             dialogs ?? new FakeFileDialogService(),
             errors ?? new FakeErrorDialogService(),

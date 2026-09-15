@@ -1177,6 +1177,7 @@ check that decides done.
 - Input: placeholders; section 6.6
 - Output: `SimulationEngine(Toolpath, HeightMap stock, ToolProfile, CuttingParameters)`, `Step(simSeconds) -> StepResult` (tool position, dirty rectangle union, segments completed), `RunToEnd()`, `Reset(HeightMap freshStock)`, `Progress` 0..1, `CurrentSegmentIndex`, `IsFinished`; tests: stepping the full duration in one call equals `RunToEnd` stock cell by cell; many small steps equal one big step; progress monotonic; reset restores the stock
 - Acceptance: tests green
+- Status: done
 
 #### T-090 Collision detector
 - Depends on: T-089, T-028
@@ -1184,6 +1185,15 @@ check that decides done.
 - Input: placeholders; pitfall 11
 - Output: `Check(HeightMap stock, ToolProfile, float cutterLength, Vector3 tip, MoveKind) -> SimulationEvent?`: head collision when any annulus cell is above `tip.Z + cutterLength`; rapid into material when a rapid sample is below the stock under the footprint; tests: slot fixture with short cutter produces a head collision, long cutter none; a rapid through the stock produces the event; feed moves never produce the rapid event
 - Acceptance: tests green
+- Status: done
+
+#### T-090a Head clearance against rest material (found by T-090)
+- Depends on: T-090, T-030
+- Files: `src/Miller.Core/HeightMap/HeadClearance.cs`, `src/Miller.Application/Services/PipelineService.cs`, `tests/Miller.Tests/Core/HeightMap/HeadClearanceTests.cs`
+- Input: simulation of the heart fixture with the default project reports 1404 head collisions: next to the heart walls the cutter leaves a strip it cannot reach (within one cutter radius of the wall), the roughing keeps that strip at an early level, and the head limit computed from the model alone lets the tip descend beside it until the head hits the strip
+- Output: the head limit is computed from the predicted remaining stock, not from the model: remaining = closing of the model by the cutter footprint (erode the tip map with the footprint, flat tools: min over the footprint of tip); `HeadClearance.Limit(remaining, profile, cutterLength)`; the pipeline recomputes the effective tip with it; tests: a wall next to a floor with a short cutter raises the limit beside the strip; the heart end-to-end simulation reports zero head collisions
+- Acceptance: `SimulationService.RunToEnd` on the fixture with the default project yields no HeadCollision event; golden files updated with the new toolpath and reviewed
+- Status: open
 
 #### T-091 Simulation service
 - Depends on: T-090, T-047
@@ -1191,6 +1201,7 @@ check that decides done.
 - Input: placeholders
 - Output: `Load(PipelineResult)` creating engine, clock, detector on a fresh stock; `Play`, `Pause`, `Stop` (reset), `StepOnce(simSeconds)`, `RunToEnd`, `SpeedFactor`, `Advance(realSeconds) -> SimulationSnapshot` (tool position, dirty rectangle, new events, progress, elapsed); `Events` list; tests: play then advance changes the stock; stop restores it; events are accumulated; speed factor is forwarded and clamped
 - Acceptance: tests green
+- Status: done
 
 #### T-092 UI timer
 - Depends on: T-091, T-084
@@ -1198,6 +1209,7 @@ check that decides done.
 - Input: placeholder
 - Output: `DispatcherTimer` at 60 Hz measuring real elapsed time with `Stopwatch`, calling `SimulationService.Advance` and passing the snapshot to `ViewportViewModel` (heightmap partial update, tool position, toolpath progress index), then requesting a render; started with the app, idle when the service is not playing
 - Acceptance: with a loaded toolpath, play animates the tool and the stock in the viewport
+- Status: done
 
 #### T-093 Log slider converter
 - Depends on: T-006
