@@ -1,9 +1,37 @@
-// PLACEHOLDER - implemented by T-020 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.Setup
-// Purpose: JSON read and write of MillingProject with System.Text.Json, invariant culture, enums as
-//     strings, indented output, schema version check.
-// Public interface (names only): static class ProjectSerializer { static string
-//     Serialize(MillingProject); static MillingProject Deserialize(string json); static
-//     JsonSerializerOptions Options }
-// Depends on: MillingProject
-// Must not depend on: Avalonia, System.IO file dialogs, threads, timers
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace Miller.Core.Setup;
+
+public static class ProjectSerializer
+{
+    // Vector3 exposes public fields, hence IncludeFields. Unknown members are an error so a typo in
+    // a hand-edited file is reported instead of silently ignored. JSON numbers are culture-free.
+    public static JsonSerializerOptions Options { get; } = new()
+    {
+        WriteIndented = true,
+        IncludeFields = true,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        Converters = { new JsonStringEnumConverter() },
+    };
+
+    public static string Serialize(MillingProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        return JsonSerializer.Serialize(project, Options);
+    }
+
+    public static MillingProject Deserialize(string json)
+    {
+        ArgumentNullException.ThrowIfNull(json);
+        var project = JsonSerializer.Deserialize<MillingProject>(json, Options)
+            ?? throw new InvalidDataException("Project JSON is null.");
+        if (project.SchemaVersion != MillingProject.CurrentSchemaVersion)
+        {
+            throw new InvalidDataException(
+                $"Unsupported project schema version {project.SchemaVersion}; this build reads version {MillingProject.CurrentSchemaVersion}.");
+        }
+
+        return project;
+    }
+}

@@ -609,6 +609,7 @@ check that decides done.
 - Input: placeholders
 - Output: aggregate with `SchemaVersion = 1`, tool, stock, axis, parameters, `StlPath`, `RoughingStrategyId = "raster-roughing"`, `FinishingStrategyId = "raster-finishing"`, `PostProcessorId = "grbl"`; serializer with `JsonSerializerOptions` (indented, enums as strings, invariant); tests: round trip equals, unknown schema version throws, defaults from T-017 asserted
 - Acceptance: tests green
+- Status: done
 
 #### T-021 Project validator
 - Depends on: T-020, T-004

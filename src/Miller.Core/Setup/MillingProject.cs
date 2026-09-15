@@ -1,10 +1,30 @@
-// PLACEHOLDER - implemented by T-020 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.Setup
-// Purpose: Aggregate of every setting plus the selected strategy and post-processor ids. This is
-//     what a .miller.json file contains.
-// Public interface (names only): sealed class MillingProject { const int CurrentSchemaVersion = 1;
-//     int SchemaVersion; string StlPath; ToolDefinition Tool; StockDefinition Stock; AxisSetup
-//     Axes; CuttingParameters Parameters; string RoughingStrategyId; string FinishingStrategyId;
-//     string PostProcessorId; static MillingProject Default() }
-// Depends on: ToolDefinition, StockDefinition, AxisSetup, CuttingParameters
-// Must not depend on: Avalonia, System.IO file dialogs, threads, timers
+namespace Miller.Core.Setup;
+
+// Everything a .miller.json file contains.
+public sealed class MillingProject
+{
+    public const int CurrentSchemaVersion = 1;
+    public const string DefaultRoughingStrategyId = "raster-roughing";
+    public const string DefaultFinishingStrategyId = "raster-finishing";
+    public const string DefaultPostProcessorId = "grbl";
+
+    public int SchemaVersion { get; set; } = CurrentSchemaVersion;
+
+    public string StlPath { get; set; } = string.Empty;
+
+    public ToolDefinition Tool { get; set; } = ToolDefinition.Default();
+
+    public StockDefinition Stock { get; set; } = StockDefinition.Default();
+
+    public AxisSetup Axes { get; set; } = AxisSetup.Default();
+
+    public CuttingParameters Parameters { get; set; } = CuttingParameters.Default();
+
+    public string RoughingStrategyId { get; set; } = DefaultRoughingStrategyId;
+
+    public string FinishingStrategyId { get; set; } = DefaultFinishingStrategyId;
+
+    public string PostProcessorId { get; set; } = DefaultPostProcessorId;
+
+    public static MillingProject Default() => new();
+}
