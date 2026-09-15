@@ -61,6 +61,13 @@ public sealed class ProjectValidatorTests
     }
 
     [Fact]
+    public void AxisMapping_MustBeAPermutation()
+    {
+        AssertSingleError(p => p.Axes.MapY = ModelAxis.X, "Axes.MapX");
+        AssertValid(p => { p.Axes.MapX = ModelAxis.Z; p.Axes.MapZ = ModelAxis.X; });
+    }
+
+    [Fact]
     public void Stepdown_MustBePositive()
     {
         AssertSingleError(p => p.Parameters.Stepdown = 0, "Parameters.Stepdown");

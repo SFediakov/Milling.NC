@@ -1,0 +1,54 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Miller.App.ViewModels"
+             x:Class="Miller.App.Views.StockSettingsView"
+             x:DataType="vm:StockSettingsViewModel">
+  <ScrollViewer>
+    <StackPanel Margin="8" Spacing="4">
+      <TextBlock Classes="header" Text="Stock" />
+
+      <TextBlock Classes="label" Text="Shape" />
+      <ComboBox Name="ShapeBox" ItemsSource="{Binding Shapes}" SelectedItem="{Binding Shape}" Width="140" HorizontalAlignment="Left" />
+
+      <StackPanel Name="BoxFields" IsVisible="{Binding IsBox}" Spacing="4">
+        <TextBlock Classes="label" Text="Size X (mm)" />
+        <TextBox Name="SizeXBox" Classes="numeric" Text="{Binding SizeX}" HorizontalAlignment="Left" />
+        <TextBlock Classes="validation" Text="{Binding SizeXError}" IsVisible="{Binding SizeXError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <TextBlock Classes="label" Text="Size Y (mm)" />
+        <TextBox Name="SizeYBox" Classes="numeric" Text="{Binding SizeY}" HorizontalAlignment="Left" />
+        <TextBlock Classes="validation" Text="{Binding SizeYError}" IsVisible="{Binding SizeYError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <TextBlock Classes="label" Text="Size Z (mm)" />
+        <TextBox Name="SizeZBox" Classes="numeric" Text="{Binding SizeZ}" HorizontalAlignment="Left" />
+        <TextBlock Classes="validation" Text="{Binding SizeZError}" IsVisible="{Binding SizeZError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      </StackPanel>
+
+      <StackPanel Name="CylinderFields" IsVisible="{Binding IsCylinder}" Spacing="4">
+        <TextBlock Classes="label" Text="Diameter (mm)" />
+        <TextBox Name="DiameterBox" Classes="numeric" Text="{Binding Diameter}" HorizontalAlignment="Left" />
+        <TextBlock Classes="validation" Text="{Binding DiameterError}" IsVisible="{Binding DiameterError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <TextBlock Classes="label" Text="Height (mm)" />
+        <TextBox Name="HeightBox" Classes="numeric" Text="{Binding Height}" HorizontalAlignment="Left" />
+        <TextBlock Classes="validation" Text="{Binding HeightError}" IsVisible="{Binding HeightError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      </StackPanel>
+
+      <TextBlock Classes="label" Text="Placement" />
+      <ComboBox Name="PlacementBox" ItemsSource="{Binding Placements}" SelectedItem="{Binding Placement}" Width="200" HorizontalAlignment="Left" />
+      <TextBlock Classes="warning" Text="{Binding PlacementWarning}" IsVisible="{Binding PlacementWarning, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+      <TextBlock Classes="label" Text="Margin around the model (mm)" />
+      <TextBox Name="MarginBox" Classes="numeric" Text="{Binding Margin}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding MarginError}" IsVisible="{Binding MarginError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+      <StackPanel Name="ExplicitFields" IsVisible="{Binding IsExplicit}" Spacing="4">
+        <TextBlock Classes="label" Text="Stock corner offset from the model minimum (mm)" />
+        <StackPanel Orientation="Horizontal" Spacing="4">
+          <TextBox Name="OriginXBox" Classes="numeric" Text="{Binding OriginX}" />
+          <TextBox Name="OriginYBox" Classes="numeric" Text="{Binding OriginY}" />
+          <TextBox Name="OriginZBox" Classes="numeric" Text="{Binding OriginZ}" />
+        </StackPanel>
+      </StackPanel>
+
+      <Button Name="FitButton" Content="Fit to model" Command="{Binding FitToModelCommand}" Margin="0,8,0,0" HorizontalAlignment="Left" />
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>
