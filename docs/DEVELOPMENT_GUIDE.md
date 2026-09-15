@@ -479,6 +479,7 @@ check that decides done.
 - Input: placeholders under `src/Miller.Application/`
 - Output: class library referencing `Miller.Core` only; added to the solution
 - Acceptance: `dotnet build Miller.sln` succeeds; the project file contains no `PackageReference`
+- Status: done
 
 #### T-005 Package vendoring script
 - Depends on: T-002
