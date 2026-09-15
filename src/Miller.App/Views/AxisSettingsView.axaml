@@ -1,0 +1,48 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Miller.App.ViewModels"
+             x:Class="Miller.App.Views.AxisSettingsView"
+             x:DataType="vm:AxisSettingsViewModel">
+  <ScrollViewer>
+    <StackPanel Margin="8" Spacing="4">
+      <TextBlock Classes="header" Text="Axes" />
+
+      <TextBlock Classes="label" Text="Model axis used as machine X / Y / Z" />
+      <StackPanel Orientation="Horizontal" Spacing="4">
+        <ComboBox Name="MapXBox" ItemsSource="{Binding Axes}" SelectedItem="{Binding MapX}" Width="70" />
+        <ComboBox Name="MapYBox" ItemsSource="{Binding Axes}" SelectedItem="{Binding MapY}" Width="70" />
+        <ComboBox Name="MapZBox" ItemsSource="{Binding Axes}" SelectedItem="{Binding MapZ}" Width="70" />
+      </StackPanel>
+      <TextBlock Classes="validation" Text="{Binding MappingError}" IsVisible="{Binding MappingError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+      <TextBlock Classes="label" Text="Direction" />
+      <StackPanel Orientation="Horizontal" Spacing="12">
+        <CheckBox Name="FlipXBox" Content="Flip X" IsChecked="{Binding FlipX}" />
+        <CheckBox Name="FlipYBox" Content="Flip Y" IsChecked="{Binding FlipY}" />
+        <CheckBox Name="FlipZBox" Content="Flip Z" IsChecked="{Binding FlipZ}" />
+      </StackPanel>
+
+      <TextBlock Classes="label" Text="Rotation about X / Y / Z (degrees)" />
+      <StackPanel Orientation="Horizontal" Spacing="4">
+        <TextBox Name="RotationXBox" Classes="numeric" Text="{Binding RotationX}" />
+        <TextBox Name="RotationYBox" Classes="numeric" Text="{Binding RotationY}" />
+        <TextBox Name="RotationZBox" Classes="numeric" Text="{Binding RotationZ}" />
+      </StackPanel>
+
+      <TextBlock Classes="label" Text="Machine zero" />
+      <ComboBox Name="OriginModeBox" ItemsSource="{Binding OriginModes}" SelectedItem="{Binding OriginMode}" Width="220" HorizontalAlignment="Left" />
+
+      <StackPanel Name="CustomFields" IsVisible="{Binding IsCustom}" Spacing="4">
+        <TextBlock Classes="label" Text="Custom zero relative to the stock corner (mm)" />
+        <StackPanel Orientation="Horizontal" Spacing="4">
+          <TextBox Name="OffsetXBox" Classes="numeric" Text="{Binding OffsetX}" />
+          <TextBox Name="OffsetYBox" Classes="numeric" Text="{Binding OffsetY}" />
+          <TextBox Name="OffsetZBox" Classes="numeric" Text="{Binding OffsetZ}" />
+        </StackPanel>
+      </StackPanel>
+
+      <TextBlock Classes="header" Text="Model in machine space" />
+      <TextBlock Name="MachineBoundsText" Text="{Binding MachineBoundsText}" TextWrapping="Wrap" />
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>
