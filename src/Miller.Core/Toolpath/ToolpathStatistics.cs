@@ -1,9 +1,51 @@
-// PLACEHOLDER - implemented by T-031 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.Toolpaths
-// Purpose: Lengths and counts per move kind and the estimated machining time from the rates in
-//     CuttingParameters.
-// Public interface (names only): sealed record ToolpathStatistics(float RapidLength, float
-//     FeedLength, float PlungeLength, int SegmentCount, float EstimatedMinutes) { static
-//     ToolpathStatistics Compute(Toolpath toolpath, CuttingParameters parameters) }
-// Depends on: Toolpath, CuttingParameters
-// Must not depend on: Avalonia, System.IO file dialogs, threads, timers
+using Miller.Core.Setup;
+
+namespace Miller.Core.Toolpaths;
+
+public sealed record ToolpathStatistics(
+    float RapidLength,
+    float FeedLength,
+    float PlungeLength,
+    int SegmentCount,
+    float EstimatedMinutes)
+{
+    public float TotalLength => RapidLength + FeedLength + PlungeLength;
+
+    // Minutes = sum of length / rate. Feed and plunge segments carry their rate; rapids use the
+    // machine's rapid rate from the parameters because G0 has no F word.
+    public static ToolpathStatistics Compute(Toolpath toolpath, CuttingParameters parameters)
+    {
+        ArgumentNullException.ThrowIfNull(toolpath);
+        ArgumentNullException.ThrowIfNull(parameters);
+        if (!(parameters.RapidRate > 0))
+        {
+            throw new ArgumentException($"Rapid rate must be positive, got {parameters.RapidRate}.", nameof(parameters));
+        }
+
+        float rapid = 0, feed = 0, plunge = 0;
+        double minutes = 0;
+        foreach (var s in toolpath.Segments)
+        {
+            var length = s.Length;
+            switch (s.Kind)
+            {
+                case MoveKind.Rapid:
+                    rapid += length;
+                    minutes += length / parameters.RapidRate;
+                    break;
+                case MoveKind.Feed:
+                    feed += length;
+                    minutes += length / s.FeedRate;
+                    break;
+                case MoveKind.Plunge:
+                    plunge += length;
+                    minutes += length / s.FeedRate;
+                    break;
+                default:
+                    throw new ArgumentException($"Unknown move kind {s.Kind}.", nameof(toolpath));
+            }
+        }
+
+        return new ToolpathStatistics(rapid, feed, plunge, toolpath.Count, (float)minutes);
+    }
+}

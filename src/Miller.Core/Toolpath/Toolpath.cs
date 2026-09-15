@@ -1,8 +1,71 @@
-// PLACEHOLDER - implemented by T-031 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.Toolpaths
-// Purpose: Ordered list of segments produced by strategies and the linker.
-// Public interface (names only): sealed class Toolpath { List<ToolpathSegment> Segments; int Count;
-//     void Add(ToolpathSegment); void AddRange(IEnumerable<ToolpathSegment>); BoundingBox Bounds;
-//     float TotalLength(MoveKind kind); float TotalLength() }
-// Depends on: ToolpathSegment, BoundingBox
-// Must not depend on: Avalonia, System.IO file dialogs, threads, timers
+using Miller.Core.Geometry;
+
+namespace Miller.Core.Toolpaths;
+
+// Ordered segments produced by strategies and the linker.
+public sealed class Toolpath
+{
+    private readonly List<ToolpathSegment> _segments = new();
+
+    public IReadOnlyList<ToolpathSegment> Segments => _segments;
+
+    public int Count => _segments.Count;
+
+    public void Add(ToolpathSegment segment)
+    {
+        if (!(segment.FeedRate > 0))
+        {
+            throw new ArgumentException($"Segment rate must be positive, got {segment.FeedRate}.", nameof(segment));
+        }
+
+        _segments.Add(segment);
+    }
+
+    public void AddRange(IEnumerable<ToolpathSegment> segments)
+    {
+        ArgumentNullException.ThrowIfNull(segments);
+        foreach (var segment in segments)
+        {
+            Add(segment);
+        }
+    }
+
+    public BoundingBox Bounds
+    {
+        get
+        {
+            var bounds = BoundingBox.Empty;
+            foreach (var s in _segments)
+            {
+                bounds = bounds.Include(s.Start).Include(s.End);
+            }
+
+            return bounds;
+        }
+    }
+
+    public float TotalLength(MoveKind kind)
+    {
+        var total = 0f;
+        foreach (var s in _segments)
+        {
+            if (s.Kind == kind)
+            {
+                total += s.Length;
+            }
+        }
+
+        return total;
+    }
+
+    public float TotalLength()
+    {
+        var total = 0f;
+        foreach (var s in _segments)
+        {
+            total += s.Length;
+        }
+
+        return total;
+    }
+}
