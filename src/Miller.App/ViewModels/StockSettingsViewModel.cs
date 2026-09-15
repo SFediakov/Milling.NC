@@ -93,7 +93,7 @@ public sealed partial class StockSettingsViewModel : SettingsViewModelBase
 
     public string? PlacementWarning => WarningFor("Stock.Placement");
 
-    public bool CanFitToModel => _meshImport.HasMesh && Current.Axes.IsPermutation;
+    public bool CanFitToModel => _meshImport.Matches(Current) && Current.Axes.IsPermutation;
 
     [RelayCommand(CanExecute = nameof(CanFitToModel))]
     private void FitToModel()
@@ -119,13 +119,12 @@ public sealed partial class StockSettingsViewModel : SettingsViewModelBase
 
     protected override BoundingBox? ModelBoundsForValidation()
     {
-        if (!_meshImport.HasMesh || !Current.Axes.IsPermutation)
+        if (!_meshImport.Matches(Current) || !Current.Axes.IsPermutation)
         {
             return null;
         }
 
-        var mesh = _meshImport.CurrentMesh!;
-        return AxisSetup.TransformBounds(mesh.Bounds, Current.Axes.ToMatrix(mesh.Bounds, Current.Stock));
+        return ModelLayout.MachineBounds(Current, _meshImport.Bounds);
     }
 
     protected override void OnReload()
@@ -147,6 +146,5 @@ public sealed partial class StockSettingsViewModel : SettingsViewModelBase
         }
     }
 
-    private BoundingBox OrientedModelBounds()
-        => AxisSetup.TransformBounds(_meshImport.CurrentMesh!.Bounds, Current.Axes.ToOrientationMatrix());
+    private BoundingBox OrientedModelBounds() => ModelLayout.PlacedBounds(Current, _meshImport.Bounds);
 }

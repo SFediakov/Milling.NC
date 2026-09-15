@@ -7,6 +7,7 @@ using Miller.Application.Progress;
 using Miller.Application.Services;
 using Miller.Application.Validation;
 using Miller.Core.Geometry;
+using Miller.Core.Io;
 using Miller.Core.Setup;
 
 namespace Miller.App.ViewModels;
@@ -37,8 +38,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     private readonly Func<Action<ProgressReport>, IProgress<ProgressReport>> _progressFactory;
     private CancellationTokenSource? _generation;
-    private Mesh? _sceneSourceMesh;
-    private Matrix4x4 _sceneMatrix;
+    private IReadOnlyList<Mesh> _sceneSourceMeshes = Array.Empty<Mesh>();
+    private IReadOnlyList<Matrix4x4> _sceneMatrices = Array.Empty<Matrix4x4>();
     private PipelineResult? _lastResult;
 
     public MainWindowViewModel(
@@ -68,13 +69,20 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Log = log ?? throw new ArgumentNullException(nameof(log));
         AppVersion = appVersion ?? throw new ArgumentNullException(nameof(appVersion));
         Project.ProjectChanged += (_, _) => OnPropertyChanged(nameof(Title));
-        MeshImport.MeshChanged += (_, _) => GenerateCommand.NotifyCanExecuteChanged();
+        MeshImport.MeshChanged += (_, _) =>
+        {
+            GenerateCommand.NotifyCanExecuteChanged();
+            UpdateViewportScene();
+        };
         Tool = new ToolSettingsViewModel(Project);
         Stock = new StockSettingsViewModel(Project, MeshImport);
         Axes = new AxisSettingsViewModel(Project, MeshImport);
         Cutting = new CuttingParametersViewModel(Project);
         Strategy = new StrategySelectionViewModel(Project, GenerateCommand, CancelGenerateCommand);
+        Models = new ModelsViewModel(Project, MeshImport, OpenStlCommand);
         Viewport = new ViewportViewModel();
+        Models.SelectionChanged += (_, _) => Viewport.Select(Models.SelectedIndex);
+        Viewport.SelectionChanged += (_, _) => Models.SelectedIndex = Viewport.SelectedModelIndex;
         Viewport.GlError += (_, message) =>
         {
             Log.Error(message, null);
@@ -121,6 +129,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public StrategySelectionViewModel Strategy { get; }
 
+    public ModelsViewModel Models { get; }
+
     public ViewportViewModel Viewport { get; }
 
     public PipelineResult? LastResult
@@ -137,7 +147,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public string Title => $"{App.WindowTitle} {AppVersion}{(Project.IsDirty ? " *" : string.Empty)}";
 
-    private bool CanGenerate => MeshImport.HasMesh && !IsBusy;
+    private bool CanGenerate => MeshImport.Matches(Project.Current) && !IsBusy;
 
     [RelayCommand]
     private async Task OpenStlAsync()
@@ -148,7 +158,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        await ImportStlAsync(path, markDirty: true);
+        await AddModelAsync(path);
     }
 
     [RelayCommand(CanExecute = nameof(CanGenerate))]
@@ -164,7 +174,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         });
         try
         {
-            var result = await Pipeline.RunAsync(Project.Current, MeshImport.CurrentMesh!, progress, _generation.Token);
+            var result = await Pipeline.RunAsync(Project.Current, MeshImport.Meshes, progress, _generation.Token);
             LastResult = result;
             Strategy.ShowResult(result);
             Viewport.SetToolpath(result.Toolpath);
@@ -203,23 +213,31 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         NotifySimulationCommands();
     }
 
-    public Task<bool> OpenStlFileAsync(string path) => ImportStlAsync(path, markDirty: true);
+    public Task<bool> OpenStlFileAsync(string path) => AddModelAsync(path);
 
-    private async Task<bool> ImportStlAsync(string path, bool markDirty)
+    // Adds a model to the project: mesh and placement together, the new model selected.
+    private async Task<bool> AddModelAsync(string path)
     {
         try
         {
-            var report = MeshImport.Import(path);
-            Project.Current.StlPath = path;
-            if (markDirty)
+            Project.Current.Models.Add(new ModelPlacement { StlPath = path });
+            StlImportReport report;
+            try
             {
-                Project.MarkDirty();
+                report = MeshImport.Import(path);
+            }
+            catch
+            {
+                Project.Current.Models.RemoveAt(Project.Current.Models.Count - 1);
+                throw;
             }
 
+            Project.MarkDirty();
             Settings.LastStlDirectory = Path.GetDirectoryName(path);
             Settings.Save();
             ClearResult();
             UpdateViewportScene();
+            Models.SelectedIndex = Project.Current.Models.Count - 1;
             var size = report.Bounds.Size;
             StatusText = string.Create(CultureInfo.InvariantCulture,
                 $"{report.TriangleCount} triangles, {size.X:0.000} x {size.Y:0.000} x {size.Z:0.000} mm");
@@ -230,6 +248,31 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             await ErrorDialog.ShowAsync(ex);
             return false;
         }
+    }
+
+    // Loads the meshes of an opened project; a placement whose file cannot be read is dropped from
+    // the project after the error dialog, so meshes and placements stay aligned.
+    private async Task LoadProjectMeshesAsync(string projectPath)
+    {
+        var directory = Path.GetDirectoryName(projectPath) ?? string.Empty;
+        for (var k = 0; k < Project.Current.Models.Count;)
+        {
+            var stl = Project.Current.Models[k].StlPath;
+            var resolved = Path.IsPathRooted(stl) ? stl : Path.Combine(directory, stl);
+            try
+            {
+                MeshImport.Import(resolved);
+                k++;
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
+            {
+                await ErrorDialog.ShowAsync(ex);
+                Project.Current.Models.RemoveAt(k);
+                Project.MarkDirty();
+            }
+        }
+
+        UpdateViewportScene();
     }
 
     [RelayCommand]
@@ -265,31 +308,49 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private void UpdateViewportScene()
     {
         Viewport.SetTool(Project.Current.Tool);
-        if (!MeshImport.HasMesh || !Project.Current.Axes.IsPermutation)
+        if (!MeshImport.Matches(Project.Current) || !Project.Current.Axes.IsPermutation)
         {
-            if (Viewport.Mesh is not null)
+            if (Viewport.Meshes.Count > 0)
             {
-                Viewport.SetMesh(null);
+                Viewport.SetMeshes(Array.Empty<Mesh>());
             }
 
-            _sceneSourceMesh = null;
+            _sceneSourceMeshes = Array.Empty<Mesh>();
             Viewport.SetStock(null, null);
             return;
         }
 
-        var mesh = MeshImport.CurrentMesh!;
+        var meshes = MeshImport.Meshes;
         var stock = Project.Current.Stock;
-        var matrix = Project.Current.Axes.ToMatrix(mesh.Bounds, stock);
-        if (!ReferenceEquals(mesh, _sceneSourceMesh) || matrix != _sceneMatrix)
+        var matrices = ModelLayout.MachineMatrices(Project.Current, MeshImport.Bounds);
+        if (!SameScene(meshes, matrices))
         {
-            _sceneSourceMesh = mesh;
-            _sceneMatrix = matrix;
-            Viewport.SetMesh(mesh.Transform(matrix));
+            _sceneSourceMeshes = meshes.ToList();
+            _sceneMatrices = matrices;
+            Viewport.SetMeshes(meshes.Select((mesh, k) => mesh.Transform(matrices[k])).ToList());
         }
 
-        var corner = AxisSetup.StockCorner(Viewport.Mesh!.Bounds, stock);
+        var corner = AxisSetup.StockCorner(Viewport.MeshBounds, stock);
         var bounds = new BoundingBox(corner, corner + AxisSetup.StockBoundingSize(stock));
         Viewport.SetStock(bounds, stock);
+    }
+
+    private bool SameScene(IReadOnlyList<Mesh> meshes, IReadOnlyList<Matrix4x4> matrices)
+    {
+        if (meshes.Count != _sceneSourceMeshes.Count)
+        {
+            return false;
+        }
+
+        for (var k = 0; k < meshes.Count; k++)
+        {
+            if (!ReferenceEquals(meshes[k], _sceneSourceMeshes[k]) || matrices[k] != _sceneMatrices[k])
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     // Simulation commands; the UI timer moves the simulation while it plays (T-092), the panel

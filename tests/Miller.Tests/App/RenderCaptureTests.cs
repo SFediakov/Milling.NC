@@ -40,11 +40,11 @@ public sealed class RenderCaptureTests
     }
 
     [AvaloniaFact]
-    public void SettingsTabs_RenderToPng()
+    public async Task SettingsTabs_RenderToPng()
     {
         var root = Path.Combine(Path.GetTempPath(), $"miller-render-{Guid.NewGuid():N}");
         var viewModel = TestServices.MainWindowViewModel(root);
-        viewModel.MeshImport.Import(TestMeshes.FixturePath());
+        Assert.True(await viewModel.OpenStlFileAsync(TestMeshes.FixturePath()));
         viewModel.Tool.HeadDiameter = 5f;
         // 100 x 100 stock at 0.05 mm: allowed, but the cutting tab shows the interactive-limit warning.
         viewModel.Cutting.CellSize = 0.05f;
