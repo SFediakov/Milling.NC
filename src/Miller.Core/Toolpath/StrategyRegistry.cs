@@ -11,6 +11,8 @@ public static class StrategyRegistry
         new IToolpathStrategy[]
         {
             new RasterRoughingStrategy(),
+            new RasterFinishingStrategy(),
+            new ContourFinishingStrategy(),
         },
         s => s.Id,
         s => s.DisplayName,
