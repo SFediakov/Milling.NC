@@ -537,6 +537,7 @@ check that decides done.
 - Input: placeholders
 - Output: `BoundingBox` (readonly struct: `Min`, `Max`, `Size`, `Center`, `Union`, `Contains`, `Empty`), `Triangle` (readonly struct: `A`, `B`, `C`, `Normal` computed from the corners, `MinZ`, `MaxZ`, `IsDegenerate` when area below `MinArea`)
 - Acceptance: compiles; used by T-012
+- Status: done
 
 #### T-012 Mesh
 - Depends on: T-011
