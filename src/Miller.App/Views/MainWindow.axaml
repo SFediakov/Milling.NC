@@ -7,6 +7,19 @@
         Title="{Binding Title}"
         MinWidth="960"
         MinHeight="600">
+  <!-- Menu items in a closed submenu are not effectively enabled, so MenuItem.HotKey never fires
+       from the window; the gestures are bound here and the menu shows them through InputGesture. -->
+  <Window.KeyBindings>
+    <KeyBinding Gesture="Ctrl+O" Command="{Binding OpenStlCommand}" />
+    <KeyBinding Gesture="Ctrl+S" Command="{Binding SaveProjectCommand}" />
+    <KeyBinding Gesture="Ctrl+E" Command="{Binding ExportNcCommand}" />
+    <KeyBinding Gesture="F5" Command="{Binding GenerateCommand}" />
+    <KeyBinding Gesture="Ctrl+D0" Command="{Binding ResetCameraCommand}" />
+    <KeyBinding Gesture="Ctrl+D1" Command="{Binding ToggleModelCommand}" />
+    <KeyBinding Gesture="Ctrl+D2" Command="{Binding ToggleStockCommand}" />
+    <KeyBinding Gesture="Ctrl+D3" Command="{Binding ToggleToolpathCommand}" />
+    <KeyBinding Gesture="Ctrl+D4" Command="{Binding ToggleToolCommand}" />
+  </Window.KeyBindings>
   <DockPanel>
     <views:MainMenu DockPanel.Dock="Top" />
 

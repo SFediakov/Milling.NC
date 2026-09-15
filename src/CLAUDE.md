@@ -97,8 +97,15 @@
   GlConstants. Probe the assembly strings before assuming a wrapper exists.
 - The Linux rendering check comes for free: the Docker build runs the test suite, so the render
   captures exist inside the image under /src/out/ui-captures and can be extracted with tar.
-- Menu shortcuts use MenuItem.HotKey; Space is reserved for the viewport because a window-level
-  key binding would fire while typing in a text box.
+- Menu shortcuts are window-level KeyBindings in MainWindow.axaml; the MenuItem keeps only
+  InputGesture for display. MenuItem.HotKey looked right but never fired from the window: an item in
+  a closed submenu is not in the visual tree, reports IsEffectivelyEnabled false, and Avalonia's
+  hotkey wrapper refuses it, so Ctrl+O, Ctrl+S, Ctrl+E and F5 only worked while their menu was
+  open. A headless test presses the gestures and asserts the commands ran. Space stays reserved for
+  the viewport because a window-level binding fires while typing in a text box; Ctrl+letter and
+  function keys do not collide with text editing.
+- Key gestures for digits are written Ctrl+D1, not Ctrl+1: KeyGesture parses a bare digit as the
+  numeric value of the Key enum (1 is Cancel, 2 is Back).
 - Progress<T> delivers callbacks through the synchronization context captured at construction;
   without one (plain tests) they run on the thread pool and can land after the awaited task,
   which made a status assertion flaky on Linux. The view model takes a progress factory: the
@@ -114,3 +121,13 @@
   it (and init exceptions) through ViewportViewModel.GlError into the log and the status bar.
 - Camera.FitToBounds must use the narrower of the vertical and horizontal half-angles, or a tall
   viewport clips the sides of the model.
+- ProjectService.MarkDirty raises ProjectChanged on every call, not only on the clean-to-dirty
+  transition; the viewport follows each stock or tool edit through that event. The main view model
+  transforms and uploads the mesh again only when the mesh instance or the axis matrix changed, so
+  typing in a panel does not refit the camera.
+- Renderer geometry (grid indices, walls, tool cylinders, toolpath split) is built by static methods
+  and covered by tests/Miller.Tests/App/RendererGeometryTests.cs without a GL context; desktop
+  captures are the last resort, and each one costs a run of the application.
+- Desktop automation on this machine: SendKeys and posted key or wheel messages do not reach the
+  Avalonia window reliably; mouse_event clicks do. Drive the UI through menu clicks when a capture
+  is unavoidable and prefer headless tests (KeyPressQwerty) for keyboard behaviour.

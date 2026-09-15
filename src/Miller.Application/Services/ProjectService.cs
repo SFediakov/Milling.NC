@@ -56,13 +56,9 @@ public sealed class ProjectService
         Save();
     }
 
+    // Every edit raises ProjectChanged, not only the first one: the viewport follows each change.
     public void MarkDirty()
     {
-        if (IsDirty)
-        {
-            return;
-        }
-
         IsDirty = true;
         ProjectChanged?.Invoke(this, EventArgs.Empty);
     }

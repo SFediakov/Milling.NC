@@ -62,6 +62,39 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task Viewport_FollowsImportProjectChangesAndGeneration()
+    {
+        var vm = await CreateWithBoxAsync();
+        var viewport = vm.Viewport;
+        Assert.NotNull(viewport.Mesh);
+        Assert.NotNull(viewport.StockBounds);
+        Assert.NotNull(viewport.Tool);
+        Assert.Null(viewport.Toolpath);
+        var meshVersion = viewport.MeshVersion;
+        var stockVersion = viewport.StockVersion;
+
+        vm.Stock.SizeX = 12;
+        Assert.True(viewport.StockVersion > stockVersion);
+        Assert.Equal(12f, viewport.StockBounds!.Value.Size.X, 3);
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+        Assert.NotNull(viewport.Toolpath);
+        Assert.NotNull(viewport.StockMap);
+        Assert.Equal(vm.LastResult!.Toolpath.Count, viewport.Toolpath!.Count);
+
+        vm.ToggleStockCommand.Execute(null);
+        Assert.False(viewport.ShowStock);
+        vm.ResetCameraCommand.Execute(null);
+        Assert.True(viewport.FitPending);
+
+        vm.NewProjectCommand.Execute(null);
+        Assert.Null(viewport.Mesh);
+        Assert.Null(viewport.Toolpath);
+        Assert.Null(viewport.StockMap);
+        Assert.True(viewport.MeshVersion > meshVersion);
+    }
+
+    [Fact]
     public async Task Generate_InvalidProject_GoesToTheErrorDialog()
     {
         var vm = await CreateWithBoxAsync();

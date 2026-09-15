@@ -1111,6 +1111,7 @@ check that decides done.
 - Input: placeholder
 - Output: line VBO with per-segment color by kind; `ProgressIndex` uniform-free approach: two draws (done part and remaining part) using an index range; toggled by the view model flag
 - Acceptance: screenshot of the generated fixture toolpath with rapid, feed and plunge colors distinguishable
+- Status: done
 
 #### T-082 Heightmap renderer
 - Depends on: T-081, T-030
@@ -1118,6 +1119,7 @@ check that decides done.
 - Input: placeholder
 - Output: grid mesh from a `HeightMap` (one vertex per cell center, NaN cells skipped by index omission), normals from neighbors, per-vertex color from a category array or a single color; `Upload(HeightMap)` full and `Update(HeightMap, dirtyRectangle)` partial via buffer sub-data
 - Acceptance: screenshot of the stock rendered as a solid block over the fixture
+- Status: done
 
 #### T-083 Tool renderer
 - Depends on: T-082
@@ -1125,6 +1127,7 @@ check that decides done.
 - Input: placeholder
 - Output: cutter cylinder (diameter, length) and head cylinder (head diameter, fixed display length) built once per tool definition, drawn at the current tool position with the tool colors; flat tip as a disc, ball tip as a hemisphere
 - Acceptance: screenshot with the tool at the toolpath start after generation
+- Status: done
 
 #### T-084 Viewport view model wiring
 - Depends on: T-083
@@ -1132,6 +1135,7 @@ check that decides done.
 - Input: T-079 view model
 - Output: subscriptions: mesh changed -> mesh renderer and fit; project changed -> stock outline and tool geometry; pipeline finished -> toolpath and stock heightmap; view menu toggles bound to the flags; reset camera command
 - Acceptance: opening a new STL, changing stock size and generating each update the viewport without restart
+- Status: done
 
 #### T-085 Viewport performance check
 - Depends on: T-084

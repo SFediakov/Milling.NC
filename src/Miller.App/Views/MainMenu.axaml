@@ -5,26 +5,26 @@
              x:DataType="vm:MainWindowViewModel">
   <Menu Name="Menu">
     <MenuItem Header="_File" Name="FileMenu">
-      <MenuItem Header="Open _STL..." Name="OpenStlItem" Command="{Binding OpenStlCommand}" HotKey="Ctrl+O" InputGesture="Ctrl+O" />
+      <MenuItem Header="Open _STL..." Name="OpenStlItem" Command="{Binding OpenStlCommand}" InputGesture="Ctrl+O" />
       <MenuItem Header="_Open Project..." Name="OpenProjectItem" Command="{Binding OpenProjectCommand}" />
-      <MenuItem Header="_Save Project" Name="SaveProjectItem" Command="{Binding SaveProjectCommand}" HotKey="Ctrl+S" InputGesture="Ctrl+S" />
+      <MenuItem Header="_Save Project" Name="SaveProjectItem" Command="{Binding SaveProjectCommand}" InputGesture="Ctrl+S" />
       <MenuItem Header="Save Project _As..." Name="SaveProjectAsItem" Command="{Binding SaveProjectAsCommand}" />
       <Separator />
-      <MenuItem Header="_Export NC..." Name="ExportNcItem" Command="{Binding ExportNcCommand}" HotKey="Ctrl+E" InputGesture="Ctrl+E" />
+      <MenuItem Header="_Export NC..." Name="ExportNcItem" Command="{Binding ExportNcCommand}" InputGesture="Ctrl+E" />
       <Separator />
       <MenuItem Header="E_xit" Name="ExitItem" Command="{Binding ExitCommand}" />
     </MenuItem>
     <MenuItem Header="_Toolpath" Name="ToolpathMenu">
-      <MenuItem Header="_Generate" Name="GenerateItem" Command="{Binding GenerateCommand}" HotKey="F5" InputGesture="F5" />
+      <MenuItem Header="_Generate" Name="GenerateItem" Command="{Binding GenerateCommand}" InputGesture="F5" />
       <MenuItem Header="_Cancel" Name="CancelGenerateItem" Command="{Binding CancelGenerateCommand}" />
     </MenuItem>
     <MenuItem Header="_View" Name="ViewMenu">
-      <MenuItem Header="_Reset Camera" Name="ResetCameraItem" Command="{Binding ResetCameraCommand}" />
+      <MenuItem Header="_Reset Camera" Name="ResetCameraItem" Command="{Binding ResetCameraCommand}" InputGesture="Ctrl+D0" />
       <Separator />
-      <MenuItem Header="Show _Model" Name="ShowModelItem" Command="{Binding ToggleModelCommand}" />
-      <MenuItem Header="Show _Stock" Name="ShowStockItem" Command="{Binding ToggleStockCommand}" />
-      <MenuItem Header="Show _Toolpath" Name="ShowToolpathItem" Command="{Binding ToggleToolpathCommand}" />
-      <MenuItem Header="Show Too_l" Name="ShowToolItem" Command="{Binding ToggleToolCommand}" />
+      <MenuItem Header="Show _Model" Name="ShowModelItem" Command="{Binding ToggleModelCommand}" InputGesture="Ctrl+D1" />
+      <MenuItem Header="Show _Stock" Name="ShowStockItem" Command="{Binding ToggleStockCommand}" InputGesture="Ctrl+D2" />
+      <MenuItem Header="Show _Toolpath" Name="ShowToolpathItem" Command="{Binding ToggleToolpathCommand}" InputGesture="Ctrl+D3" />
+      <MenuItem Header="Show Too_l" Name="ShowToolItem" Command="{Binding ToggleToolCommand}" InputGesture="Ctrl+D4" />
     </MenuItem>
     <MenuItem Header="_Simulation" Name="SimulationMenu">
       <MenuItem Header="_Play" Name="PlayItem" Command="{Binding PlayCommand}" />

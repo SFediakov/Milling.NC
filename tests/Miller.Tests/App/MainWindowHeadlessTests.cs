@@ -1,6 +1,9 @@
 using Avalonia.Controls;
+using Avalonia.Headless;
+using Avalonia.Input;
 using Avalonia.Headless.XUnit;
 using Avalonia.LogicalTree;
+using Avalonia.VisualTree;
 using Miller.App.Views;
 using Miller.Tests.Fixtures;
 using Xunit;
@@ -47,6 +50,46 @@ public sealed class MainWindowHeadlessTests
             Assert.Single(window.GetLogicalDescendants().OfType<ToolSettingsView>().Distinct());
             Assert.Single(window.GetLogicalDescendants().OfType<StockSettingsView>().Distinct());
             Assert.Single(window.GetLogicalDescendants().OfType<AxisSettingsView>().Distinct());
+        }
+        finally
+        {
+            window.Close();
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
+    }
+
+    [AvaloniaFact]
+    public void MainWindow_MenuHotKeysWorkWithoutOpeningTheMenu()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"miller-headless-{Guid.NewGuid():N}");
+        var viewModel = TestServices.MainWindowViewModel(root);
+        var window = new MainWindow { DataContext = viewModel };
+        try
+        {
+            window.Show();
+            window.GetLogicalDescendants().OfType<TabItem>().First().Focus();
+            var status = viewModel.StatusText;
+            Assert.True(viewModel.Viewport.ShowStock);
+            window.KeyPressQwerty(PhysicalKey.Digit2, RawInputModifiers.Control);
+            window.KeyReleaseQwerty(PhysicalKey.Digit2, RawInputModifiers.Control);
+            Assert.False(viewModel.Viewport.ShowStock);
+
+            window.KeyPressQwerty(PhysicalKey.Digit0, RawInputModifiers.Control);
+            window.KeyReleaseQwerty(PhysicalKey.Digit0, RawInputModifiers.Control);
+            Assert.True(viewModel.Viewport.FitPending);
+
+            // No mesh: F5 must reach the command and be refused quietly.
+            window.KeyPressQwerty(PhysicalKey.F5, RawInputModifiers.None);
+            window.KeyReleaseQwerty(PhysicalKey.F5, RawInputModifiers.None);
+            Assert.Equal(status, viewModel.StatusText);
+            Assert.Null(viewModel.LastResult);
+
+            // The menu still announces the gestures.
+            var item = window.GetLogicalDescendants().OfType<MenuItem>().First(m => m.Name == "ShowStockItem");
+            Assert.Equal("Ctrl+D2", item.InputGesture?.ToString());
         }
         finally
         {
