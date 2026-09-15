@@ -1,0 +1,26 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Miller.App.ViewModels"
+             x:Class="Miller.App.Views.AnalysisView"
+             x:DataType="vm:AnalysisViewModel">
+  <ScrollViewer>
+    <StackPanel Margin="8" Spacing="4">
+      <TextBlock Classes="header" Text="Final model analysis" />
+      <Button Name="AnalyzeButton" Content="Analyze final model" Command="{Binding AnalyzeCommand}" HorizontalAlignment="Left" />
+      <TextBlock Name="SummaryText" Text="{Binding SummaryText}" TextWrapping="Wrap" />
+
+      <TextBlock Classes="header" Text="Viewport" />
+      <CheckBox Name="ShowFinalModelBox" Content="Show final model instead of the stock" IsChecked="{Binding ShowFinalModel}" IsEnabled="{Binding HasResult}" />
+      <CheckBox Name="ShowUncuttableBox" Content="Overlay uncuttable regions" IsChecked="{Binding ShowUncuttable}" IsEnabled="{Binding ShowFinalModel}" />
+
+      <TextBlock Classes="header" Text="Legend" />
+      <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="{DynamicResource CategoryOkBrush}" /><TextBlock Text="Ok: within tolerance" /></StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="{DynamicResource CategoryRestMaterialBrush}" /><TextBlock Text="Rest material: stock above the model" /></StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="{DynamicResource CategoryGougeBrush}" /><TextBlock Text="Gouge: stock below the model" /></StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="{DynamicResource CategoryOverhangBrush}" /><TextBlock Text="Overhang: hidden from above" /></StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="{DynamicResource CategoryHeadLimitedBrush}" /><TextBlock Text="Head limited: holder keeps the tip up" /></StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="{DynamicResource CategoryCornerLimitedBrush}" /><TextBlock Text="Corner limited: cutter too wide" /></StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="{DynamicResource StockBrush}" /><TextBlock Text="No model: floor" /></StackPanel>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

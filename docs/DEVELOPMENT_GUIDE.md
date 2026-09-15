@@ -1237,6 +1237,7 @@ check that decides done.
 - Input: placeholders; formula 6.3
 - Output: `DeviationMap` (`Values` heightmap, `Categories` array with `CellCategory { Ok, RestMaterial, Gouge, NoModel }`), `FinalModelAnalyzer.Analyze(HeightMap finalStock, HeightMap model, float floor, float tolerance) -> AnalysisResult` with the map, counts, areas and volumes per category; tests: identical maps give all Ok; stock above model gives RestMaterial with the right volume; stock below gives Gouge; floor cells are NoModel
 - Acceptance: tests green
+- Status: done
 
 #### T-097 Analysis service and run-to-end command
 - Depends on: T-096, T-091
@@ -1244,6 +1245,7 @@ check that decides done.
 - Input: placeholders
 - Output: `AnalyzeAsync(PipelineResult, CancellationToken)` running the engine to the end on a fresh stock on a background task and returning `AnalysisResult`; `AnalysisViewModel` with `AnalyzeCommand`, result properties, `ShowFinalModel` flag switching the heightmap renderer to the final stock with category colors
 - Acceptance: on the fixture, the analysis reports rest material above zero and zero gouge cells
+- Status: done
 
 #### T-098 Uncuttable regions
 - Depends on: T-097, T-023
@@ -1251,6 +1253,7 @@ check that decides done.
 - Input: placeholders; classification 6.3
 - Output: `Compute(Mesh machineMesh, HeightMap model, HeightMap tip, HeightMap effectiveTip, bool[,] headLimited, float floor, float tolerance) -> UncuttableResult` with masks Overhang, HeadLimited, CornerLimited and counts, using `MeshRasterizer.RasterizeDownwardFacing`; tests: the fixture has overhang cells above zero; the slot fixture with the short cutter has head-limited cells equal to the slot floor cells; a plate with a 1 mm inner corner radius and a 6 mm tool has corner-limited cells
 - Acceptance: tests green
+- Status: done
 
 #### T-099 Analysis panel and category coloring
 - Depends on: T-098, T-082
@@ -1258,6 +1261,7 @@ check that decides done.
 - Input: T-097 view model
 - Output: analyze button, legend with the six category colors from resources, counts, areas and volumes; the heightmap renderer takes a category array and colors vertices accordingly; toggles between stock view, final model view and uncuttable overlay
 - Acceptance: screenshot of the fixture final model with rest material and overhang regions colored
+- Status: done
 
 ### M9 Feature extension (user request after M7)
 

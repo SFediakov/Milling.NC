@@ -64,7 +64,9 @@
       <TabItem Header="Simulation" Name="SimulationTab">
         <views:SimulationControlsView DataContext="{Binding SimulationPanel}" />
       </TabItem>
-      <TabItem Header="Analysis" Name="AnalysisTab" />
+      <TabItem Header="Analysis" Name="AnalysisTab">
+        <views:AnalysisView DataContext="{Binding Analysis}" />
+      </TabItem>
     </TabControl>
 
     <Border Name="ViewportHost" Background="{DynamicResource ViewportBackgroundBrush}">

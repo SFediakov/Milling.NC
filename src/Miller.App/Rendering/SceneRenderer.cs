@@ -1,6 +1,7 @@
 using System.Numerics;
 using Avalonia.OpenGL;
 using Miller.App.ViewModels;
+using Miller.Core.Analysis;
 using Miller.Core.Toolpaths;
 
 namespace Miller.App.Rendering;
@@ -32,6 +33,8 @@ public sealed class SceneRenderer : IDisposable
     private int _stockVersion = -1;
     private int _toolpathVersion = -1;
     private int _stockMapVersion = -1;
+    private int _categoriesVersion = -1;
+    private readonly Dictionary<CellCategory, Vector4> _categoryColors;
     private int _toolVersion = -1;
     private bool _showModel = true;
     private bool _showStock = true;
@@ -66,6 +69,16 @@ public sealed class SceneRenderer : IDisposable
             },
             _background);
         _stockMap = new HeightMapRenderer(gl);
+        _categoryColors = new Dictionary<CellCategory, Vector4>
+        {
+            [CellCategory.Ok] = ThemeColors.Get("CategoryOkColor"),
+            [CellCategory.RestMaterial] = ThemeColors.Get("CategoryRestMaterialColor"),
+            [CellCategory.Gouge] = ThemeColors.Get("CategoryGougeColor"),
+            [CellCategory.NoModel] = ThemeColors.Get("StockColor"),
+            [CellCategory.Overhang] = ThemeColors.Get("CategoryOverhangColor"),
+            [CellCategory.HeadLimited] = ThemeColors.Get("CategoryHeadLimitedColor"),
+            [CellCategory.CornerLimited] = ThemeColors.Get("CategoryCornerLimitedColor"),
+        };
         _tool = new ToolRenderer(gl, ThemeColors.Get("ToolCutterColor"), ThemeColors.Get("ToolHeadColor"));
     }
 
@@ -91,6 +104,20 @@ public sealed class SceneRenderer : IDisposable
             _stockMapVersion = viewModel.StockMapVersion;
             _stockMap.Upload(viewModel.StockMap, viewModel.StockFloorZ, ThemeColors.Get("StockColor"));
             viewModel.TakeStockDirty();
+            _categoriesVersion = -1;
+        }
+
+        if (viewModel.CategoriesVersion != _categoriesVersion)
+        {
+            _categoriesVersion = viewModel.CategoriesVersion;
+            if (viewModel.StockCategories is { } categories && viewModel.StockMap is not null)
+            {
+                _stockMap.SetCategories(categories, _categoryColors);
+            }
+            else if (viewModel.StockMap is not null)
+            {
+                _stockMap.Upload(viewModel.StockMap, viewModel.StockFloorZ, ThemeColors.Get("StockColor"));
+            }
         }
         else if (viewModel.StockMap is { } stockMap && !viewModel.StockDirty.IsEmpty)
         {

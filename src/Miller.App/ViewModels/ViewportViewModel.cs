@@ -2,6 +2,7 @@ using System.Numerics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Miller.Core.Geometry;
 using Miller.Application.Services;
+using Miller.Core.Analysis;
 using Miller.Core.HeightMaps;
 using Miller.Core.Setup;
 using Miller.Core.Simulation;
@@ -69,6 +70,11 @@ public sealed partial class ViewportViewModel : ViewModelBase
     public HeightMap? StockMap { get; private set; }
 
     public float StockFloorZ { get; private set; }
+
+    // Per-cell colors of the stock map (analysis view); null draws the plain stock color.
+    public CellCategory[]? StockCategories { get; private set; }
+
+    public int CategoriesVersion { get; private set; }
 
     public int StockMapVersion { get; private set; }
 
@@ -161,6 +167,20 @@ public sealed partial class ViewportViewModel : ViewModelBase
         StockFloorZ = floorZ;
         StockMapVersion++;
         StockDirty = DirtyRect.Empty;
+        StockCategories = null;
+        CategoriesVersion++;
+        Invalidate();
+    }
+
+    public void SetCategories(CellCategory[]? categories)
+    {
+        if (categories is not null && StockMap is not null && categories.Length != StockMap.CellCount)
+        {
+            throw new ArgumentException("Category array does not match the stock map.", nameof(categories));
+        }
+
+        StockCategories = categories;
+        CategoriesVersion++;
         Invalidate();
     }
 
