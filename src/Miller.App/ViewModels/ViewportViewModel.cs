@@ -29,8 +29,22 @@ public sealed partial class ViewportViewModel : ViewModelBase
 
     public event EventHandler<string>? GlError;
 
-    // Machine-space mesh.
-    public Mesh? Mesh { get; private set; }
+    // Machine-space meshes, one per model placement.
+    public IReadOnlyList<Mesh> Meshes { get; private set; } = Array.Empty<Mesh>();
+
+    public BoundingBox MeshBounds
+    {
+        get
+        {
+            var union = BoundingBox.Empty;
+            foreach (var mesh in Meshes)
+            {
+                union = union.Union(mesh.Bounds);
+            }
+
+            return union;
+        }
+    }
 
     public int MeshVersion { get; private set; }
 
@@ -101,16 +115,18 @@ public sealed partial class ViewportViewModel : ViewModelBase
         }
 
         SelectedModelIndex = index;
+        MeshVersion++;
         SelectionChanged?.Invoke(this, EventArgs.Empty);
         Invalidate();
     }
 
-    public void SetMesh(Mesh? mesh)
+    public void SetMeshes(IReadOnlyList<Mesh> meshes)
     {
-        Mesh = mesh;
+        ArgumentNullException.ThrowIfNull(meshes);
+        Meshes = meshes;
         MeshVersion++;
-        FitPending = mesh is not null;
-        ModelBounds = mesh is null ? Array.Empty<BoundingBox>() : new[] { mesh.Bounds };
+        FitPending = meshes.Count > 0;
+        ModelBounds = meshes.Select(m => m.Bounds).ToList();
         if (SelectedModelIndex >= ModelBounds.Count)
         {
             Select(-1);
