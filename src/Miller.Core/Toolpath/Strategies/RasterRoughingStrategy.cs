@@ -25,16 +25,16 @@ public sealed class RasterRoughingStrategy : IToolpathStrategy
         var p = context.Parameters;
         var map = context.EffectiveTip;
         var steps = context.Plan.RoughingSteps.ToList();
-        var passes = new List<Toolpath>();
+        var groups = new List<IReadOnlyList<Toolpath>>();
 
         for (var s = 0; s < steps.Count; s++)
         {
             var step = steps[s];
-            passes.AddRange(RowPasses(map, step.Mask, step.Level, p, cancellation));
+            groups.Add(RowPasses(map, step.Mask, step.Level, p, cancellation));
             progress?.Report((s + 1f) / steps.Count);
         }
 
-        return ToolpathLinker.Link(passes, p, context.SafeZ, map);
+        return ToolpathLinker.Link(groups, p, context.SafeZ, map);
     }
 
     // Rows along X spaced by Stepover over one level mask; runs of masked cells become feeds at the

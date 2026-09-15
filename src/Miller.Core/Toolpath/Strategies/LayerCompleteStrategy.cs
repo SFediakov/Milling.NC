@@ -22,16 +22,18 @@ public sealed class LayerCompleteStrategy : IToolpathStrategy
         var p = context.Parameters;
         var map = context.EffectiveTip;
         var steps = context.Plan.RoughingSteps.ToList();
-        var passes = new List<Toolpath>();
+        var groups = new List<IReadOnlyList<Toolpath>>();
         for (var s = 0; s < steps.Count; s++)
         {
             cancellation.ThrowIfCancellationRequested();
             var step = steps[s];
-            passes.AddRange(RasterRoughingStrategy.RowPasses(map, step.Mask, step.Level, p, cancellation));
-            passes.AddRange(ContourFinishingStrategy.LoopPasses(step.Mask, map, step.Level, p));
+            var level = new List<Toolpath>();
+            level.AddRange(RasterRoughingStrategy.RowPasses(map, step.Mask, step.Level, p, cancellation));
+            level.AddRange(ContourFinishingStrategy.LoopPasses(step.Mask, map, step.Level, p));
+            groups.Add(level);
             progress?.Report((s + 1f) / steps.Count);
         }
 
-        return ToolpathLinker.Link(passes, p, context.SafeZ, map);
+        return ToolpathLinker.Link(groups, p, context.SafeZ, map);
     }
 }

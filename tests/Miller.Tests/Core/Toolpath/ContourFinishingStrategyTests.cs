@@ -26,18 +26,22 @@ public sealed class ContourFinishingStrategyTests
 
         var levels = Slicer.RoughingLevels(context.StockTop, context.Plan.LowestLevel, p.FinishingStepover).ToList();
         Assert.NotEmpty(levels);
+        // Loops are linked in nearest-neighbour order and may be joined by short feeds, also across
+        // consecutive levels; every level feed lies on a level and the sloping joins are few.
         var feeds = toolpath.Segments.Where(s => s.Kind == MoveKind.Feed).ToList();
-        Assert.All(feeds, s =>
-        {
-            Assert.Equal(s.Start.Z, s.End.Z);
-            Assert.Contains(s.Start.Z, levels);
-        });
+        var sloping = feeds.Where(s => s.Start.Z != s.End.Z).ToList();
+        Assert.True(sloping.Count < levels.Count, $"{sloping.Count} sloping joins for {levels.Count} levels");
+        Assert.All(feeds.Except(sloping), s => Assert.Contains(s.Start.Z, levels));
 
         foreach (var level in levels)
         {
             var expected = MarchingSquares.MaskContours(ContourFinishingStrategy.AllowedMask(context.EffectiveTip, level), context.EffectiveTip);
+            var expectedPoints = expected.SelectMany(loop => loop).Select(v => (v.X, v.Y)).ToHashSet();
+            var actualPoints = feeds.Where(s => s.Start.Z == level && s.End.Z == level)
+                .SelectMany(s => new[] { (s.Start.X, s.Start.Y), (s.End.X, s.End.Y) }).ToHashSet();
+            Assert.True(expectedPoints.SetEquals(actualPoints), $"level {level}: vertex sets differ");
             var plungesAtLevel = toolpath.Segments.Count(s => s.Kind == MoveKind.Plunge && s.End.Z == level);
-            Assert.Equal(expected.Count, plungesAtLevel);
+            Assert.InRange(plungesAtLevel, 0, expected.Count);
         }
     }
 
@@ -48,7 +52,8 @@ public sealed class ContourFinishingStrategyTests
         var toolpath = new ContourFinishingStrategy().Generate(context, null, CancellationToken.None);
         Assert.Empty(GougeChecker.Verify(toolpath, context.EffectiveTip, context.Parameters.Tolerance));
 
-        // Each plunge starts a loop; the feed chain after it must return to the plunge end point.
+        // Each plunge starts a loop; the feed chain after it returns to the plunge end point before the
+        // next retract (the linker may join the next loop to the chain when it starts within a cell).
         var segments = toolpath.Segments;
         for (var k = 0; k < segments.Count; k++)
         {
@@ -64,7 +69,7 @@ public sealed class ContourFinishingStrategyTests
                 n++;
             }
 
-            Assert.Equal(start, segments[n - 1].End);
+            Assert.Contains(segments.Skip(k + 1).Take(n - k - 1), s => s.End == start);
             Assert.True(n - 1 - k >= 4, "a loop has at least four segments");
         }
     }
