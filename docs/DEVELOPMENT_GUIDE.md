@@ -593,6 +593,7 @@ check that decides done.
 - Input: placeholder; section 6.1
 - Output: `AxisSetup` with `MapX`, `MapY`, `MapZ` (enum `ModelAxis { X, Y, Z }`), `FlipX`, `FlipY`, `FlipZ`, `RotationX`, `RotationY`, `RotationZ` degrees, `OriginMode`, `CustomOffset`; `ToMatrix(BoundingBox modelBounds, StockDefinition stock) -> Matrix4x4`
 - Acceptance: compiles; tests in T-019
+- Status: done
 
 #### T-019 Tests for axis setup
 - Depends on: T-018, T-013
