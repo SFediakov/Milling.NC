@@ -503,6 +503,7 @@ check that decides done.
 - Input: placeholders
 - Output: test project referencing all three source projects and the test packages; `[assembly: AvaloniaTestApplication(typeof(TestAppBuilder))]` with a headless builder using the Fluent theme; a test asserting `AppVersion` matches `^Build_\d+\.\d+\.\d+$`
 - Acceptance: `dotnet test Miller.sln` runs 1 test, green
+- Status: done
 
 #### T-008 Build script
 - Depends on: T-007
