@@ -174,6 +174,16 @@ public sealed class Viewport3DControl : OpenGlControlBase
         e.Pointer.Capture(null);
     }
 
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.Key == Key.Space)
+        {
+            ViewModel?.RequestPlayPause();
+            e.Handled = true;
+        }
+    }
+
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);

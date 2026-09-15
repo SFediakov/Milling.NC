@@ -1,0 +1,40 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Miller.App.ViewModels"
+             xmlns:conv="using:Miller.App.Converters"
+             x:Class="Miller.App.Views.SimulationControlsView"
+             x:DataType="vm:SimulationViewModel">
+  <UserControl.Resources>
+    <conv:LogSliderConverter x:Key="LogSlider" />
+  </UserControl.Resources>
+  <ScrollViewer>
+    <StackPanel Margin="8" Spacing="4">
+      <TextBlock Classes="header" Text="Simulation" />
+      <TextBlock Name="StateText" Text="{Binding StateText}" TextWrapping="Wrap" />
+      <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,4,0,0">
+        <Button Name="PlayButton" Content="Play" Command="{Binding PlayCommand}" />
+        <Button Name="PauseButton" Content="Pause" Command="{Binding PauseCommand}" />
+        <Button Name="StopButton" Content="Stop" Command="{Binding StopCommand}" />
+        <Button Name="StepButton" Content="Step" Command="{Binding StepCommand}" />
+      </StackPanel>
+      <Button Name="RunToEndButton" Content="Run to end" Command="{Binding RunToEndCommand}" HorizontalAlignment="Left" />
+
+      <TextBlock Classes="header" Text="Speed (0.1x to 1000x)" />
+      <Slider Name="SpeedSlider" Minimum="0" Maximum="1" Value="{Binding SpeedFactor, Converter={StaticResource LogSlider}}" TickFrequency="0.25" IsSnapToTickEnabled="False" />
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <TextBox Name="SpeedBox" Classes="numeric" Text="{Binding SpeedText}" />
+        <TextBlock Text="x real time" VerticalAlignment="Center" />
+      </StackPanel>
+      <TextBlock Classes="validation" Text="{Binding SpeedError}" IsVisible="{Binding SpeedError, Converter={x:Static ObjectConverters.IsNotNull}}" TextWrapping="Wrap" />
+
+      <TextBlock Classes="header" Text="Progress" />
+      <ProgressBar Name="SimulationProgress" Minimum="0" Maximum="1" Value="{Binding Progress}" Height="14" />
+      <TextBlock Classes="label" Text="Simulated time" />
+      <TextBlock Name="ElapsedText" Text="{Binding ElapsedText}" />
+      <TextBlock Classes="label" Text="Collision events" />
+      <TextBlock Name="CollisionText" Text="{Binding CollisionCount}" />
+      <TextBlock Classes="warning" Name="LastEventText" Text="{Binding LastEventText}" TextWrapping="Wrap" />
+      <TextBlock Text="Space in the viewport toggles play and pause." TextWrapping="Wrap" Margin="0,8,0,0" />
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

@@ -45,6 +45,7 @@ public partial class App : Avalonia.Application
                 DataContext = viewModel,
             };
             var timer = new UiTimer(simulation, viewModel.Viewport);
+            timer.Ticked += (_, snapshot) => viewModel.SimulationPanel.Apply(snapshot);
             timer.Start();
             desktop.Exit += (_, _) => timer.Dispose();
             log.Info($"started {Program.AppVersion}");
