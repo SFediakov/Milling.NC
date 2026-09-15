@@ -601,6 +601,7 @@ check that decides done.
 - Input: placeholder
 - Output: tests: identity leaves the cube in place; swapping Y and Z turns the 10x10x5 box into 10x5x10; flip Z mirrors; rotation Z 90 maps (1,0,0) to (0,1,0); each origin mode puts the expected corner at (0,0,0)
 - Acceptance: tests green
+- Status: done
 
 #### T-020 Milling project and JSON serializer
 - Depends on: T-018
