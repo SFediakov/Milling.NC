@@ -7,7 +7,7 @@ namespace Miller.App;
 
 public static class Program
 {
-    public const string AppVersion = "Build_1.0.65";
+    public const string AppVersion = "Build_1.0.66";
     public const string VersionFlag = "--version";
     public const string ExportFlag = "--export";
 
@@ -41,11 +41,15 @@ public static class Program
         {
             var project = ProjectSerializer.Deserialize(File.ReadAllText(projectPath));
             var projectDirectory = Path.GetDirectoryName(Path.GetFullPath(projectPath)) ?? string.Empty;
-            var stlPath = Path.IsPathRooted(project.StlPath) ? project.StlPath : Path.Combine(projectDirectory, project.StlPath);
             var import = new MeshImportService();
-            var report = import.Import(stlPath);
-            Console.WriteLine($"mesh {report.TriangleCount} triangles, {report.Format}");
-            var result = new PipelineService().Run(project, import.CurrentMesh!, new ConsoleProgress(), CancellationToken.None);
+            foreach (var model in project.Models)
+            {
+                var stlPath = Path.IsPathRooted(model.StlPath) ? model.StlPath : Path.Combine(projectDirectory, model.StlPath);
+                var report = import.Import(stlPath);
+                Console.WriteLine($"mesh {report.TriangleCount} triangles, {report.Format}");
+            }
+
+            var result = new PipelineService().Run(project, import.Meshes, new ConsoleProgress(), CancellationToken.None);
             var written = new ExportService().Export(result.Toolpath, project, AppVersion, outputPath);
             Console.WriteLine($"written {written}: {result.Statistics.SegmentCount} segments, {result.Statistics.EstimatedMinutes:F1} min");
             return 0;

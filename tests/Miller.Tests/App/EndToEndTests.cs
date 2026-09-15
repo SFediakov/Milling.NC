@@ -22,8 +22,12 @@ public sealed class EndToEndTests
     {
         var project = ProjectSerializer.Deserialize(File.ReadAllText(SampleProjectPath));
         var import = new MeshImportService();
-        import.Import(Path.Combine(Path.GetDirectoryName(SampleProjectPath)!, project.StlPath));
-        var result = new PipelineService().Run(project, import.CurrentMesh!, null, CancellationToken.None);
+        foreach (var model in project.Models)
+        {
+            import.Import(Path.Combine(Path.GetDirectoryName(SampleProjectPath)!, model.StlPath));
+        }
+
+        var result = new PipelineService().Run(project, import.Meshes, null, CancellationToken.None);
 
         var directory = Path.Combine(Path.GetTempPath(), $"miller-e2e-{Guid.NewGuid():N}");
         try

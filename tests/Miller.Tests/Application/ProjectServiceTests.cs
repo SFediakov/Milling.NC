@@ -32,7 +32,7 @@ public sealed class ProjectServiceTests : IDisposable
         var raised = 0;
         service.ProjectChanged += (_, _) => raised++;
         service.Current.Tool.CutterDiameter = 4.5f;
-        service.Current.StlPath = "part.stl";
+        service.Current.Models.Add(new ModelPlacement { StlPath = "part.stl" });
         service.MarkDirty();
         Assert.True(service.IsDirty);
         Assert.Equal(1, raised);
@@ -47,7 +47,7 @@ public sealed class ProjectServiceTests : IDisposable
         var other = new ProjectService();
         other.Load(path);
         Assert.Equal(4.5f, other.Current.Tool.CutterDiameter);
-        Assert.Equal("part.stl", other.Current.StlPath);
+        Assert.Equal("part.stl", Assert.Single(other.Current.Models).StlPath);
         Assert.Equal(path, other.Path);
         Assert.False(other.IsDirty);
     }

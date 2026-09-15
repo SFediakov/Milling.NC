@@ -3,14 +3,24 @@ using Miller.Core.Io;
 
 namespace Miller.Application.Services;
 
-// Loads an STL through StlReader and keeps the current mesh for the pipeline and the viewport.
+// Loads STL files through StlReader and keeps one mesh per model placement of the project, in the
+// same order; the main view model adds and removes placements and meshes together.
 public sealed class MeshImportService
 {
-    public Mesh? CurrentMesh { get; private set; }
+    private readonly List<Mesh> _meshes = new();
+    private readonly List<StlImportReport> _reports = new();
 
-    public StlImportReport? Report { get; private set; }
+    public IReadOnlyList<Mesh> Meshes => _meshes;
 
-    public bool HasMesh => CurrentMesh is not null;
+    public IReadOnlyList<StlImportReport> Reports => _reports;
+
+    public bool HasMesh => _meshes.Count > 0;
+
+    // True once every placement of the project has its mesh; false in the moment between adding
+    // or removing a placement and its mesh.
+    public bool Matches(Miller.Core.Setup.MillingProject project) => project is not null && _meshes.Count > 0 && _meshes.Count == project.Models.Count;
+
+    public IReadOnlyList<BoundingBox> Bounds => _meshes.Select(m => m.Bounds).ToList();
 
     public event EventHandler? MeshChanged;
 
@@ -28,16 +38,28 @@ public sealed class MeshImportService
             throw new InvalidDataException($"{path} has non-finite coordinates: {mesh.Bounds.Min} to {mesh.Bounds.Max}.");
         }
 
-        CurrentMesh = mesh;
-        Report = report;
+        _meshes.Add(mesh);
+        _reports.Add(report);
         MeshChanged?.Invoke(this, EventArgs.Empty);
         return report;
     }
 
+    public void RemoveAt(int index)
+    {
+        if (index < 0 || index >= _meshes.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(index));
+        }
+
+        _meshes.RemoveAt(index);
+        _reports.RemoveAt(index);
+        MeshChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     public void Clear()
     {
-        CurrentMesh = null;
-        Report = null;
+        _meshes.Clear();
+        _reports.Clear();
         MeshChanged?.Invoke(this, EventArgs.Empty);
     }
 

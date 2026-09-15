@@ -22,7 +22,8 @@ public sealed class SimulationServiceTests
         project.Stock.SizeY = 14;
         project.Stock.SizeZ = 5;
         project.Parameters.CellSize = 0.5f;
-        return new PipelineService().Run(project, TestMeshes.Box(8, 8, 3), null, CancellationToken.None);
+        project.Models.Add(new ModelPlacement { StlPath = "box.stl" });
+        return new PipelineService().Run(project, new[] { TestMeshes.Box(8, 8, 3) }, null, CancellationToken.None);
     }
 
     private static SimulationService Loaded(PipelineResult? result = null)
@@ -150,7 +151,8 @@ public sealed class SimulationServiceTests
         project.Stock.SizeY = 14;
         project.Stock.SizeZ = 5;
         project.Parameters.CellSize = 0.5f;
-        var result = new PipelineService().Run(project, TestMeshes.Box(8, 8, 3), null, CancellationToken.None);
+        project.Models.Add(new ModelPlacement { StlPath = "box.stl" });
+        var result = new PipelineService().Run(project, new[] { TestMeshes.Box(8, 8, 3) }, null, CancellationToken.None);
         Assert.Contains(result.HeadLimitedMask.Cast<bool>(), limited => limited);
 
         var service = new SimulationService();
