@@ -1,10 +1,33 @@
-// PLACEHOLDER - implemented by T-059 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.App
-// Purpose: Composition root: constructs LogService, SettingsService, ProjectService,
-//     MeshImportService, PipelineService, ExportService, SimulationService, AnalysisService, the
-//     dialog services, the view models and MainWindow. No DI container.
-// Public interface (names only): partial class App : Application { override void Initialize();
-//     override void OnFrameworkInitializationCompleted() }
-// Depends on: Miller.Application services, MainWindowViewModel, MainWindow, UiTimer
-// Must not depend on: Miller.Core algorithms called directly from views or view models (go through
-//     Miller.Application services)
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Markup.Xaml;
+
+namespace Miller.App;
+
+public partial class App : Application
+{
+    public const string WindowTitle = "Miller";
+    public const double DefaultWindowWidth = 1280;
+    public const double DefaultWindowHeight = 720;
+
+    public override void Initialize()
+    {
+        AvaloniaXamlLoader.Load(this);
+    }
+
+    public override void OnFrameworkInitializationCompleted()
+    {
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            desktop.MainWindow = new Window
+            {
+                Title = WindowTitle,
+                Width = DefaultWindowWidth,
+                Height = DefaultWindowHeight,
+            };
+        }
+
+        base.OnFrameworkInitializationCompleted();
+    }
+}
