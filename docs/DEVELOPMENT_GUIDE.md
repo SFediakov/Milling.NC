@@ -518,6 +518,7 @@ check that decides done.
 - Files: `launchers/Miller.sh`
 - Input: comment-only placeholder
 - Output: `#!/usr/bin/env bash`, `cd "$(dirname "$(readlink -f "$0")")"`, `exec ./Miller "$@"`; `build.sh` already copies it and sets the executable bit
+- Status: done
 - Acceptance: `bash -n launchers/Miller.sh` passes; `file launchers/Miller.sh` reports LF line endings; `dist/linux-x64/Miller.sh --version` prints the version when run on Linux (Docker or WSL)
 
 #### T-010 Dockerfile for the Linux build
