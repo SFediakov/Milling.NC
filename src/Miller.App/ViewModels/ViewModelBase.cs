@@ -7,12 +7,15 @@ namespace Miller.App.ViewModels;
 public abstract class ViewModelBase : ObservableObject
 {
     private readonly Dictionary<string, string> _errors = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _warnings = new(StringComparer.Ordinal);
 
     public IReadOnlyDictionary<string, string> Errors => _errors;
 
     public bool HasErrors => _errors.Count > 0;
 
     public string? ErrorFor(string field) => _errors.GetValueOrDefault(field);
+
+    public string? WarningFor(string field) => _warnings.GetValueOrDefault(field);
 
     public void SetError(string field, string message)
     {
@@ -36,11 +39,20 @@ public abstract class ViewModelBase : ObservableObject
     {
         ArgumentNullException.ThrowIfNull(result);
         _errors.Clear();
+        _warnings.Clear();
         foreach (var error in result.Errors)
         {
             if (error.Field.StartsWith(prefix, StringComparison.Ordinal))
             {
                 _errors[error.Field] = error.Message;
+            }
+        }
+
+        foreach (var warning in result.Warnings)
+        {
+            if (warning.Field.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                _warnings[warning.Field] = warning.Message;
             }
         }
 

@@ -30,9 +30,15 @@
     </Border>
 
     <TabControl DockPanel.Dock="Left" Name="SettingsTabs" Width="360">
-      <TabItem Header="Tool" Name="ToolTab" />
-      <TabItem Header="Stock" Name="StockTab" />
-      <TabItem Header="Axes" Name="AxesTab" />
+      <TabItem Header="Tool" Name="ToolTab">
+        <views:ToolSettingsView DataContext="{Binding Tool}" />
+      </TabItem>
+      <TabItem Header="Stock" Name="StockTab">
+        <views:StockSettingsView DataContext="{Binding Stock}" />
+      </TabItem>
+      <TabItem Header="Axes" Name="AxesTab">
+        <views:AxisSettingsView DataContext="{Binding Axes}" />
+      </TabItem>
       <TabItem Header="Cutting" Name="CuttingTab" />
       <TabItem Header="Strategy" Name="StrategyTab" />
       <TabItem Header="Simulation" Name="SimulationTab" />
