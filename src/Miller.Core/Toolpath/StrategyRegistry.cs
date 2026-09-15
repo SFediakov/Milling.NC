@@ -13,6 +13,7 @@ public static class StrategyRegistry
             new RasterRoughingStrategy(),
             new RasterFinishingStrategy(),
             new ContourFinishingStrategy(),
+            new LayerCompleteStrategy(),
         },
         s => s.Id,
         s => s.DisplayName,

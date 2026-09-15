@@ -24,47 +24,59 @@ public sealed class RasterRoughingStrategy : IToolpathStrategy
         ArgumentNullException.ThrowIfNull(context);
         var p = context.Parameters;
         var map = context.EffectiveTip;
-        var rowStep = RasterRows.RowStepCells(p.Stepover, map.CellSize);
         var steps = context.Plan.RoughingSteps.ToList();
         var passes = new List<Toolpath>();
 
         for (var s = 0; s < steps.Count; s++)
         {
             var step = steps[s];
-            var forward = true;
-            Toolpath? current = null;
-            foreach (var j in RasterRows.RowIndices(map.Height, rowStep))
-            {
-                cancellation.ThrowIfCancellationRequested();
-                var row = j;
-                foreach (var (i0, i1) in RasterRows.Runs(i => step.Mask[i, row], map.Width, forward))
-                {
-                    var start = Point(map, i0, j, step.Level);
-                    var end = Point(map, i1, j, step.Level);
-                    if (current is not null && p.Direction == MillingDirection.Zigzag
-                        && StaysOnMask(step.Mask, map, current.Segments[^1].End, start))
-                    {
-                        current.Add(new ToolpathSegment(current.Segments[^1].End, start, MoveKind.Feed, p.FeedRate));
-                    }
-                    else
-                    {
-                        current = new Toolpath();
-                        passes.Add(current);
-                    }
-
-                    current.Add(new ToolpathSegment(start, end, MoveKind.Feed, p.FeedRate));
-                }
-
-                if (p.Direction == MillingDirection.Zigzag)
-                {
-                    forward = !forward;
-                }
-            }
-
+            passes.AddRange(RowPasses(map, step.Mask, step.Level, p, cancellation));
             progress?.Report((s + 1f) / steps.Count);
         }
 
         return ToolpathLinker.Link(passes, p, context.SafeZ, map);
+    }
+
+    // Rows along X spaced by Stepover over one level mask; runs of masked cells become feeds at the
+    // level, joined in zigzag order while the straight join stays on the mask.
+    public static List<Toolpath> RowPasses(HeightMap map, bool[,] mask, float level, CuttingParameters p, CancellationToken cancellation)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+        ArgumentNullException.ThrowIfNull(mask);
+        ArgumentNullException.ThrowIfNull(p);
+        var rowStep = RasterRows.RowStepCells(p.Stepover, map.CellSize);
+        var passes = new List<Toolpath>();
+        var forward = true;
+        Toolpath? current = null;
+        foreach (var j in RasterRows.RowIndices(map.Height, rowStep))
+        {
+            cancellation.ThrowIfCancellationRequested();
+            var row = j;
+            foreach (var (i0, i1) in RasterRows.Runs(i => mask[i, row], map.Width, forward))
+            {
+                var start = Point(map, i0, j, level);
+                var end = Point(map, i1, j, level);
+                if (current is not null && p.Direction == MillingDirection.Zigzag
+                    && StaysOnMask(mask, map, current.Segments[^1].End, start))
+                {
+                    current.Add(new ToolpathSegment(current.Segments[^1].End, start, MoveKind.Feed, p.FeedRate));
+                }
+                else
+                {
+                    current = new Toolpath();
+                    passes.Add(current);
+                }
+
+                current.Add(new ToolpathSegment(start, end, MoveKind.Feed, p.FeedRate));
+            }
+
+            if (p.Direction == MillingDirection.Zigzag)
+            {
+                forward = !forward;
+            }
+        }
+
+        return passes;
     }
 
     // Every half-cell sample of the straight join lies on a masked cell.

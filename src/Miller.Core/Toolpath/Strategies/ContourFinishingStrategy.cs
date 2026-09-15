@@ -1,5 +1,6 @@
 using System.Numerics;
 using Miller.Core.HeightMaps;
+using Miller.Core.Setup;
 using Miller.Core.Slicing;
 
 namespace Miller.Core.Toolpaths.Strategies;
@@ -28,25 +29,36 @@ public sealed class ContourFinishingStrategy : IToolpathStrategy
         {
             cancellation.ThrowIfCancellationRequested();
             var level = levels[k];
-            foreach (var loop in MarchingSquares.MaskContours(AllowedMask(map, level), map))
-            {
-                var pass = new Toolpath();
-                for (var n = 1; n < loop.Count; n++)
-                {
-                    pass.Add(new ToolpathSegment(
-                        new Vector3(loop[n - 1].X, loop[n - 1].Y, level),
-                        new Vector3(loop[n].X, loop[n].Y, level),
-                        MoveKind.Feed,
-                        p.FeedRate));
-                }
-
-                passes.Add(pass);
-            }
-
+            passes.AddRange(LoopPasses(AllowedMask(map, level), map, level, p));
             progress?.Report((k + 1f) / levels.Count);
         }
 
         return ToolpathLinker.Link(passes, p, context.SafeZ, map);
+    }
+
+    // One closed feed loop at the level per outline of the mask, pulled into the allowed cells.
+    public static List<Toolpath> LoopPasses(bool[,] mask, HeightMap map, float level, CuttingParameters p)
+    {
+        ArgumentNullException.ThrowIfNull(mask);
+        ArgumentNullException.ThrowIfNull(map);
+        ArgumentNullException.ThrowIfNull(p);
+        var passes = new List<Toolpath>();
+        foreach (var loop in MarchingSquares.MaskContours(mask, map))
+        {
+            var pass = new Toolpath();
+            for (var n = 1; n < loop.Count; n++)
+            {
+                pass.Add(new ToolpathSegment(
+                    new Vector3(loop[n - 1].X, loop[n - 1].Y, level),
+                    new Vector3(loop[n].X, loop[n].Y, level),
+                    MoveKind.Feed,
+                    p.FeedRate));
+            }
+
+            passes.Add(pass);
+        }
+
+        return passes;
     }
 
     // Cells where the cutter tip may sit at the level.

@@ -109,7 +109,7 @@ public sealed class SettingsViewModelsTests : IDisposable
     [Fact]
     public void Strategy_ListsTheRegistriesAndWritesIds()
     {
-        Assert.Equal(new[] { "raster-roughing" }, _vm.Strategy.RoughingStrategies.Select(s => s.Id));
+        Assert.Equal(new[] { "raster-roughing", "layer-complete" }, _vm.Strategy.RoughingStrategies.Select(s => s.Id));
         Assert.Equal(new[] { "raster-finishing", "contour-finishing" }, _vm.Strategy.FinishingStrategies.Select(s => s.Id));
         Assert.Equal(new[] { "grbl" }, _vm.Strategy.PostProcessors.Select(p => p.Id));
         Assert.Equal("raster-finishing", _vm.Strategy.Finishing!.Id);

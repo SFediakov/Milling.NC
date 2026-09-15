@@ -135,6 +135,30 @@ public sealed class SimulationServiceTests
         Assert.Empty(service.Events);
     }
 
+    // T-103: a 1.5 mm cutter below a 4 mm head beside 3 mm walls; the strip the cutter leaves next
+    // to the walls must keep the head clear, so the planned path produces no head event.
+    [Fact]
+    public void ShortCutterBesideWalls_ProducesNoHeadCollision()
+    {
+        var project = MillingProject.Default();
+        project.Tool.CutterDiameter = 2;
+        project.Tool.HeadDiameter = 4;
+        project.Tool.CutterLength = 1.5f;
+        project.Parameters.Stepover = 1;
+        project.Parameters.Stepdown = 1;
+        project.Stock.SizeX = 14;
+        project.Stock.SizeY = 14;
+        project.Stock.SizeZ = 5;
+        project.Parameters.CellSize = 0.5f;
+        var result = new PipelineService().Run(project, TestMeshes.Box(8, 8, 3), null, CancellationToken.None);
+        Assert.Contains(result.HeadLimitedMask.Cast<bool>(), limited => limited);
+
+        var service = new SimulationService();
+        service.Load(result);
+        service.RunToEnd();
+        Assert.DoesNotContain(service.Events, e => e.Kind == SimulationEventKind.HeadCollision);
+    }
+
     [Fact]
     public void SpeedFactor_IsForwardedAndClamped()
     {

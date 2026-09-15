@@ -25,13 +25,13 @@ public sealed class StrategyRegistryTests
     }
 
     [Fact]
-    public void Registry_HoldsExactlyTheThreeBuiltInStrategies()
+    public void Registry_HoldsExactlyTheFourBuiltInStrategies()
     {
-        Assert.Equal(new[] { "raster-roughing", "raster-finishing", "contour-finishing" }, StrategyRegistry.All.Select(s => s.Id));
+        Assert.Equal(new[] { "raster-roughing", "raster-finishing", "contour-finishing", "layer-complete" }, StrategyRegistry.All.Select(s => s.Id));
         Assert.Equal(
-            new[] { MillingOperation.Roughing, MillingOperation.Finishing, MillingOperation.Finishing },
+            new[] { MillingOperation.Roughing, MillingOperation.Finishing, MillingOperation.Finishing, MillingOperation.Roughing },
             StrategyRegistry.All.Select(s => s.Operation));
-        Assert.Single(StrategyRegistry.ForOperation(MillingOperation.Roughing));
+        Assert.Equal(2, StrategyRegistry.ForOperation(MillingOperation.Roughing).Count());
         Assert.Equal(2, StrategyRegistry.ForOperation(MillingOperation.Finishing).Count());
     }
 
