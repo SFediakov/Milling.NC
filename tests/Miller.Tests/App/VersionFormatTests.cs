@@ -1,5 +1,28 @@
-// PLACEHOLDER - implemented by T-007 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the tests.
-// Namespace: Miller.Tests.App
-// Tests for: src/Miller.App/Program.cs
-// Required cases: Program.AppVersion matches ^Build_\d+\.\d+\.\d+$
-// Rules: deterministic, no network, temp directories only, every strategy test calls GougeChecker.Verify.
+using Avalonia;
+using Avalonia.Headless;
+using Miller.App;
+using Xunit;
+
+namespace Miller.Tests
+{
+    public static class TestAppBuilder
+    {
+        public static AppBuilder BuildAvaloniaApp()
+            => AppBuilder.Configure<Miller.App.App>()
+                .UseHeadless(new AvaloniaHeadlessPlatformOptions());
+    }
+}
+
+namespace Miller.Tests.App
+{
+    public sealed class VersionFormatTests
+    {
+        public const string VersionPattern = @"^Build_\d+\.\d+\.\d+$";
+
+        [Fact]
+        public void AppVersion_MatchesBuildFormat()
+        {
+            Assert.Matches(VersionPattern, Program.AppVersion);
+        }
+    }
+}
