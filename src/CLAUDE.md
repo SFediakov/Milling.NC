@@ -179,3 +179,14 @@
   the button, so the double-click fit checks the left button itself.
 - The mouse harness (SetCursorPos, mouse_event) cannot produce drags the app sees; camera input is
   verified by ViewportInputTests on the headless platform instead.
+- Models and placements live in two lists (MeshImportService.Meshes, MillingProject.Models) that
+  are updated one after the other; every consumer checks MeshImportService.Matches(project) and
+  treats a mismatch as "no scene" instead of throwing inside a change event. Add the placement
+  before importing (drop it when the import fails), remove the placement before the mesh.
+- The stock always follows the union of the placed models (auto-fit and explicit placement both
+  start from the union corner), so centering a model on one axis is a fixed-point iteration in
+  ModelLayout.CenteredOffset; a single model in an auto-fit stock is centered by definition.
+- Legacy project files: a nullable StlPath is read for migration and ignored when null on write, so
+  the serializer's unknown-member rule still holds; the schema version is rewritten to 2 on load.
+- The end-to-end golden is read from the test output folder, which is refreshed by a build of the
+  test project; regenerate the golden, then build tests before running the comparison.
