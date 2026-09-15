@@ -511,6 +511,7 @@ check that decides done.
 - Input: comment-only placeholder describing the steps in section 4
 - Output: bash script with `--no-publish` and `--no-test` flags implementing section 4, `set -euo pipefail`, exit code non-zero on any failure
 - Acceptance: `bash build.sh` on Windows Git Bash produces `dist/win-x64/Miller.exe` and `dist/linux-x64/Miller`; `bash build.sh --no-publish` runs tests
+- Status: done
 
 #### T-009 Linux launcher
 - Depends on: T-008

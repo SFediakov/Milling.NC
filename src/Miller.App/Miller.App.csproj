@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <AssemblyName>Miller</AssemblyName>
     <RootNamespace>Miller.App</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
