@@ -106,6 +106,27 @@ public sealed class Camera
     // Homogeneous clip coordinates of a world point; divide by W for normalized device coordinates.
     public Vector4 ToClip(Vector3 world) => Vector4.Transform(new Vector4(world, 1f), ViewProjection);
 
+    // World-space ray through a viewport pixel (origin top-left, y down): from the camera position
+    // through the unprojected point on the far plane.
+    public (Vector3 Origin, Vector3 Direction) PickRay(float pixelX, float pixelY, float viewportWidth, float viewportHeight)
+    {
+        if (!(viewportWidth > 0) || !(viewportHeight > 0))
+        {
+            throw new ArgumentOutOfRangeException(nameof(viewportWidth), "Viewport size must be positive.");
+        }
+
+        var ndcX = 2f * pixelX / viewportWidth - 1f;
+        var ndcY = 1f - 2f * pixelY / viewportHeight;
+        if (!Matrix4x4.Invert(ViewProjection, out var inverse))
+        {
+            throw new InvalidOperationException("The view projection matrix is singular.");
+        }
+
+        var far = Vector4.Transform(new Vector4(ndcX, ndcY, 1f, 1f), inverse);
+        var world = new Vector3(far.X, far.Y, far.Z) / far.W;
+        return (Position, Vector3.Normalize(world - Position));
+    }
+
     // Right-handed OpenGL projection in row-vector form: near maps to -1, far to +1.
     public static Matrix4x4 CreatePerspectiveGl(float fieldOfView, float aspect, float near, float far)
     {

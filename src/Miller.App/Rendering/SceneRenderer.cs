@@ -38,9 +38,11 @@ public sealed class SceneRenderer : IDisposable
     private int _progressIndex;
     private Vector3 _toolPosition;
 
-    public SceneRenderer(GlInterface gl, GlVersion version)
+    // The camera belongs to the control so input works without a GL context.
+    public SceneRenderer(GlInterface gl, GlVersion version, Camera camera)
     {
         _gl = gl ?? throw new ArgumentNullException(nameof(gl));
+        Camera = camera ?? throw new ArgumentNullException(nameof(camera));
         _functions = new GlFunctions(gl);
         _lit = new ShaderProgram(gl, version, GlShaders.LitVertex, GlShaders.ColorFragment);
         _lines = new ShaderProgram(gl, version, GlShaders.LineVertex, GlShaders.ColorFragment);
@@ -64,7 +66,7 @@ public sealed class SceneRenderer : IDisposable
         _tool = new ToolRenderer(gl, ThemeColors.Get("ToolCutterColor"), ThemeColors.Get("ToolHeadColor"));
     }
 
-    public Camera Camera { get; } = new();
+    public Camera Camera { get; }
 
     public void Sync(ViewportViewModel viewModel)
     {
