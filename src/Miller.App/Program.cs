@@ -4,7 +4,7 @@ namespace Miller.App;
 
 public static class Program
 {
-    public const string AppVersion = "Build_1.0.2";
+    public const string AppVersion = "Build_1.0.3";
     public const string VersionFlag = "--version";
 
     [STAThread]
