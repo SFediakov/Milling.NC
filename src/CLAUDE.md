@@ -160,3 +160,7 @@
   docker container was copied from another project (user statement). Dockerfile, .dockerignore,
   third_party/debian and scripts/vendor-debian.sh were removed; the offline build is
   third_party/nuget plus build.sh on either system, and Linux checks run on a Linux machine.
+- `Miller.cmd` in the root is the one `.cmd` file (user request: a launcher in the root folder).
+  The bash-only rule of the guide covers build and tool scripts; a Windows user double-clicks a
+  `.cmd`, not a `.sh`. `Miller.sh` next to it serves Linux and Git Bash. Both only start
+  `dist/`; they do not build.

@@ -13,3 +13,6 @@ dotnet_diagnostic.IDE0005.severity = warning
 
 [*.sh]
 end_of_line = lf
+
+[*.cmd]
+end_of_line = crlf

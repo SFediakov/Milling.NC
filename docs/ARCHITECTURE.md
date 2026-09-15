@@ -331,6 +331,8 @@ file test in `tests/Miller.Tests/Golden/`.
   `dist/linux-x64/`.
 - Windows start file: `dist/win-x64/Miller.exe`.
 - Linux start file: `dist/linux-x64/Miller.sh` (executable bit set by `build.sh`).
+- Root launchers `Miller.cmd` (Windows) and `Miller.sh` (Linux, Git Bash) run the published
+  binary from `dist/` with the given arguments and refuse with a hint when it is not built.
 - The Linux build also runs on Windows through WSLg; this is not the primary
   path, only a consequence of G1.
 - The Linux build is the same `bash build.sh` on a Linux machine with the .NET 10
