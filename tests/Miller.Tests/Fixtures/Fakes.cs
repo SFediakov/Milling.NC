@@ -64,5 +64,16 @@ public static class TestServices
             dialogs ?? new FakeFileDialogService(),
             errors ?? new FakeErrorDialogService(),
             confirm ?? new FakeConfirmDialogService(),
+            handler => new SynchronousProgress(handler),
             Version);
+
+    // Delivers reports on the calling thread, so a test sees them in pipeline order.
+    private sealed class SynchronousProgress : IProgress<Miller.Application.Progress.ProgressReport>
+    {
+        private readonly Action<Miller.Application.Progress.ProgressReport> _handler;
+
+        public SynchronousProgress(Action<Miller.Application.Progress.ProgressReport> handler) => _handler = handler;
+
+        public void Report(Miller.Application.Progress.ProgressReport value) => _handler(value);
+    }
 }
