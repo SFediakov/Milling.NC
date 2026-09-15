@@ -569,6 +569,7 @@ check that decides done.
 - Input: placeholder
 - Output: line-based parser for `solid`, `facet normal`, `outer loop`, `vertex x y z`, `endloop`, `endfacet`, `endsolid`; invariant culture; throws with line number on malformed input
 - Acceptance: compiles; tests in T-016
+- Status: done
 
 #### T-016 STL reader with format detection and tests
 - Depends on: T-015
