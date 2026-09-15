@@ -553,6 +553,7 @@ check that decides done.
 - Input: placeholders
 - Output: `TestMeshes` builders (unit cube, box 10x10x5, spike, slotted plate, bump plate) and tests: bounds of the cube, transform by translation and 90-degree rotation, degenerate removal count, union and contains
 - Acceptance: tests green; each builder returns a closed mesh (edge count check helper in the same file)
+- Status: done
 
 #### T-014 STL binary parser
 - Depends on: T-012
