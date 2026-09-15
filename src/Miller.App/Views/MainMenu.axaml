@@ -5,14 +5,18 @@
              x:DataType="vm:MainWindowViewModel">
   <Menu Name="Menu">
     <MenuItem Header="_File" Name="FileMenu">
-      <MenuItem Header="Open _STL..." Name="OpenStlItem" Command="{Binding OpenStlCommand}" />
+      <MenuItem Header="Open _STL..." Name="OpenStlItem" Command="{Binding OpenStlCommand}" HotKey="Ctrl+O" InputGesture="Ctrl+O" />
       <MenuItem Header="_Open Project..." Name="OpenProjectItem" Command="{Binding OpenProjectCommand}" />
-      <MenuItem Header="_Save Project" Name="SaveProjectItem" Command="{Binding SaveProjectCommand}" />
+      <MenuItem Header="_Save Project" Name="SaveProjectItem" Command="{Binding SaveProjectCommand}" HotKey="Ctrl+S" InputGesture="Ctrl+S" />
       <MenuItem Header="Save Project _As..." Name="SaveProjectAsItem" Command="{Binding SaveProjectAsCommand}" />
       <Separator />
-      <MenuItem Header="_Export NC..." Name="ExportNcItem" Command="{Binding ExportNcCommand}" />
+      <MenuItem Header="_Export NC..." Name="ExportNcItem" Command="{Binding ExportNcCommand}" HotKey="Ctrl+E" InputGesture="Ctrl+E" />
       <Separator />
       <MenuItem Header="E_xit" Name="ExitItem" Command="{Binding ExitCommand}" />
+    </MenuItem>
+    <MenuItem Header="_Toolpath" Name="ToolpathMenu">
+      <MenuItem Header="_Generate" Name="GenerateItem" Command="{Binding GenerateCommand}" HotKey="F5" InputGesture="F5" />
+      <MenuItem Header="_Cancel" Name="CancelGenerateItem" Command="{Binding CancelGenerateCommand}" />
     </MenuItem>
     <MenuItem Header="_View" Name="ViewMenu">
       <MenuItem Header="_Reset Camera" Name="ResetCameraItem" Command="{Binding ResetCameraCommand}" />
