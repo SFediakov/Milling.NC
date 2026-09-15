@@ -39,6 +39,7 @@
       <TextBlock Classes="label" Text="Cell size (mm)" />
       <TextBox Name="CellSizeBox" Classes="numeric" Text="{Binding CellSize}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding CellSizeError}" IsVisible="{Binding CellSizeError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Classes="warning" Text="{Binding CellSizeWarning}" IsVisible="{Binding CellSizeWarning, Converter={x:Static ObjectConverters.IsNotNull}}" TextWrapping="Wrap" />
       <TextBlock Name="GridSizeText" Text="{Binding GridSizeText}" TextWrapping="Wrap" />
       <TextBlock Classes="label" Text="Tolerance (mm)" />
       <TextBox Name="ToleranceBox" Classes="numeric" Text="{Binding Tolerance}" HorizontalAlignment="Left" />

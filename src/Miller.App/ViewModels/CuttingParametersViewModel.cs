@@ -17,7 +17,7 @@ public sealed class CuttingParametersViewModel : SettingsViewModelBase
     private static readonly string[] ErrorProperties =
     {
         nameof(FeedRateError), nameof(PlungeRateError), nameof(RapidRateError), nameof(SpindleRpmError), nameof(StepoverError),
-        nameof(FinishingStepoverError), nameof(StepdownError), nameof(SafeHeightError), nameof(CellSizeError),
+        nameof(FinishingStepoverError), nameof(StepdownError), nameof(SafeHeightError), nameof(CellSizeError), nameof(CellSizeWarning),
     };
 
     public CuttingParametersViewModel(ProjectService project)
@@ -75,6 +75,8 @@ public sealed class CuttingParametersViewModel : SettingsViewModelBase
     public string? SafeHeightError => ErrorFor("Parameters.SafeHeight");
 
     public string? CellSizeError => ErrorFor("Parameters.CellSize");
+
+    public string? CellSizeWarning => WarningFor("Parameters.CellSize");
 
     // Cells of the stock bounding rectangle at the current cell size, against the validator limit.
     public string GridSizeText

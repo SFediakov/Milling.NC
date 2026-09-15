@@ -22,6 +22,21 @@ public sealed class ProjectValidatorTests
         Assert.Equal(0.01f, ProjectValidator.MinCellSize);
         Assert.Equal(5f, ProjectValidator.MaxCellSize);
         Assert.Equal(4_000_000, ProjectValidator.MaxCells);
+        Assert.Equal(1_000_000, ProjectValidator.MaxInteractiveCells);
+    }
+
+    [Fact]
+    public void CellSize_AboveTheInteractiveLimit_WarnsWithoutAnError()
+    {
+        // 100 x 100 stock at 0.05 gives 4,000,000 cells: allowed, but far above the interactive limit.
+        var result = Validate(p => p.Parameters.CellSize = 0.05f);
+        Assert.True(result.IsValid);
+        var warning = Assert.Single(result.Warnings, w => w.Field == "Parameters.CellSize");
+        Assert.Contains("4000000", warning.Message);
+        Assert.Contains("1000000", warning.Message);
+
+        // Exactly at the limit: no warning.
+        Assert.Empty(Validate(p => p.Parameters.CellSize = 0.1f).Warnings);
     }
 
     [Fact]

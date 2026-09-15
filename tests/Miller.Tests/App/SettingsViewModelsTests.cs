@@ -92,7 +92,13 @@ public sealed class SettingsViewModelsTests : IDisposable
         Assert.Contains("10000 x 10000", _vm.Cutting.GridSizeText);
         _vm.Cutting.CellSize = 0.5f;
         Assert.Null(_vm.Cutting.CellSizeError);
+        Assert.Null(_vm.Cutting.CellSizeWarning);
         Assert.StartsWith("200 x 200 = 40,000 cells", _vm.Cutting.GridSizeText);
+        _vm.Cutting.CellSize = 0.05f;
+        Assert.Null(_vm.Cutting.CellSizeError);
+        Assert.NotNull(_vm.Cutting.CellSizeWarning);
+        _vm.Cutting.CellSize = 0.5f;
+        Assert.Null(_vm.Cutting.CellSizeWarning);
 
         _vm.Cutting.Direction = MillingDirection.OneWay;
         Assert.Equal(MillingDirection.OneWay, _vm.Project.Current.Parameters.Direction);
