@@ -18,7 +18,118 @@ public sealed class MainWindowViewModelTests : IDisposable
         }
     }
 
-    private MainWindowViewModel Create() => TestServices.MainWindowViewModel(_root, _dialogs, _errors);
+    private readonly FakeConfirmDialogService _confirm = new();
+
+    private MainWindowViewModel Create() => TestServices.MainWindowViewModel(_root, _dialogs, _errors, _confirm);
+
+    // A 10 x 10 x 5 box as an ASCII STL in the temp directory, with a small stock and coarse grid.
+    private async Task<MainWindowViewModel> CreateWithBoxAsync()
+    {
+        Directory.CreateDirectory(_root);
+        var stl = Path.Combine(_root, "box.stl");
+        File.WriteAllText(stl, TestMeshes.AsciiCubeText());
+        var vm = Create();
+        _dialogs.OpenResults.Enqueue(stl);
+        await vm.OpenStlCommand.ExecuteAsync(null);
+        vm.Stock.SizeX = 10;
+        vm.Stock.SizeY = 10;
+        vm.Stock.SizeZ = 3;
+        vm.Cutting.CellSize = 0.5f;
+        return vm;
+    }
+
+    [Fact]
+    public async Task Generate_ProducesAResult_AndExportWritesTheFile()
+    {
+        var vm = await CreateWithBoxAsync();
+        Assert.True(vm.GenerateCommand.CanExecute(null));
+        Assert.False(vm.ExportNcCommand.CanExecute(null));
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+        Assert.NotNull(vm.LastResult);
+        Assert.False(vm.IsBusy);
+        Assert.StartsWith("Toolpath ready:", vm.StatusText);
+        Assert.NotEqual(StrategySelectionViewModel.NoToolpathText, vm.Strategy.StatisticsText);
+        Assert.True(vm.ExportNcCommand.CanExecute(null));
+
+        var nc = Path.Combine(_root, "box.nc");
+        _dialogs.SaveResults.Enqueue(nc);
+        await vm.ExportNcCommand.ExecuteAsync(null);
+        Assert.True(File.Exists(nc));
+        Assert.StartsWith($"( Miller {TestServices.Version} )", File.ReadAllText(nc));
+        Assert.Equal(_root, vm.Settings.LastExportDirectory);
+        Assert.Empty(_errors.Shown);
+    }
+
+    [Fact]
+    public async Task Generate_InvalidProject_GoesToTheErrorDialog()
+    {
+        var vm = await CreateWithBoxAsync();
+        vm.Cutting.Stepdown = 0f;
+        await vm.GenerateCommand.ExecuteAsync(null);
+        Assert.Null(vm.LastResult);
+        Assert.IsType<Miller.Application.Validation.ValidationException>(Assert.Single(_errors.Shown));
+        Assert.False(vm.IsBusy);
+    }
+
+    [Fact]
+    public async Task SaveAs_New_Open_RoundTripsTheProjectAndReimportsTheMesh()
+    {
+        var vm = await CreateWithBoxAsync();
+        vm.Tool.CutterDiameter = 4.5f;
+        var file = Path.Combine(_root, "box.miller.json");
+        _dialogs.SaveResults.Enqueue(file);
+        await vm.SaveProjectAsCommand.ExecuteAsync(null);
+        Assert.True(File.Exists(file));
+        Assert.False(vm.Project.IsDirty);
+        Assert.Equal(file, vm.Project.Path);
+
+        vm.NewProjectCommand.Execute(null);
+        Assert.Equal(6f, vm.Tool.CutterDiameter);
+        Assert.False(vm.MeshImport.HasMesh);
+
+        _dialogs.OpenResults.Enqueue(file);
+        await vm.OpenProjectCommand.ExecuteAsync(null);
+        Assert.Equal(4.5f, vm.Tool.CutterDiameter);
+        Assert.Equal(10f, vm.Stock.SizeX);
+        Assert.True(vm.MeshImport.HasMesh);
+        Assert.False(vm.Project.IsDirty);
+
+        vm.Tool.CutterDiameter = 5f;
+        await vm.SaveProjectCommand.ExecuteAsync(null);
+        Assert.False(vm.Project.IsDirty);
+        Assert.Contains("\"CutterDiameter\": 5", File.ReadAllText(file));
+    }
+
+    [Fact]
+    public async Task Exit_WhenDirty_FollowsTheConfirmDecision()
+    {
+        var vm = Create();
+        var raised = 0;
+        vm.ExitRequested += (_, _) => raised++;
+        vm.Tool.CutterDiameter = 4f;
+
+        _confirm.Answers.Enqueue(Miller.App.Services.SaveDecision.Cancel);
+        await vm.ExitCommand.ExecuteAsync(null);
+        Assert.Equal(0, raised);
+
+        _confirm.Answers.Enqueue(Miller.App.Services.SaveDecision.Save);
+        await vm.ExitCommand.ExecuteAsync(null);
+        Assert.Equal(0, raised); // the save dialog was cancelled, so the exit was cancelled too
+
+        _confirm.Answers.Enqueue(Miller.App.Services.SaveDecision.Save);
+        Directory.CreateDirectory(_root);
+        _dialogs.SaveResults.Enqueue(Path.Combine(_root, "exit.miller.json"));
+        await vm.ExitCommand.ExecuteAsync(null);
+        Assert.Equal(1, raised);
+        Assert.False(vm.Project.IsDirty);
+
+        vm.Tool.CutterDiameter = 3f;
+        _confirm.Answers.Enqueue(Miller.App.Services.SaveDecision.Discard);
+        await vm.ExitCommand.ExecuteAsync(null);
+        Assert.Equal(2, raised);
+        Assert.Equal(4, _confirm.Asked);
+    }
 
     [Fact]
     public async Task OpenStl_ImportsTheFixtureAndUpdatesStatusProjectAndSettings()
@@ -72,7 +183,7 @@ public sealed class MainWindowViewModelTests : IDisposable
     public void Stubs_ReportNotImplemented_AndExitRaisesTheEvent()
     {
         var vm = Create();
-        vm.GenerateCommand.Execute(null);
+        vm.PlayCommand.Execute(null);
         Assert.EndsWith(MainWindowViewModel.NotImplementedSuffix, vm.StatusText);
 
         var raised = 0;

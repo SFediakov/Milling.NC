@@ -74,14 +74,14 @@ public sealed class AxisSettingsViewModel : SettingsViewModelBase
     {
         get
         {
-            if (!_meshImport.HasMesh)
-            {
-                return NoModelText;
-            }
-
             if (!Current.Axes.IsPermutation)
             {
                 return MappingError ?? string.Empty;
+            }
+
+            if (!_meshImport.HasMesh)
+            {
+                return NoModelText;
             }
 
             var mesh = _meshImport.CurrentMesh!;

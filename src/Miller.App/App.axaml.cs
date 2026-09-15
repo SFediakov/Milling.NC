@@ -34,7 +34,8 @@ public partial class App : Avalonia.Application
             var export = new ExportService();
             var dialogs = new FileDialogService(() => desktop.MainWindow);
             var errors = new ErrorDialogService(log, () => desktop.MainWindow);
-            var viewModel = new MainWindowViewModel(project, meshImport, pipeline, export, settings, dialogs, errors, Program.AppVersion);
+            var confirm = new ConfirmDialogService(() => desktop.MainWindow);
+            var viewModel = new MainWindowViewModel(project, meshImport, pipeline, export, settings, dialogs, errors, confirm, Program.AppVersion);
             desktop.MainWindow = new MainWindow
             {
                 Width = settings.WindowWidth,
