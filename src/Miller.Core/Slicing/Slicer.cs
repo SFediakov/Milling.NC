@@ -41,6 +41,39 @@ public static class Slicer
         return new SlicePlan(steps, lowest);
     }
 
+    // Float slack so a value sitting on a level is not lifted to the level above.
+    public const float LevelTolerance = 1e-4f;
+
+    // Material is removed level by level, so a surface at z stands at the lowest roughing level that
+    // is still at or above z until the pass that reaches z; z above the first level stays at the top.
+    public static float CeilToLevel(float z, float stockTop, float stepdown)
+    {
+        if (!(stepdown > 0))
+        {
+            throw new ArgumentOutOfRangeException(nameof(stepdown), stepdown, "Stepdown must be positive.");
+        }
+
+        if (float.IsNaN(z) || z >= stockTop)
+        {
+            return z;
+        }
+
+        var steps = MathF.Floor((stockTop - z) / stepdown + LevelTolerance);
+        return stockTop - steps * stepdown;
+    }
+
+    public static HeightMap CeilToLevels(HeightMap map, float stockTop, float stepdown)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+        var result = map.Clone();
+        for (var k = 0; k < result.Z.Length; k++)
+        {
+            result.Z[k] = CeilToLevel(result.Z[k], stockTop, stepdown);
+        }
+
+        return result;
+    }
+
     public static IEnumerable<float> RoughingLevels(float stockTop, float lowest, float stepdown)
     {
         for (var k = 1; ; k++)

@@ -1189,7 +1189,7 @@ check that decides done.
 - Input: simulation of the heart fixture with the default project reports 1404 head collisions: next to the heart walls the cutter leaves a strip it cannot reach (within one cutter radius of the wall), the roughing keeps that strip at an early level, and the head limit computed from the model alone lets the tip descend beside it until the head hits the strip
 - Output: the head limit is computed from the predicted remaining stock, not from the model: remaining = closing of the model by the cutter footprint (erode the tip map with the footprint, flat tools: min over the footprint of tip); `HeadClearance.Limit(remaining, profile, cutterLength)`; the pipeline recomputes the effective tip with it; tests: a wall next to a floor with a short cutter raises the limit beside the strip; the heart end-to-end simulation reports zero head collisions
 - Acceptance: `SimulationService.RunToEnd` on the fixture with the default project yields no HeadCollision event; golden files updated with the new toolpath and reviewed
-- Status: open
+- Status: superseded by T-103
 
 #### T-091 Simulation service
 - Depends on: T-090, T-047
@@ -1255,6 +1255,72 @@ check that decides done.
 - Input: T-097 view model
 - Output: analyze button, legend with the six category colors from resources, counts, areas and volumes; the heightmap renderer takes a category array and colors vertices accordingly; toggles between stock view, final model view and uncuttable overlay
 - Acceptance: screenshot of the fixture final model with rest material and overhang regions colored
+
+### M9 Feature extension (user request after M7)
+
+#### T-103 Head clearance from remaining material
+- Depends on: T-090a, T-030
+- Files: `src/Miller.Core/HeightMap/HeightMapDilation.cs`, `src/Miller.Application/Services/PipelineService.cs`, `tests/Miller.Tests/Core/HeightMap/HeightMapDilationTests.cs`, `tests/Miller.Tests/Application/PipelineServiceTests.cs`, `tests/Miller.Tests/Golden/heart_grbl.nc`
+- Input: T-090a finding (1404 head collisions on the heart)
+- Output: `HeightMapDilation.ComputeRemaining(tip, profile)` = closing of the model (min over the footprint of tip + dz); the pipeline derives the head limit from the remaining material and repeats until the effective tip settles (`PipelineService.MaxHeadIterations`); golden regenerated
+- Acceptance: a wall beside a floor with a short cutter yields zero head events in `SimulationService.RunToEnd`; closing tests for narrow and wide slots; suite green
+- Status: done
+
+#### T-104 Pass ordering with fewer retracts
+- Depends on: T-046
+- Files: `src/Miller.Core/Toolpath/PassOrdering.cs`, `src/Miller.Core/Toolpath/ToolpathLinker.cs`, `src/Miller.Core/Toolpath/ToolpathStatistics.cs`, `src/Miller.App/ViewModels/StrategySelectionViewModel.cs`, tests
+- Input: user request 7
+- Output: `PassGroup` (passes of one level) and `PassOrdering.Order` (greedy nearest neighbour from the previous end, open passes may be reversed, closed loops keep their direction); `ToolpathLinker.Link(groups, ...)` orders every group and links; `ToolpathStatistics.RetractCount` shown in the strategy panel
+- Acceptance: a designed two-region level links with one retract instead of many; groups never interleave; gouge check clean on the fixtures; golden regenerated
+- Status: done
+
+#### T-105 Layer complete strategy
+- Depends on: T-104, T-045, T-047
+- Files: `src/Miller.Core/Toolpath/Strategies/LayerCompleteStrategy.cs`, `src/Miller.Core/Toolpath/StrategyRegistry.cs`, `tests/Miller.Tests/Core/Toolpath/Strategies/LayerCompleteStrategyTests.cs`
+- Input: user request 8
+- Output: roughing strategy `layer-complete`: per level the raster runs of the level mask followed by the contour loops of the allowed mask at that level, all in one pass group; the next level starts only after both
+- Acceptance: registered and selectable; gouge check clean on the slot and bump fixtures; segments of level k precede every segment of level k+1
+- Status: done
+
+#### T-106 Camera buttons and pick ray
+- Depends on: T-078
+- Files: `src/Miller.App/Views/Viewport3DControl.cs`, `src/Miller.App/Rendering/Camera.cs`, `src/Miller.Core/Geometry/BoundingBox.cs`, `src/Miller.App/ViewModels/ViewportViewModel.cs`, `src/Miller.App/Views/AboutWindow.axaml`, tests
+- Input: user request 1
+- Output: right drag orbits, middle (wheel) drag pans, wheel zooms, double click fits; a left click without drag raises `ViewportViewModel.Pick(origin, direction)` built by `Camera.PickRay`; `BoundingBox.IntersectRay` for the model hit test; About lists the mouse controls
+- Acceptance: `Camera.PickRay` through the viewport center hits the camera target; ray tests against a box from inside and outside; desktop or headless check of the control wiring
+- Status: done
+
+#### T-107 Several models in one project
+- Depends on: T-016, T-020
+- Files: `src/Miller.Core/Setup/ModelPlacement.cs`, `src/Miller.Core/Setup/MillingProject.cs`, `src/Miller.Core/Setup/ProjectSerializer.cs`, `src/Miller.Application/Services/MeshImportService.cs`, `src/Miller.Application/Services/PipelineService.cs`, tests
+- Input: user requests 5 and 6
+- Output: `ModelPlacement { StlPath, Offset, RotationZ }` list `MillingProject.Models` (schema 2, legacy `StlPath` migrated into the first entry on load); `MeshImportService` holds one loaded mesh per placement with add, remove, clear; the pipeline places every mesh (orientation, rotation about Z, offset) and merges them into one machine mesh; stock corner and origin from the union of placed bounds
+- Acceptance: round trip through JSON; a version 1 file with one `StlPath` loads as one model; two boxes side by side produce one toolpath covering both; suite green
+- Status: done
+
+#### T-108 Models panel
+- Depends on: T-107, T-063
+- Files: `src/Miller.App/Views/ModelsView.axaml` (+ `.axaml.cs`), `src/Miller.App/ViewModels/ModelsViewModel.cs`, `src/Miller.App/Views/MainWindow.axaml`, `src/Miller.App/ViewModels/MainWindowViewModel.cs`, tests
+- Input: T-107
+- Output: tab "Models": list with names, Add (open STL), Remove, selection; for the selected model offset X, Y, Z and rotation Z fields; Center X, Center Y, Center Z buttons placing the model in the middle of the stock on that axis only; validator warning per model outside the stock
+- Acceptance: view-model tests for add, remove, select, offsets and centering; headless capture of the tab
+- Status: done
+
+#### T-109 Selection in the viewport
+- Depends on: T-108, T-106
+- Files: `src/Miller.App/ViewModels/ViewportViewModel.cs`, `src/Miller.App/Rendering/SceneRenderer.cs`, `src/Miller.App/Rendering/MeshRenderer.cs`, `src/Miller.App/Styles/Colors.axaml`
+- Input: T-106, T-108
+- Output: one mesh renderer per model; the selected model drawn in the selection color; a left click picks the nearest model whose placed bounds the ray hits, a miss clears the selection; selection shared with the Models panel
+- Acceptance: view-model test: pick selects and a miss clears; desktop capture shows the highlight
+- Status: done
+
+#### T-110 Models feature documentation and regression
+- Depends on: T-109
+- Files: `docs/ARCHITECTURE.md`, `docs/DEVELOPMENT_GUIDE.md`, `src/CLAUDE.md`, `samples/heart.miller.json`
+- Input: T-107 to T-109
+- Output: architecture data model and pipeline sections describe the model list; sample project in schema 2; lessons recorded
+- Acceptance: `bash build.sh --no-publish` green; export of the sample unchanged
+- Status: done
 
 ### M8 Packaging and release
 
