@@ -9,6 +9,7 @@
   <Color x:Key="WarningColor">#FFF5A524</Color>
   <Color x:Key="ViewportBackgroundColor">#FF14161B</Color>
   <Color x:Key="ModelColor">#FF8FB3D9</Color>
+  <Color x:Key="SelectionColor">#FFFFD166</Color>
   <Color x:Key="StockColor">#FFC9B58F</Color>
   <Color x:Key="ToolpathRapidColor">#FFE5484D</Color>
   <Color x:Key="ToolpathFeedColor">#FF3DDC84</Color>

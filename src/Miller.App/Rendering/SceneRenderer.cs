@@ -22,7 +22,9 @@ public sealed class SceneRenderer : IDisposable
     private readonly int _linesMvp;
     private readonly Vector4 _background;
     private readonly AxisTriadRenderer _axes;
-    private readonly MeshRenderer _mesh;
+    private readonly List<MeshRenderer> _models = new();
+    private readonly Vector4 _modelColor;
+    private readonly Vector4 _selectionColor;
     private readonly ToolpathRenderer _toolpath;
     private readonly HeightMapRenderer _stockMap;
     private readonly ToolRenderer _tool;
@@ -52,7 +54,8 @@ public sealed class SceneRenderer : IDisposable
         _linesMvp = _lines.Uniform("uModelViewProjection");
         _background = ThemeColors.Get("ViewportBackgroundColor");
         _axes = new AxisTriadRenderer(gl, ThemeColors.Get("AxisXColor"), ThemeColors.Get("AxisYColor"), ThemeColors.Get("AxisZColor"), ThemeColors.Get("StockColor"));
-        _mesh = new MeshRenderer(gl, ThemeColors.Get("ModelColor"));
+        _modelColor = ThemeColors.Get("ModelColor");
+        _selectionColor = ThemeColors.Get("SelectionColor");
         _toolpath = new ToolpathRenderer(
             gl,
             new Dictionary<MoveKind, Vector4>
@@ -103,7 +106,18 @@ public sealed class SceneRenderer : IDisposable
         if (viewModel.MeshVersion != _meshVersion)
         {
             _meshVersion = viewModel.MeshVersion;
-            _mesh.Upload(viewModel.Mesh);
+            foreach (var renderer in _models)
+            {
+                renderer.Dispose();
+            }
+
+            _models.Clear();
+            for (var k = 0; k < viewModel.Meshes.Count; k++)
+            {
+                var renderer = new MeshRenderer(_gl, k == viewModel.SelectedModelIndex ? _selectionColor : _modelColor);
+                renderer.Upload(viewModel.Meshes[k]);
+                _models.Add(renderer);
+            }
         }
 
         if (viewModel.StockVersion != _stockVersion)
@@ -115,7 +129,7 @@ public sealed class SceneRenderer : IDisposable
         if (viewModel.FitPending)
         {
             viewModel.ClearFitRequest();
-            var bounds = viewModel.Mesh?.Bounds ?? viewModel.StockBounds;
+            var bounds = viewModel.Meshes.Count > 0 ? viewModel.MeshBounds : viewModel.StockBounds;
             if (bounds is { IsEmpty: false } target)
             {
                 Camera.FitToBounds(target);
@@ -145,7 +159,10 @@ public sealed class SceneRenderer : IDisposable
         _lit.SetFloat(_litAmbient, AmbientLight);
         if (_showModel)
         {
-            _mesh.Draw();
+            foreach (var renderer in _models)
+            {
+                renderer.Draw();
+            }
         }
 
         if (_showStock)
@@ -173,7 +190,11 @@ public sealed class SceneRenderer : IDisposable
         _tool.Dispose();
         _stockMap.Dispose();
         _toolpath.Dispose();
-        _mesh.Dispose();
+        foreach (var renderer in _models)
+        {
+            renderer.Dispose();
+        }
+
         _axes.Dispose();
         _lines.Dispose();
         _lit.Dispose();

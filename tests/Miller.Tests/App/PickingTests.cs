@@ -63,7 +63,7 @@ public sealed class PickingTests
         viewport.Pick(new Vector3(0, 0, 50), -Vector3.UnitZ);
         Assert.Equal(-1, viewport.SelectedModelIndex);
 
-        viewport.SetMesh(TestMeshes.Box(10, 10, 5));
+        viewport.SetMeshes(new[] { TestMeshes.Box(10, 10, 5) });
         Assert.Single(viewport.ModelBounds);
         viewport.Pick(new Vector3(5, 5, 50), -Vector3.UnitZ);
         Assert.Equal(0, viewport.SelectedModelIndex);
@@ -74,7 +74,7 @@ public sealed class PickingTests
         Assert.Equal(2, changes);
 
         viewport.Select(0);
-        viewport.SetMesh(null);
+        viewport.SetMeshes(Array.Empty<Mesh>());
         Assert.Equal(-1, viewport.SelectedModelIndex);
         Assert.Empty(viewport.ModelBounds);
     }

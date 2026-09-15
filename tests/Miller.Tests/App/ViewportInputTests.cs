@@ -80,8 +80,8 @@ public sealed class ViewportInputTests
             window.MouseWheel(new Point(400, 300), new Avalonia.Vector(0, 1));
             Assert.Equal(distance, camera.Distance, 3);
 
-            viewModel.SetMesh(TestMeshes.Box(10, 10, 5));
-            camera.Target = viewModel.Mesh!.Bounds.Center;
+            viewModel.SetMeshes(new[] { TestMeshes.Box(10, 10, 5) });
+            camera.Target = viewModel.MeshBounds.Center;
             camera.Distance = 40;
             window.MouseDown(new Point(400, 300), MouseButton.Left);
             window.MouseUp(new Point(400, 300), MouseButton.Left);
