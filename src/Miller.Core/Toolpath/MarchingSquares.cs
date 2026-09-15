@@ -1,5 +1,5 @@
 // PLACEHOLDER - implemented by T-042 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.Toolpath
+// Namespace: Miller.Core.Toolpaths
 // Purpose: Iso-contours of a heightmap at a level as closed polylines with linear interpolation on
 //     cell edges. NaN counts as below any level so loops close at stock borders.
 // Public interface (names only): static class MarchingSquares { static

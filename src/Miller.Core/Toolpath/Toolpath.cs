@@ -1,5 +1,5 @@
 // PLACEHOLDER - implemented by T-031 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.Toolpath
+// Namespace: Miller.Core.Toolpaths
 // Purpose: Ordered list of segments produced by strategies and the linker.
 // Public interface (names only): sealed class Toolpath { List<ToolpathSegment> Segments; int Count;
 //     void Add(ToolpathSegment); void AddRange(IEnumerable<ToolpathSegment>); BoundingBox Bounds;

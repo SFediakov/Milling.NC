@@ -1,5 +1,5 @@
 // PLACEHOLDER - implemented by T-031 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.Toolpath
+// Namespace: Miller.Core.Toolpaths
 // Purpose: Straight tool movement between two tip positions, plus the MoveKind enum that decides the feed
 //     rate used and the G-code word (G0 for Rapid, G1 otherwise).
 // Public interface (names only): enum MoveKind { Rapid, Feed, Plunge }; readonly record struct
