@@ -65,6 +65,14 @@ public sealed class SettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void Save_RejectsNonFiniteValues()
+    {
+        var service = new SettingsService(_root) { WindowWidth = double.NaN };
+        Assert.Throws<ArgumentOutOfRangeException>(service.Save);
+        Assert.False(File.Exists(service.FilePath));
+    }
+
+    [Fact]
     public void DefaultDirectory_IsUnderApplicationData()
     {
         Assert.EndsWith(SettingsService.FolderName, SettingsService.DefaultDirectory());

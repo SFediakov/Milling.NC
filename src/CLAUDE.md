@@ -80,3 +80,11 @@
 - The Bash tool also collapses a doubled backslash inside a heredoc into one, so a C# character
   literal for the backslash arrives broken. Files that need backslashes go through the Write tool,
   and path code uses Path.DirectorySeparatorChar instead of the literal.
+- Rendering check: tests/Miller.Tests/App/RenderCaptureTests.cs renders every settings tab
+  through the headless Skia platform and writes out/ui-captures/tab-*.png; inspect those files
+  after a UI task. Desktop screen captures are unreliable on this machine (200 percent DPI
+  scaling shifts window and click coordinates). The GL viewport does not render headless.
+- Compiled bindings cannot bind to constants; use x:Static for them in XAML.
+- Window.Width and Height are NaN until something sets them; persist ClientSize, and only when
+  it is finite and positive.
+- Files written by the other agent use CRLF; text patches must detect and keep the line ending.

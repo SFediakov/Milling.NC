@@ -59,6 +59,11 @@ public sealed class SettingsService
 
     public void Save()
     {
+        if (!double.IsFinite(WindowWidth) || !double.IsFinite(WindowHeight) || !float.IsFinite(SpeedFactor))
+        {
+            throw new ArgumentOutOfRangeException(nameof(WindowWidth), $"Settings must be finite numbers, got {WindowWidth} x {WindowHeight}, speed {SpeedFactor}.");
+        }
+
         System.IO.Directory.CreateDirectory(Directory);
         var document = new SettingsDocument(LastStlDirectory, LastProjectDirectory, LastExportDirectory, WindowWidth, WindowHeight, SpeedFactor);
         File.WriteAllText(FilePath, JsonSerializer.Serialize(document, Options));
