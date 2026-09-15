@@ -527,6 +527,7 @@ check that decides done.
 - Input: comment-only placeholder
 - Output: `FROM mcr.microsoft.com/dotnet/sdk:10.0` (add the digest after the first pull as `@sha256:...`), `WORKDIR /src`, `COPY . .`, `RUN bash build.sh`; no network use after the base image
 - Acceptance: `docker build -t miller-build .` succeeds; `docker run --rm miller-build dist/linux-x64/Miller.sh --version` prints the version
+- Status: done
 
 ### M1 Geometry and setup
 
