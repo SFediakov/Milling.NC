@@ -105,3 +105,12 @@
   application passes Progress<T> on the UI thread, tests pass a synchronous progress.
 - The base image behind mcr.microsoft.com/dotnet/sdk:10.0 is Ubuntu 24.04; the vendored .deb
   files in third_party/debian match that image and must be refreshed when its digest changes.
+- Desktop capture of the GL viewport on this machine: the display is 3840 x 2160 at 250 percent.
+  In a DPI-unaware PowerShell, MoveWindow and GetWindowRect use virtual pixels (1536 x 864 screen)
+  while System.Drawing CopyFromScreen reads physical pixels, so capture the whole 3840 x 2160
+  screen after moving the window to the origin; a partial region silently cuts the viewport.
+  Several rendering "failures" were only this.
+- GL problems are visible: SceneRenderer.Render returns glGetError and Viewport3DControl reports
+  it (and init exceptions) through ViewportViewModel.GlError into the log and the status bar.
+- Camera.FitToBounds must use the narrower of the vertical and horizontal half-angles, or a tall
+  viewport clips the sides of the model.

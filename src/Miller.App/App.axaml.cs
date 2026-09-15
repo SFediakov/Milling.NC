@@ -36,7 +36,7 @@ public partial class App : Avalonia.Application
             var errors = new ErrorDialogService(log, () => desktop.MainWindow);
             var confirm = new ConfirmDialogService(() => desktop.MainWindow);
             var viewModel = new MainWindowViewModel(project, meshImport, pipeline, export, settings, dialogs, errors, confirm,
-                handler => new Progress<Miller.Application.Progress.ProgressReport>(handler), Program.AppVersion);
+                handler => new Progress<Miller.Application.Progress.ProgressReport>(handler), log, Program.AppVersion);
             desktop.MainWindow = new MainWindow
             {
                 Width = settings.WindowWidth,
@@ -44,6 +44,13 @@ public partial class App : Avalonia.Application
                 DataContext = viewModel,
             };
             log.Info($"started {Program.AppVersion}");
+
+            // An STL path on the command line opens that file once the window is up.
+            var startupStl = desktop.Args?.FirstOrDefault(a => a.EndsWith(".stl", StringComparison.OrdinalIgnoreCase));
+            if (startupStl is not null)
+            {
+                desktop.MainWindow.Opened += async (_, _) => await viewModel.OpenStlFileAsync(startupStl);
+            }
         }
 
         base.OnFrameworkInitializationCompleted();
