@@ -25,16 +25,19 @@ public sealed class Mesh
 
     public BoundingBox Bounds { get; }
 
+    // A mirroring transform (negative determinant) reverses the winding, so B and C are swapped to
+    // keep the recomputed normals pointing outward.
     public Mesh Transform(Matrix4x4 matrix)
     {
+        var mirrored = matrix.GetDeterminant() < 0;
         var transformed = new Triangle[_triangles.Length];
         for (var i = 0; i < _triangles.Length; i++)
         {
             var t = _triangles[i];
-            transformed[i] = new Triangle(
-                Vector3.Transform(t.A, matrix),
-                Vector3.Transform(t.B, matrix),
-                Vector3.Transform(t.C, matrix));
+            var a = Vector3.Transform(t.A, matrix);
+            var b = Vector3.Transform(t.B, matrix);
+            var c = Vector3.Transform(t.C, matrix);
+            transformed[i] = mirrored ? new Triangle(a, c, b) : new Triangle(a, b, c);
         }
 
         return new Mesh(transformed);
