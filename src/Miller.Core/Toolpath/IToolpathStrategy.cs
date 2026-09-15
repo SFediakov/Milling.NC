@@ -1,5 +1,5 @@
 // PLACEHOLDER - implemented by T-035 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.Toolpath
+// Namespace: Miller.Core.Toolpaths
 // Purpose: The exchangeable routing algorithm. Implementations live in Toolpath/Strategies and are
 //     listed in StrategyRegistry.
 // Public interface (names only): interface IToolpathStrategy { string Id; string DisplayName;

@@ -41,3 +41,23 @@
   packages must not be added.
 - Windows renders through ANGLE (OpenGL ES); Linux through GLX. The only
   allowed difference is the shader version preamble chosen from `GlVersion`.
+
+## Lessons learned while executing the task list
+
+- A namespace must not carry the name of a type it contains, and a project's
+  root namespace must not equal a type name used next to it. `Miller.Application`
+  hides `Avalonia.Application` inside `Miller.App`, so that base class is written
+  `Avalonia.Application`. For the same reason the `HeightMap` folder uses the
+  namespace `Miller.Core.HeightMaps` and the `Toolpath` folder uses
+  `Miller.Core.Toolpaths` (tests mirror them as `Miller.Tests.Core.HeightMaps`
+  and `Miller.Tests.Core.Toolpaths`). Placeholder headers were corrected.
+- `SafeHeight` is a clearance above the stock top, not an absolute Z. The
+  absolute rule made every default project invalid whenever machine zero sits at
+  the stock bottom, which is the default origin mode; 16 validator tests failed
+  on it before the change.
+- The version bump applies to every task that changes Core, Application or App
+  code, not only to files under `src/Miller.App`.
+- Heights interpolated from triangles compare with a tolerance in tests; only
+  assigned values (floor, NaN) compare exactly. Sampling a ridge at cell centers
+  loses up to one cell size of height, so a fixture peak is asserted within the
+  cell size, not within 0.01 mm.

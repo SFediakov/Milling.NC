@@ -1,5 +1,5 @@
 // PLACEHOLDER - implemented by T-028 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.HeightMap
+// Namespace: Miller.Core.HeightMaps
 // Purpose: Head limit: limit[i,j] = max over annulus of model - CutterLength; effective tip =
 //     max(tip, limit); head-limited mask where limit > tip + tolerance. Computed against the model
 //     map, not the stock.

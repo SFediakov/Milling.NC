@@ -1,5 +1,5 @@
 // PLACEHOLDER - implemented by T-035 (docs/DEVELOPMENT_GUIDE.md). Replace this header with the implementation.
-// Namespace: Miller.Core.Toolpath
+// Namespace: Miller.Core.Toolpaths
 // Purpose: Explicit list of every strategy. Adding a strategy = one new file in Strategies plus one
 //     line here. Unknown id throws KeyNotFoundException listing the known ids. Duplicate ids throw
 //     at type initialization.
