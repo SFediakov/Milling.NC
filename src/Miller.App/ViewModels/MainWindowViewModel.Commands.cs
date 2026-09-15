@@ -20,6 +20,7 @@ public sealed partial class MainWindowViewModel
         MeshImport.Clear();
         LastResult = null;
         Strategy.Clear();
+        UpdateViewportScene();
         StatusText = NewProjectStatus;
     }
 
@@ -47,6 +48,7 @@ public sealed partial class MainWindowViewModel
         LastResult = null;
         Strategy.Clear();
         MeshImport.Clear();
+        UpdateViewportScene();
         StatusText = $"Opened {Path.GetFileName(path)}";
         var stl = Project.Current.StlPath;
         if (!string.IsNullOrEmpty(stl))

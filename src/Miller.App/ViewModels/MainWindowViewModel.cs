@@ -5,6 +5,8 @@ using Miller.App.Services;
 using Miller.Application.Progress;
 using Miller.Application.Services;
 using Miller.Application.Validation;
+using Miller.Core.Geometry;
+using Miller.Core.Setup;
 
 namespace Miller.App.ViewModels;
 
@@ -42,6 +44,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         IErrorDialogService errors,
         IConfirmDialogService confirm,
         Func<Action<ProgressReport>, IProgress<ProgressReport>> progressFactory,
+        LogService log,
         string appVersion)
     {
         Project = project ?? throw new ArgumentNullException(nameof(project));
@@ -53,6 +56,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         ErrorDialog = errors ?? throw new ArgumentNullException(nameof(errors));
         Confirm = confirm ?? throw new ArgumentNullException(nameof(confirm));
         _progressFactory = progressFactory ?? throw new ArgumentNullException(nameof(progressFactory));
+        Log = log ?? throw new ArgumentNullException(nameof(log));
         AppVersion = appVersion ?? throw new ArgumentNullException(nameof(appVersion));
         Project.ProjectChanged += (_, _) => OnPropertyChanged(nameof(Title));
         MeshImport.MeshChanged += (_, _) => GenerateCommand.NotifyCanExecuteChanged();
@@ -61,6 +65,13 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Axes = new AxisSettingsViewModel(Project, MeshImport);
         Cutting = new CuttingParametersViewModel(Project);
         Strategy = new StrategySelectionViewModel(Project, GenerateCommand, CancelGenerateCommand);
+        Viewport = new ViewportViewModel();
+        Viewport.GlError += (_, message) =>
+        {
+            Log.Error(message, null);
+            StatusText = message;
+        };
+        Project.ProjectChanged += (_, _) => UpdateViewportScene();
     }
 
     public event EventHandler? ExitRequested;
@@ -85,6 +96,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public IConfirmDialogService Confirm { get; }
 
+    public LogService Log { get; }
+
     public string AppVersion { get; }
 
     public ToolSettingsViewModel Tool { get; }
@@ -96,6 +109,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     public CuttingParametersViewModel Cutting { get; }
 
     public StrategySelectionViewModel Strategy { get; }
+
+    public ViewportViewModel Viewport { get; }
 
     public PipelineResult? LastResult
     {
@@ -172,6 +187,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         ExportNcCommand.NotifyCanExecuteChanged();
     }
 
+    public Task<bool> OpenStlFileAsync(string path) => ImportStlAsync(path, markDirty: true);
+
     private async Task<bool> ImportStlAsync(string path, bool markDirty)
     {
         try
@@ -187,6 +204,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             Settings.Save();
             LastResult = null;
             Strategy.Clear();
+            UpdateViewportScene();
             var size = report.Bounds.Size;
             StatusText = string.Create(CultureInfo.InvariantCulture,
                 $"{report.TriangleCount} triangles, {size.X:0.000} x {size.Y:0.000} x {size.Z:0.000} mm");
@@ -199,21 +217,42 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }
     }
 
-    // Stubs replaced by T-084 (view) and T-094 (simulation).
     [RelayCommand]
-    private void ResetCamera() => NotYet("Reset camera");
+    private void ResetCamera() => Viewport.RequestFit();
 
     [RelayCommand]
-    private void ToggleModel() => NotYet("Show model");
+    private void ToggleModel() => Viewport.ShowModel = !Viewport.ShowModel;
 
     [RelayCommand]
-    private void ToggleStock() => NotYet("Show stock");
+    private void ToggleStock() => Viewport.ShowStock = !Viewport.ShowStock;
 
     [RelayCommand]
-    private void ToggleToolpath() => NotYet("Show toolpath");
+    private void ToggleToolpath() => Viewport.ShowToolpath = !Viewport.ShowToolpath;
 
     [RelayCommand]
-    private void ToggleTool() => NotYet("Show tool");
+    private void ToggleTool() => Viewport.ShowTool = !Viewport.ShowTool;
+
+    // The viewport shows the model in machine space with the stock placed around it; both follow
+    // the axis and stock settings, so any project change recomputes them.
+    private void UpdateViewportScene()
+    {
+        if (!MeshImport.HasMesh || !Project.Current.Axes.IsPermutation)
+        {
+            Viewport.SetMesh(null);
+            Viewport.SetStock(null, null);
+            return;
+        }
+
+        var mesh = MeshImport.CurrentMesh!;
+        var stock = Project.Current.Stock;
+        var machineMesh = mesh.Transform(Project.Current.Axes.ToMatrix(mesh.Bounds, stock));
+        var corner = AxisSetup.StockCorner(machineMesh.Bounds, stock);
+        var bounds = new BoundingBox(corner, corner + AxisSetup.StockBoundingSize(stock));
+        Viewport.SetMesh(machineMesh);
+        Viewport.SetStock(bounds, stock);
+    }
+
+    // Stubs replaced by T-094 (simulation).
 
     [RelayCommand]
     private void Play() => NotYet("Play");

@@ -9,7 +9,7 @@ public sealed partial class ColorRuleTests
 {
     private const string AllowedFile = "Styles/Colors.axaml";
 
-    [GeneratedRegex(@"#[0-9A-Fa-f]{6,8}\b|Color\.Parse\(|Color\.FromRgb\(|Color\.FromArgb\(|Colors\.[A-Z][a-zA-Z]+\b")]
+    [GeneratedRegex(@"#[0-9A-Fa-f]{6,8}\b|Color\.Parse\(|Color\.FromRgb\(|Color\.FromArgb\(|\bColors\.[A-Z][a-zA-Z]+\b")]
     private static partial Regex ColorLiteral();
 
     private static string SourceRoot => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src"));

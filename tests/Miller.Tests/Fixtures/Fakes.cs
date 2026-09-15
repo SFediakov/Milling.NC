@@ -65,6 +65,7 @@ public static class TestServices
             errors ?? new FakeErrorDialogService(),
             confirm ?? new FakeConfirmDialogService(),
             handler => new SynchronousProgress(handler),
+            new LogService(Path.Combine(tempRoot, "logs")),
             Version);
 
     // Delivers reports on the calling thread, so a test sees them in pipeline order.
