@@ -71,3 +71,9 @@
   values with a tolerance, and a mask at the exact stock top needs a small margin.
 - The Bash tool truncates commands above roughly 8 KB, which cuts a heredoc mid-way and fails
   with an unmatched quote error. Write files larger than a few KB with the Write tool.
+- The Linux launcher must not change the working directory before starting the binary;
+  relative paths on the command line (project file, output file) would otherwise resolve
+  inside dist/linux-x64. It starts the binary by its absolute path instead.
+- InvariantGlobalization is on, so named cultures such as de-DE do not exist at run time.
+  Tests that need a comma decimal separator clone the invariant culture and change its
+  NumberFormat.
