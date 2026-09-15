@@ -39,8 +39,12 @@
       <TabItem Header="Axes" Name="AxesTab">
         <views:AxisSettingsView DataContext="{Binding Axes}" />
       </TabItem>
-      <TabItem Header="Cutting" Name="CuttingTab" />
-      <TabItem Header="Strategy" Name="StrategyTab" />
+      <TabItem Header="Cutting" Name="CuttingTab">
+        <views:CuttingParametersView DataContext="{Binding Cutting}" />
+      </TabItem>
+      <TabItem Header="Strategy" Name="StrategyTab">
+        <views:StrategySelectionView DataContext="{Binding Strategy}" />
+      </TabItem>
       <TabItem Header="Simulation" Name="SimulationTab" />
       <TabItem Header="Analysis" Name="AnalysisTab" />
     </TabControl>

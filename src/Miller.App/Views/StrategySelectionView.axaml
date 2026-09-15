@@ -1,0 +1,48 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Miller.App.ViewModels"
+             xmlns:tp="using:Miller.Core.Toolpaths"
+             xmlns:gc="using:Miller.Core.GCode"
+             x:Class="Miller.App.Views.StrategySelectionView"
+             x:DataType="vm:StrategySelectionViewModel">
+  <ScrollViewer>
+    <StackPanel Margin="8" Spacing="4">
+      <TextBlock Classes="header" Text="Strategies" />
+
+      <TextBlock Classes="label" Text="Roughing" />
+      <ComboBox Name="RoughingBox" ItemsSource="{Binding RoughingStrategies}" SelectedItem="{Binding Roughing}" Width="260" HorizontalAlignment="Left">
+        <ComboBox.ItemTemplate>
+          <DataTemplate x:DataType="tp:IToolpathStrategy">
+            <TextBlock Text="{Binding DisplayName}" />
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+
+      <TextBlock Classes="label" Text="Finishing" />
+      <ComboBox Name="FinishingBox" ItemsSource="{Binding FinishingStrategies}" SelectedItem="{Binding Finishing}" Width="260" HorizontalAlignment="Left">
+        <ComboBox.ItemTemplate>
+          <DataTemplate x:DataType="tp:IToolpathStrategy">
+            <TextBlock Text="{Binding DisplayName}" />
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+
+      <TextBlock Classes="label" Text="Post-processor" />
+      <ComboBox Name="PostProcessorBox" ItemsSource="{Binding PostProcessors}" SelectedItem="{Binding PostProcessor}" Width="260" HorizontalAlignment="Left">
+        <ComboBox.ItemTemplate>
+          <DataTemplate x:DataType="gc:IPostProcessor">
+            <TextBlock Text="{Binding DisplayName}" />
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+
+      <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+        <Button Name="GenerateButton" Content="Generate toolpath" Command="{Binding GenerateCommand}" />
+        <Button Name="CancelButton" Content="Cancel" Command="{Binding CancelCommand}" />
+      </StackPanel>
+
+      <TextBlock Classes="header" Text="Statistics" />
+      <TextBlock Name="StatisticsText" Text="{Binding StatisticsText}" TextWrapping="Wrap" />
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>
