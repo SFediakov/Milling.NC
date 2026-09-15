@@ -471,6 +471,7 @@ check that decides done.
 - Input: comment-only `.cs` placeholders under `src/Miller.Core/`
 - Output: class library project with no package references and no project references; solution containing it
 - Acceptance: `dotnet build Miller.sln` succeeds with zero warnings
+- Status: done
 
 #### T-004 Application class library project
 - Depends on: T-003
