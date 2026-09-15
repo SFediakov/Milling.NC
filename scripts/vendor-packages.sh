@@ -29,6 +29,7 @@ fi
   echo '  <PropertyGroup>'
   echo '    <OutputType>Exe</OutputType>'
   echo '    <SelfContained>true</SelfContained>'
+  echo '    <PublishSingleFile>true</PublishSingleFile>'
   echo '  </PropertyGroup>'
   echo '  <ItemGroup>'
   for package in "${PACKAGES[@]}"; do
@@ -59,7 +60,7 @@ done
 find "$CACHE_DIR" -type f -name '*.nupkg' -exec cp -f {} "$TARGET_DIR/" \;
 
 RUNTIME_VERSION="$(dotnet msbuild "$META_PROJECT" -getProperty:BundledNETCoreAppPackageVersion)"
-REQUIRED_PACKS=("microsoft.netcore.app.ref.${RUNTIME_VERSION}")
+REQUIRED_PACKS=("microsoft.netcore.app.ref.${RUNTIME_VERSION}" "microsoft.net.illink.tasks.${RUNTIME_VERSION}")
 for rid in "${RIDS[@]}"; do
   REQUIRED_PACKS+=("microsoft.netcore.app.host.${rid}.${RUNTIME_VERSION}" "microsoft.netcore.app.runtime.${rid}.${RUNTIME_VERSION}")
 done
