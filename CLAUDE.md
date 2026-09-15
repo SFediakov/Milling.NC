@@ -2,7 +2,7 @@
 Miller - Program to convert .STL to .nc files which would be used by CNC machine to mill accodring to the .stl
 ## General Rules
 - no marketing phrases at the end which intended to force user for conversation continuation
-- mandatory load documentation documents fully into the context window;
+- mandatory load local .md files fully into the context window;
 - Avoid modification of tasks interpretation. only extension of interpretation is allowed which not violates origin task definition;
 - Apply engineering mindset focused on precision, calculation and guessing avoidance;
 - avoid emojis and special symbols like arrows etc;
@@ -26,15 +26,12 @@ Miller - Program to convert .STL to .nc files which would be used by CNC machine
 ## Development Rules
 - app should be buildable on linux without any code modification/adjustment
 - Build all components after every change.
-- Increment version patch number (X in `Build_Y.Z.X`, stored in `Server/Program.cs` as `WebAppVersion`) for any app element change
-- After any code modification, identify and update all impacted tests. If existing tests cover modified logic, ask user for explicit approval of test update.
+- Increment version patch number (X in `Build_Y.Z.X`) for any app element change
 - after each functionality creation create a new commit (from commit should be excluded builded components)
 - guidance from code comments should be treated as higher authority in this particular function where it is written than claude.md rules 
-- when working on frontend parts, mandatory is testing additionally with graphical rendering of user interface to confirm proper implementation
 - sub-agents are not allowed
 
 ## Code Rules
-- **no referencing to the web** all packages should be download to the repository, and wired to the docker container, without using referencing to web pages 
 - **project Claude.md in root and .claude might be updated only by user, others folder level claude.md might be updated by claude and should contain only lessons learned and intended rules deviation** 
 - **No fallbacks.** No fallback methods, hidden switches or dual code paths. If an existing fallback is found during modification, flag it to user explicitly
 - **maximally reuse already existing functions instead of creation new ones** 
