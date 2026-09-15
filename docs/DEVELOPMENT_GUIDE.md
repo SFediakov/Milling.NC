@@ -577,6 +577,7 @@ check that decides done.
 - Input: placeholders; pitfall 1
 - Output: `StlReader.Read(string path) -> (Mesh, StlImportReport)` deciding binary by the size formula first, ASCII otherwise; tests: fixture parsed as binary with 4050 triangles and the recorded bounds (tolerance 0.001), ASCII cube text parsed to 12 triangles, truncated binary throws, garbage text throws with a line number
 - Acceptance: tests green; the fixture path is resolved relative to the test assembly (`../../../../../Milling_Heart_V2.STL`) and asserted to exist
+- Status: done
 
 #### T-017 Tool, stock and cutting parameters
 - Depends on: T-003
