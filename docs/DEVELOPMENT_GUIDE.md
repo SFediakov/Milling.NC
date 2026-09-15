@@ -545,6 +545,7 @@ check that decides done.
 - Input: placeholder
 - Output: `Mesh` holding `Triangle[]`, `Bounds`, `TriangleCount`, `Transform(Matrix4x4) -> Mesh` (new mesh, normals recomputed), `RemoveDegenerate()`
 - Acceptance: compiles; tests in T-013
+- Status: done
 
 #### T-013 Tests for geometry
 - Depends on: T-012
