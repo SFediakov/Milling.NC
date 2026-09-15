@@ -946,6 +946,7 @@ check that decides done.
 - Input: placeholder
 - Output: tests using a temp directory injected through the constructor: missing file yields defaults; save then load round trips; a corrupt file throws (no fallback to defaults)
 - Acceptance: tests green
+- Status: done
 
 #### T-062 Log service and error dialog service
 - Depends on: T-059
@@ -953,6 +954,7 @@ check that decides done.
 - Input: placeholders
 - Output: `LogService.Info/Error(string)` appending timestamped lines to `logs/miller.log` next to the executable (directory created); `ErrorDialogService.Show(Exception)` logs and shows a modal window with message and a copyable details box; `Program.cs` wires unhandled exceptions to it
 - Acceptance: throwing in a command shows the dialog and writes the log line
+- Status: done
 
 #### T-063 Main window layout and menu
 - Depends on: T-059
@@ -960,6 +962,7 @@ check that decides done.
 - Input: placeholders; menu list in `docs/ARCHITECTURE.md` 4.3
 - Output: `DockPanel`: menu on top, status bar with progress at the bottom, left `TabControl` for settings panels (empty tabs named Tool, Stock, Axes, Cutting, Strategy, Simulation, Analysis), central `Border` reserved for the viewport; every menu item bound to a command on `MainWindowViewModel` (commands may be not-yet-enabled stubs that set `StatusText`); window size restored from settings on open and stored on close
 - Acceptance: screenshot shows menu, tabs, central area, status bar; every menu item exists; headless test in T-065
+- Status: done
 
 #### T-064 File dialog service and Open STL command
 - Depends on: T-063, T-046
@@ -967,6 +970,7 @@ check that decides done.
 - Input: placeholders
 - Output: interface with `OpenFileAsync(title, extensions, startDirectory)`, `SaveFileAsync(...)`; implementation on `TopLevel.StorageProvider`; `OpenStlCommand` imports through `MeshImportService`, updates `StatusText` with triangle count and size, remembers the directory in settings, sets `Project.StlPath`
 - Acceptance: opening the fixture shows `4050 triangles, 20.482 x 5.000 x 21.971 mm` in the status bar
+- Status: done
 
 #### T-065 Headless main window tests
 - Depends on: T-064
