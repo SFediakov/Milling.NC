@@ -814,6 +814,7 @@ check that decides done.
 - Input: placeholder
 - Output: readonly record `ProgressReport(string Stage, float Fraction, string Message)`
 - Acceptance: compiles
+- Status: done
 
 #### T-046 Mesh import service
 - Depends on: T-016, T-045
@@ -821,6 +822,7 @@ check that decides done.
 - Input: placeholders
 - Output: `Import(string path) -> StlImportReport`, `CurrentMesh`, `HasMesh`, event `MeshChanged`; throws on empty mesh or non-finite bounds; the test file gets a first test importing the fixture and asserting the report
 - Acceptance: test green
+- Status: done
 
 #### T-047 Pipeline service
 - Depends on: T-046, T-044, T-030, T-021
@@ -828,6 +830,7 @@ check that decides done.
 - Input: placeholder; `docs/ARCHITECTURE.md` 5.1
 - Output: `Task<PipelineResult> RunAsync(MillingProject, Mesh, IProgress<ProgressReport>, CancellationToken)` executing the stages in order on `Task.Run`, validating first (errors throw `ValidationException` carrying the result), result holding machine mesh, stock, model map, tip map, effective tip, head limit, plan, toolpath, statistics
 - Acceptance: compiles; tests in T-048
+- Status: done
 
 #### T-048 Tests for the pipeline service
 - Depends on: T-047
@@ -835,6 +838,7 @@ check that decides done.
 - Input: T-046 test file
 - Output: tests: default project on the 10x10x5 box completes with zero gouges and at least one roughing and one finishing segment; progress fractions are non-decreasing and end at 1; cancellation before completion throws; invalid project throws `ValidationException` with the field name
 - Acceptance: tests green
+- Status: done
 
 #### T-049 Fixture pipeline run
 - Depends on: T-048
