@@ -13,6 +13,7 @@
     <None Include="Golden/*.nc" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="../../src/Miller.Solver/Miller.Solver.csproj" />
     <ProjectReference Include="../../src/Miller.Core/Miller.Core.csproj" />
     <ProjectReference Include="../../src/Miller.Application/Miller.Application.csproj" />
     <ProjectReference Include="../../src/Miller.App/Miller.App.csproj" />

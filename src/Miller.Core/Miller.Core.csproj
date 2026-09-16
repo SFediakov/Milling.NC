@@ -2,4 +2,7 @@
   <PropertyGroup>
     <RootNamespace>Miller.Core</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Miller.Solver/Miller.Solver.csproj" />
+  </ItemGroup>
 </Project>
