@@ -1,5 +1,4 @@
 using System.Text.RegularExpressions;
-using Miller.Core.Slicing;
 using Miller.Core.Toolpaths.Strategies;
 
 namespace Miller.Core.Toolpaths;
@@ -10,19 +9,14 @@ public static class StrategyRegistry
     public static IReadOnlyList<IToolpathStrategy> All { get; } = RegistryRules.Validate(
         new IToolpathStrategy[]
         {
-            new RasterRoughingStrategy(),
-            new RasterFinishingStrategy(),
-            new ContourFinishingStrategy(),
-            new LayerCompleteStrategy(),
+            new ZLayerByLayerStrategy(),
+            new ThreeAxisPreciseStrategy(),
         },
         s => s.Id,
         s => s.DisplayName,
         "strategy");
 
     public static IToolpathStrategy GetById(string id) => RegistryRules.FindById(All, s => s.Id, id, "strategy");
-
-    public static IEnumerable<IToolpathStrategy> ForOperation(MillingOperation operation)
-        => All.Where(s => s.Operation == operation);
 }
 
 // Shared rules for the id-keyed registries (strategies, post-processors).

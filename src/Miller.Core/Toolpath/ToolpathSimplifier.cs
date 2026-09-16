@@ -7,9 +7,12 @@ namespace Miller.Core.Toolpaths;
 // feed segments at one rate is a polyline, and Douglas-Peucker keeps only the vertices needed so
 // that every dropped vertex lies within the tolerance of the chord replacing it. A chord is also
 // rejected when it dips below the effective tip map (GougeChecker, same tolerance), so a straight
-// line across a plateau corner is split like a curve. A flat or constant-slope row therefore
-// becomes one segment, a circle becomes chords whose sagitta is the tolerance, and the first and
-// last point of every run, every rapid and every plunge stay exactly where the strategy put them.
+// line across a plateau corner is split like a curve. Douglas-Peucker splits at the farthest vertex,
+// which on a straight stretch whose ends deviate is a vertex in the middle, so a merge pass then
+// drops every kept vertex whose neighbours' chord still holds all vertices between them. A flat or
+// constant-slope row therefore becomes one segment, a circle becomes chords whose sagitta is the
+// tolerance, and the first and last point of every run, every rapid and every plunge stay exactly
+// where the strategy put them.
 public static class ToolpathSimplifier
 {
     public static Toolpath Simplify(Toolpath toolpath, HeightMap effectiveTip, float tolerance)
@@ -99,7 +102,34 @@ public static class ToolpathSimplifier
             }
         }
 
+        var m = 1;
+        while (m + 1 < kept.Count)
+        {
+            if (Holds(points, kept[m - 1], kept[m + 1], effectiveTip, tolerance, feedRate))
+            {
+                kept.RemoveAt(m);
+            }
+            else
+            {
+                m++;
+            }
+        }
+
         return kept;
+    }
+
+    // True when the chord a-b keeps every vertex between within the tolerance and does not gouge.
+    private static bool Holds(IReadOnlyList<Vector3> points, int a, int b, HeightMap effectiveTip, float tolerance, float feedRate)
+    {
+        for (var n = a + 1; n < b; n++)
+        {
+            if (DistanceToSegment(points[n], points[a], points[b]) > tolerance)
+            {
+                return false;
+            }
+        }
+
+        return GougeChecker.IsClear(new ToolpathSegment(points[a], points[b], MoveKind.Feed, feedRate), effectiveTip, tolerance);
     }
 
     // The vertex the chord a-b must keep, or -1 when the chord may replace every vertex between:

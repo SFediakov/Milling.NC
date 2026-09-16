@@ -10,6 +10,7 @@ using Miller.Core.Toolpaths;
 namespace Miller.Application.Services;
 
 // Everything the pipeline produced; the viewport, the simulation and the analysis read from it.
+// Tip is the reach floor (ReachMap), EffectiveTip the same under the head limit.
 public sealed record PipelineResult(
     Mesh MachineMesh,
     StockGeometry Stock,
@@ -29,14 +30,14 @@ public sealed record PipelineResult(
 
     public CuttingParameters Parameters { get; init; } = CuttingParameters.Default();
 
-    // What stands after the roughing besides the model (cut scope): the stock surface over cells never
+    // What stands after the levels besides the model (cut scope): the stock surface over cells never
     // cut, the terrace level over trench cells, NaN where only the model constrains the tool.
     public HeightMap Standing { get; init; } = new(0, 0, 1, 1, 1, float.NaN);
 }
 
-// Runs the stages of docs/ARCHITECTURE.md 5.1 in order; the linked toolpath is simplified to vectors
+// Runs the stages of docs/ARCHITECTURE.md 5.1 in order; the routed toolpath is simplified to vectors
 // within the tolerance before the statistics. Progress fractions are cumulative over the
-// stage weights below; cancellation is honoured between stages and inside the strategies.
+// stage weights below; cancellation is honoured between stages and inside the strategy.
 public sealed class PipelineService
 {
     private static readonly (string Stage, float Weight)[] Stages =
@@ -45,11 +46,10 @@ public sealed class PipelineService
         ("transform", 0.03f),
         ("stock", 0.05f),
         ("model map", 0.15f),
-        ("tip map", 0.15f),
+        ("reach map", 0.15f),
         ("head clearance", 0.10f),
         ("slice", 0.05f),
-        ("roughing", 0.20f),
-        ("finishing", 0.18f),
+        ("route", 0.38f),
         ("simplify", 0.02f),
         ("statistics", 0.05f),
     };
@@ -79,8 +79,7 @@ public sealed class PipelineService
             throw new ValidationException(validation);
         }
 
-        var roughing = RequireStrategy(project.RoughingStrategyId, MillingOperation.Roughing);
-        var finishing = RequireStrategy(project.FinishingStrategyId, MillingOperation.Finishing);
+        var strategy = StrategyRegistry.GetById(project.RoutingStrategyId);
         cancellation.ThrowIfCancellationRequested();
 
         reporter.Begin(1);
@@ -100,12 +99,12 @@ public sealed class PipelineService
 
         reporter.Begin(4);
         var profile = ToolProfile.Create(project.Tool, p.CellSize);
-        var tip = HeightMapDilation.ComputeTipMap(model, profile);
+        var tip = ReachMap.Compute(model, stock.Map, profile, floor);
         cancellation.ThrowIfCancellationRequested();
 
         reporter.Begin(5);
         // The head must clear what the cutter leaves, not only the model: the limit comes from the
-        // remaining material (closing of the tip map), rounded up to the roughing level it stands at
+        // remaining material (closing of the tip map), rounded up to the level it stands at
         // until the pass that reaches it, since neighbours are cut level by level. A raised tip leaves
         // more, so iterate until the effective tip settles; limits only rise, so the loop is bounded.
         // The stock a narrower cut scope leaves standing is not part of this: the separation region
@@ -144,18 +143,14 @@ public sealed class PipelineService
         cancellation.ThrowIfCancellationRequested();
 
         reporter.Begin(7);
-        var roughingPath = roughing.Generate(context, reporter.StageProgress(7), cancellation);
+        var routed = strategy.Generate(context, reporter.StageProgress(7), cancellation);
         cancellation.ThrowIfCancellationRequested();
 
         reporter.Begin(8);
-        var finishingPath = finishing.Generate(context, reporter.StageProgress(8), cancellation);
+        var toolpath = ToolpathSimplifier.Simplify(routed, strategyTip, p.Tolerance);
         cancellation.ThrowIfCancellationRequested();
 
         reporter.Begin(9);
-        var toolpath = ToolpathSimplifier.Simplify(Join(roughingPath, finishingPath, p), strategyTip, p.Tolerance);
-        cancellation.ThrowIfCancellationRequested();
-
-        reporter.Begin(10);
         var statistics = ToolpathStatistics.Compute(toolpath, p);
         reporter.Done();
 
@@ -164,26 +159,6 @@ public sealed class PipelineService
             Parameters = p,
             Standing = scoped.Standing,
         };
-    }
-
-    // Each strategy output already starts with a plunge from safe Z and ends with a retract to it, so
-    // one rapid at safe Z connects them.
-    public static Toolpath Join(Toolpath roughing, Toolpath finishing, CuttingParameters parameters)
-    {
-        var result = new Toolpath();
-        result.AddRange(roughing.Segments);
-        if (roughing.Count > 0 && finishing.Count > 0)
-        {
-            var from = roughing.Segments[^1].End;
-            var to = finishing.Segments[0].Start;
-            if (from != to)
-            {
-                result.Add(new ToolpathSegment(from, to, MoveKind.Rapid, parameters.RapidRate));
-            }
-        }
-
-        result.AddRange(finishing.Segments);
-        return result;
     }
 
     private static bool SameWithin(HeightMap a, HeightMap b, float tolerance)
@@ -199,17 +174,6 @@ public sealed class PipelineService
         }
 
         return true;
-    }
-
-    private static IToolpathStrategy RequireStrategy(string id, MillingOperation operation)
-    {
-        var strategy = StrategyRegistry.GetById(id);
-        if (strategy.Operation != operation)
-        {
-            throw new ArgumentException($"Strategy '{id}' is a {strategy.Operation} strategy; a {operation} strategy is required.");
-        }
-
-        return strategy;
     }
 
     private sealed class StageReporter

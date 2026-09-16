@@ -36,7 +36,7 @@ public sealed class CutScopeTests
         Assert.Empty(GougeChecker.Verify(separation.Toolpath, separation.EffectiveTip, separation.Tolerance));
         Assert.True(separation.Statistics.FeedLength < everything.Statistics.FeedLength / 2,
             $"separation feed {separation.Statistics.FeedLength} is not far below {everything.Statistics.FeedLength}");
-        Assert.All(separation.Plan.RoughingSteps.Zip(everything.Plan.RoughingSteps), pair => Assert.True(pair.First.MaskCount < pair.Second.MaskCount));
+        Assert.All(separation.Plan.Steps.Zip(everything.Plan.Steps), pair => Assert.True(pair.First.MaskCount < pair.Second.MaskCount));
 
         var simulation = new SimulationService();
         simulation.Load(separation);
@@ -47,11 +47,12 @@ public sealed class CutScopeTests
         Assert.Equal(separation.Stock.StockTop, stock[stock.Width - 1, stock.Height - 1], 3);
         Assert.Equal(separation.Stock.StockTop, separation.Standing[0, 0], 3);
 
-        // The band around the model is cut to the floor, the model top is finished.
-        var (bi, bj) = stock.CellOf(20f + 5f + 3f + 0.75f, 20f);
+        // The band beside the model wall is cut to the floor (the tool axis reaches the wall line by
+        // majority, which also cuts the wall back and reports gouge), the model top is finished.
+        var (bi, bj) = stock.CellOf(20f + 5f + 0.75f, 20f);
         Assert.Equal(separation.Floor, stock[bi, bj], 3);
         var analysis = FinalModelAnalyzer.Analyze(stock, separation.Model, separation.Floor, separation.Tolerance);
-        Assert.Equal(0, analysis.GougeCells);
+        Assert.True(analysis.GougeCells > 0);
         var (mi, mj) = stock.CellOf(20f, 20f);
         Assert.Equal(CellCategory.Ok, analysis.Map.Categories[stock.Index(mi, mj)]);
 
@@ -61,6 +62,25 @@ public sealed class CutScopeTests
         full.RunToEnd();
         Assert.Equal(everything.Floor, full.Stock![0, 0], 3);
         Assert.All(everything.Standing.Z, z => Assert.True(float.IsNaN(z)));
+    }
+
+    [Fact]
+    public void Separation_WithThreeAxisPrecise_LeavesTheCornersAndHasNoEvents()
+    {
+        var project = BoxProject(CutScope.Separation);
+        project.RoutingStrategyId = "three-axis-precise";
+        var result = Run(project);
+        Assert.Empty(GougeChecker.Verify(result.Toolpath, result.EffectiveTip, result.Tolerance));
+        var simulation = new SimulationService();
+        simulation.Load(result);
+        simulation.RunToEnd();
+        Assert.Empty(simulation.Events);
+        var stock = simulation.Stock!;
+        Assert.Equal(result.Stock.StockTop, stock[0, 0], 3);
+        var (bi, bj) = stock.CellOf(20f + 5f + 0.75f, 20f);
+        Assert.Equal(result.Floor, stock[bi, bj], 3);
+        var (mi, mj) = stock.CellOf(20f, 20f);
+        Assert.Equal(5f, stock[mi, mj], 2);
     }
 
     [Fact]
@@ -118,10 +138,8 @@ public sealed class CutScopeTests
         Assert.True(TrenchCells(15f) > TrenchCells(0f) + 4, $"{TrenchCells(15f)} cells at 15 vs {TrenchCells(0f)} at the floor");
     }
 
-    // The sample pins raster roughing, whose rows skip thin bands; the terraces need the profile pass
-    // of the layer-complete strategy (the default) to be cut, so that is the strategy checked here.
     [Fact]
-    public void HeartFixture_LayerComplete_SeparationHasNoCollisionsAndLessFeed()
+    public void HeartFixture_SeparationHasNoCollisionsAndLessFeed()
     {
         var project = MillingProject.Default();
         project.Stock.SizeX = 30;
@@ -131,7 +149,6 @@ public sealed class CutScopeTests
         project.Models.Add(new ModelPlacement { StlPath = TestMeshes.FixtureFileName });
         var import = new MeshImportService();
         import.Import(TestMeshes.FixturePath());
-        Assert.Equal("layer-complete", project.RoughingStrategyId);
 
         var results = new Dictionary<CutScope, PipelineResult>();
         foreach (var scope in new[] { CutScope.Everything, CutScope.Separation })

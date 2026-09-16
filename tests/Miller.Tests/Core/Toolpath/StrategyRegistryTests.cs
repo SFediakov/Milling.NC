@@ -1,4 +1,4 @@
-using Miller.Core.Slicing;
+using Miller.Core.Setup;
 using Miller.Core.Toolpaths;
 using Xunit;
 
@@ -6,7 +6,7 @@ namespace Miller.Tests.Core.Toolpaths;
 
 public sealed class StrategyRegistryTests
 {
-    private sealed record FakeStrategy(string Id, string DisplayName, MillingOperation Operation) : IToolpathStrategy
+    private sealed record FakeStrategy(string Id, string DisplayName) : IToolpathStrategy
     {
         public Toolpath Generate(ToolpathContext context, IProgress<float>? progress, CancellationToken cancellation)
             => new();
@@ -20,19 +20,14 @@ public sealed class StrategyRegistryTests
         Assert.All(ids, id => Assert.True(RegistryRules.IsValidId(id), id));
         Assert.All(StrategyRegistry.All, s => Assert.False(string.IsNullOrWhiteSpace(s.DisplayName)));
         Assert.All(StrategyRegistry.All, s => Assert.Same(s, StrategyRegistry.GetById(s.Id)));
-        Assert.Equal(StrategyRegistry.All.Count,
-            StrategyRegistry.ForOperation(MillingOperation.Roughing).Count() + StrategyRegistry.ForOperation(MillingOperation.Finishing).Count());
     }
 
     [Fact]
-    public void Registry_HoldsExactlyTheFourBuiltInStrategies()
+    public void Registry_HoldsExactlyTheTwoRoutingStrategies()
     {
-        Assert.Equal(new[] { "raster-roughing", "raster-finishing", "contour-finishing", "layer-complete" }, StrategyRegistry.All.Select(s => s.Id));
-        Assert.Equal(
-            new[] { MillingOperation.Roughing, MillingOperation.Finishing, MillingOperation.Finishing, MillingOperation.Roughing },
-            StrategyRegistry.All.Select(s => s.Operation));
-        Assert.Equal(2, StrategyRegistry.ForOperation(MillingOperation.Roughing).Count());
-        Assert.Equal(2, StrategyRegistry.ForOperation(MillingOperation.Finishing).Count());
+        Assert.Equal(new[] { "z-layer-by-layer", "three-axis-precise" }, StrategyRegistry.All.Select(s => s.Id));
+        Assert.Equal(new[] { "Z layer by layer", "3 axis precise" }, StrategyRegistry.All.Select(s => s.DisplayName));
+        Assert.Equal(MillingProject.DefaultRoutingStrategyId, StrategyRegistry.All[0].Id);
     }
 
     [Fact]
@@ -44,7 +39,7 @@ public sealed class StrategyRegistryTests
     }
 
     [Theory]
-    [InlineData("raster-roughing", true)]
+    [InlineData("z-layer-by-layer", true)]
     [InlineData("a", true)]
     [InlineData("contour2", true)]
     [InlineData("Raster", false)]
@@ -63,18 +58,18 @@ public sealed class StrategyRegistryTests
     {
         var good = new IToolpathStrategy[]
         {
-            new FakeStrategy("one", "One", MillingOperation.Roughing),
-            new FakeStrategy("two-b", "Two", MillingOperation.Finishing),
+            new FakeStrategy("one", "One"),
+            new FakeStrategy("two-b", "Two"),
         };
         Assert.Same(good, RegistryRules.Validate(good, s => s.Id, s => s.DisplayName, "strategy"));
 
-        var duplicate = new IToolpathStrategy[] { good[0], new FakeStrategy("one", "Again", MillingOperation.Finishing) };
+        var duplicate = new IToolpathStrategy[] { good[0], new FakeStrategy("one", "Again") };
         Assert.Contains("Duplicate", Assert.Throws<InvalidOperationException>(() => RegistryRules.Validate(duplicate, s => s.Id, s => s.DisplayName, "strategy")).Message);
 
-        var malformed = new IToolpathStrategy[] { new FakeStrategy("Bad Id", "Bad", MillingOperation.Roughing) };
+        var malformed = new IToolpathStrategy[] { new FakeStrategy("Bad Id", "Bad") };
         Assert.Contains("Invalid", Assert.Throws<InvalidOperationException>(() => RegistryRules.Validate(malformed, s => s.Id, s => s.DisplayName, "strategy")).Message);
 
-        var unnamed = new IToolpathStrategy[] { new FakeStrategy("ok", " ", MillingOperation.Roughing) };
+        var unnamed = new IToolpathStrategy[] { new FakeStrategy("ok", " ") };
         Assert.Contains("display name", Assert.Throws<InvalidOperationException>(() => RegistryRules.Validate(unnamed, s => s.Id, s => s.DisplayName, "strategy")).Message);
     }
 
@@ -83,8 +78,8 @@ public sealed class StrategyRegistryTests
     {
         var items = new IToolpathStrategy[]
         {
-            new FakeStrategy("one", "One", MillingOperation.Roughing),
-            new FakeStrategy("two", "Two", MillingOperation.Finishing),
+            new FakeStrategy("one", "One"),
+            new FakeStrategy("two", "Two"),
         };
         Assert.Same(items[1], RegistryRules.FindById(items, s => s.Id, "two", "strategy"));
         var ex = Assert.Throws<KeyNotFoundException>(() => RegistryRules.FindById(items, s => s.Id, "three", "strategy"));
