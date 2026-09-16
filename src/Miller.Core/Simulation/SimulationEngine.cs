@@ -10,9 +10,10 @@ public sealed record StepResult(Vector3 ToolPosition, DirtyRect Dirty, int Segme
 // RapidSampleSpacing so a listener can check them against the stock.
 public readonly record struct SimulationSample(int SegmentIndex, MoveKind Kind, Vector3 Tip);
 
-// Walks the toolpath by time: each segment is covered at its own rate (mm/min), feed and plunge
-// parts sweep the stock, rapids remove nothing. Steps compose: covering a segment in parts gives
-// the same stock as covering it at once because every sweep samples all cells on its path.
+// Walks the toolpath by time or by distance: each segment is covered at its own rate (mm/min),
+// feed and plunge parts sweep the stock, rapids remove nothing. Steps compose: covering a segment
+// in parts gives the same stock as covering it at once because every sweep samples all cells on
+// its path. SeekTo covers forward only; a position behind the current one needs Reset first.
 public sealed class SimulationEngine
 {
     private readonly Toolpath _toolpath;
@@ -21,6 +22,7 @@ public sealed class SimulationEngine
     private int _index;
     private float _covered;
     private float _doneLength;
+    private double _doneSeconds;
 
     public SimulationEngine(Toolpath toolpath, HeightMap stock, ToolProfile profile)
     {
@@ -52,6 +54,14 @@ public sealed class SimulationEngine
 
     public float Progress => _totalLength > 0 ? Math.Clamp((_doneLength + _covered) / _totalLength, 0f, 1f) : (IsFinished ? 1f : 0f);
 
+    public float TotalLength => _totalLength;
+
+    // Path length behind the tool, in mm.
+    public float CoveredLength => _doneLength + _covered;
+
+    // Simulated seconds the covered path takes at the segment rates.
+    public double ElapsedSeconds => _doneSeconds + (IsFinished ? 0 : _covered / (_toolpath.Segments[_index].FeedRate / 60f));
+
     // Rapids are checked at least once per cutter radius, and never coarser than a cell.
     public float RapidSampleSpacing => MathF.Max(_profile.CellSize, _profile.Tool.CutterRadius);
 
@@ -70,9 +80,7 @@ public sealed class SimulationEngine
             {
                 dirty = dirty.Union(Cover(segment, _covered, length));
                 remaining -= timeToFinish;
-                _doneLength += length;
-                _index++;
-                _covered = 0;
+                Complete(segment);
             }
             else
             {
@@ -87,6 +95,41 @@ public sealed class SimulationEngine
     }
 
     public StepResult RunToEnd() => Step(double.PositiveInfinity);
+
+    // Covers the path up to the given length from the start (clamped to the total); the position
+    // must not lie behind the tool.
+    public StepResult SeekTo(float length)
+    {
+        var target = Math.Clamp(length, 0f, _totalLength);
+        if (target < CoveredLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(length), length, $"Seek target lies behind the covered length {CoveredLength}; reset the engine first.");
+        }
+
+        var dirty = DirtyRect.Empty;
+        while (!IsFinished)
+        {
+            var segment = _toolpath.Segments[_index];
+            var end = _doneLength + segment.Length;
+            if (end <= target)
+            {
+                dirty = dirty.Union(Cover(segment, _covered, segment.Length));
+                Complete(segment);
+                continue;
+            }
+
+            var to = target - _doneLength;
+            if (to > _covered)
+            {
+                dirty = dirty.Union(Cover(segment, _covered, to));
+                _covered = to;
+            }
+
+            break;
+        }
+
+        return new StepResult(ToolPosition, dirty, _index, IsFinished);
+    }
 
     // Whole toolpath, checking the token once per segment.
     public StepResult RunToEnd(CancellationToken cancellation)
@@ -117,7 +160,16 @@ public sealed class SimulationEngine
         _index = 0;
         _covered = 0;
         _doneLength = 0;
+        _doneSeconds = 0;
         ToolPosition = StartPosition();
+    }
+
+    private void Complete(ToolpathSegment segment)
+    {
+        _doneLength += segment.Length;
+        _doneSeconds += segment.Length / (segment.FeedRate / 60f);
+        _index++;
+        _covered = 0;
     }
 
     private Vector3 StartPosition() => _toolpath.Count > 0 ? _toolpath.Segments[0].Start : Vector3.Zero;

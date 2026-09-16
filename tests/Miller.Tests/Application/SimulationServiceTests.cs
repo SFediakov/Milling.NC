@@ -190,4 +190,54 @@ public sealed class SimulationServiceTests
         Assert.Null(service.Stock);
         Assert.Null(service.Result);
     }
+    [Fact]
+    public void SeekTo_ForwardSweepsInPlace_BackwardReplaysOnAFreshStock()
+    {
+        var result = Result();
+        var service = Loaded(result);
+        service.Play();
+        var stockBefore = service.Stock;
+        var half = service.SeekTo(0.5f);
+        Assert.False(service.IsPlaying);
+        Assert.Same(stockBefore, service.Stock);
+        Assert.Equal(0.5f, service.Progress, 3);
+        Assert.Equal(0.5f, half.Progress, 3);
+        Assert.False(half.Dirty.IsEmpty);
+        Assert.True(service.ElapsedSimulated > 0);
+
+        var quarter = service.SeekTo(0.25f);
+        Assert.NotSame(stockBefore, service.Stock);
+        Assert.Equal(0.25f, service.Progress, 3);
+        Assert.False(quarter.Finished);
+
+        // Same stock, events and time as a service that only ever went to a quarter.
+        var direct = Loaded(result);
+        direct.SeekTo(0.25f);
+        Assert.Equal(direct.Stock!.Z, service.Stock!.Z);
+        Assert.Equal(direct.Events.Count, service.Events.Count);
+        Assert.Equal(direct.ElapsedSimulated, service.ElapsedSimulated, 6);
+        Assert.Equal(direct.ToolPosition, service.ToolPosition);
+
+        // And the same as stepping by time to that point.
+        var stepped = Loaded(result);
+        stepped.Play();
+        stepped.StepOnce(direct.ElapsedSimulated);
+        Assert.Equal(stepped.Stock!.Z, service.Stock.Z);
+
+        var end = service.SeekTo(1f);
+        Assert.True(end.Finished);
+        Assert.True(service.IsFinished);
+        var ran = Loaded(result);
+        ran.RunToEnd();
+        Assert.Equal(ran.Stock!.Z, service.Stock.Z);
+        Assert.Equal(ran.Events.Count, service.Events.Count);
+
+        var start = service.SeekTo(0f);
+        Assert.Equal(0f, service.Progress);
+        Assert.Equal(0, service.ElapsedSimulated);
+        Assert.Empty(service.Events);
+        Assert.Equal(result.Stock.Map.Z, service.Stock!.Z);
+        Assert.Equal(0, start.SegmentsCompleted);
+        Assert.Throws<InvalidOperationException>(() => new SimulationService().SeekTo(0.5f));
+    }
 }

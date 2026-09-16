@@ -29,6 +29,17 @@ public sealed class SimulationClock
         ElapsedSimulated = 0;
     }
 
+    // Simulated time of a position the engine was moved to; the play state stays.
+    public void Seek(double elapsedSimulated)
+    {
+        if (!(elapsedSimulated >= 0))
+        {
+            throw new ArgumentOutOfRangeException(nameof(elapsedSimulated), elapsedSimulated, "Elapsed simulated time must be zero or positive.");
+        }
+
+        ElapsedSimulated = elapsedSimulated;
+    }
+
     // Simulated seconds covered by realSeconds of wall time; 0 while paused or for a negative input.
     public double Advance(double realSeconds)
     {
