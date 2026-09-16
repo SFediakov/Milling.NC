@@ -28,6 +28,10 @@ public sealed record PipelineResult(
     public float SafeZ => Stock.StockTop + Parameters.SafeHeight;
 
     public CuttingParameters Parameters { get; init; } = CuttingParameters.Default();
+
+    // What stands after the roughing besides the model (cut scope): the stock surface over cells never
+    // cut, the terrace level over trench cells, NaN where only the model constrains the tool.
+    public HeightMap Standing { get; init; } = new(0, 0, 1, 1, 1, float.NaN);
 }
 
 // Runs the stages of docs/ARCHITECTURE.md 5.1 in order; the linked toolpath is simplified to vectors
@@ -104,6 +108,9 @@ public sealed class PipelineService
         // remaining material (closing of the tip map), rounded up to the roughing level it stands at
         // until the pass that reaches it, since neighbours are cut level by level. A raised tip leaves
         // more, so iterate until the effective tip settles; limits only rise, so the loop is bounded.
+        // The stock a narrower cut scope leaves standing is not part of this: the separation region
+        // terraces its trench so the head clears that stock by construction, and feeding it back here
+        // would widen the model region without end.
         var effective = tip;
         HeightMap limit;
         for (var iteration = 1; ; iteration++)
@@ -123,8 +130,17 @@ public sealed class PipelineService
         var headLimited = HeadClearance.HeadLimitedMask(tip, limit, p.Tolerance);
 
         reporter.Begin(6);
-        var plan = Slicer.Build(effective, stock.Map, p);
-        var context = new ToolpathContext(model, tip, effective, limit, stock.Map, plan, project.Tool, profile, p, stock.StockTop);
+        var sliced = Slicer.Build(effective, stock.Map, p);
+        var scoped = project.CutScope switch
+        {
+            CutScope.Everything => SeparationRegion.Everything(sliced, effective),
+            CutScope.Separation => SeparationRegion.Build(sliced, effective, stock.Map, project.Tool, p, stock.StockTop, floor),
+            _ => throw new ArgumentException($"Unknown cut scope {project.CutScope}.", nameof(project)),
+        };
+        var plan = scoped.Plan;
+        // Strategies stay above the standing stock as well as above the model.
+        var strategyTip = HeadClearance.ApplyHeadLimit(effective, scoped.Standing);
+        var context = new ToolpathContext(model, tip, strategyTip, limit, stock.Map, plan, project.Tool, profile, p, stock.StockTop);
         cancellation.ThrowIfCancellationRequested();
 
         reporter.Begin(7);
@@ -136,7 +152,7 @@ public sealed class PipelineService
         cancellation.ThrowIfCancellationRequested();
 
         reporter.Begin(9);
-        var toolpath = ToolpathSimplifier.Simplify(Join(roughingPath, finishingPath, p), effective, p.Tolerance);
+        var toolpath = ToolpathSimplifier.Simplify(Join(roughingPath, finishingPath, p), strategyTip, p.Tolerance);
         cancellation.ThrowIfCancellationRequested();
 
         reporter.Begin(10);
@@ -146,6 +162,7 @@ public sealed class PipelineService
         return new PipelineResult(machineMesh, stock, model, tip, effective, limit, headLimited, plan, toolpath, statistics, profile, floor, p.Tolerance)
         {
             Parameters = p,
+            Standing = scoped.Standing,
         };
     }
 

@@ -24,4 +24,7 @@ public sealed class SlicePlan
     public IEnumerable<MillingStep> RoughingSteps => Steps.Where(s => s.Operation == MillingOperation.Roughing);
 
     public MillingStep? FinishingStep => Steps.FirstOrDefault(s => s.Operation == MillingOperation.Finishing);
+
+    // Cells the finishing strategies cover; every material cell unless the cut scope narrowed it.
+    public bool[,] FinishingMask => (FinishingStep ?? throw new InvalidOperationException("The plan has no finishing step.")).Mask;
 }

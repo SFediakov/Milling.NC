@@ -93,6 +93,10 @@ public static class Slicer
         }
     }
 
+    // A tip within LevelTolerance above the level counts as on it, the same slack CeilToLevel uses:
+    // rasterized heights carry float rounding (a 30 top reads 30.000002, a head limit from it
+    // 18.000002), and a cell excluded here would be left one level higher than the head limit
+    // assumes, so the head would hit it.
     private static bool[,] RoughingMask(HeightMap tip, HeightMap stock, float level)
     {
         var mask = new bool[tip.Width, tip.Height];
@@ -102,7 +106,7 @@ public static class Slicer
             {
                 var t = tip[i, j];
                 var s = stock[i, j];
-                mask[i, j] = !float.IsNaN(t) && !float.IsNaN(s) && t <= level && s > level;
+                mask[i, j] = !float.IsNaN(t) && !float.IsNaN(s) && t <= level + LevelTolerance && s > level;
             }
         }
 
