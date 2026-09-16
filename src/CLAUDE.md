@@ -262,3 +262,28 @@
   fresh stock clone first, so the view model re-uploads the stock map after every seek exactly as
   it does after Stop. The clock is paused before the background sweep and gets the engine's
   elapsed time afterwards; resume only when the seek did not land on the end.
+- The plateau model judges a point on a grid line by whichever neighbouring cell CellOf (floor)
+  returns, and a corner point by the +x, +y cell. A surface polyline that lifts a crossing to the
+  two cells it separates still gouges at a corner crossing: the DDA steps diagonally from cell
+  (i, j) to (i + 1, j + 1) and the corner point is judged by that cell or one of the two skipped
+  ones. Every crossing is lifted to all cells touching the point (two at an edge, four at a
+  corner) with a small epsilon, so the checker and the polyline agree on every sample.
+- Douglas-Peucker splits at the farthest vertex: on a long collinear stretch whose lead-in and
+  lead-out deviate, every interior vertex is at the same distance and float noise picks one in
+  the middle, which leaves two chords for one line. A merge pass over the kept vertices (drop a
+  vertex when its neighbours' chord holds every vertex between and is clear) restores one chord.
+- A majority reach map with a ball tip votes with model - dz per cell: over a flat top the edge
+  cells (large dz) outvote the center and the floor lands one dz below the top, and beside a
+  floor the edge values fall below the stock floor. The map is clamped at the floor; the dimple is
+  a property of the confirmed rule, not a bug, and is documented in the guide.
+- The route solver's local search needs a lower bound before any exact trace: with a rugged
+  surface the bound is loose and every candidate move traces the free edge, which held
+  throughput at about 3 M evaluations per second; a direct-mapped pair-cost cache doubled it
+  because the same free edges are examined again and again while the search moves around them.
+  On flat levels the bound is exact and the search runs at about 20 M per second.
+- A golden .nc regenerated after `dotnet build` is not what `dotnet test --no-build` compares
+  against: the test reads the copy in the output directory (CopyToOutputDirectory), so build the
+  test project again after regenerating a golden file or the mismatch looks like nondeterminism.
+- The reach map's quickselect over 113 tops per position runs the 300 x 300 heart grid in 0.12 s;
+  Span.Sort per position took 0.4 s and, under parallel test load, more than the 2 s the timing
+  test allows.
