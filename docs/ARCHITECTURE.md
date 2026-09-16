@@ -232,6 +232,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | Services | `IFileDialogService.cs`, `FileDialogService.cs` | Open/save dialogs via Avalonia `StorageProvider` |
 | Services | `ErrorDialogService.cs` | Shows exceptions from services; writes to `LogService` |
 | Services | `UiTimer.cs` | 60 Hz `DispatcherTimer` driving `SimulationService.Advance` |
+| Services | `GpuPreference.cs` | Registers the executable for the high performance GPU in the user's DirectX graphics preferences when no entry exists (Windows only; the Linux launchers export `DRI_PRIME=1`) |
 | Converters | `LogSliderConverter.cs` | Slider position <-> speed factor (logarithmic) |
 | Assets | `Icons/miller.ico`, `Icons/miller.png` | Application icon |
 
@@ -335,6 +336,8 @@ file test in `tests/Miller.Tests/Golden/`.
 - Linux start file: `dist/linux-x64/Miller.sh` (executable bit set by `build.sh`).
 - Root launchers `Miller.cmd` (Windows) and `Miller.sh` (Linux, Git Bash) run the published
   binary from `dist/` with the given arguments and refuse with a hint when it is not built.
+  `Miller.cmd` starts the window detached so its console closes; a `--` command runs in the
+  console and waits for the result.
 - The Linux build also runs on Windows through WSLg; this is not the primary
   path, only a consequence of G1.
 - The Linux build is the same `bash build.sh` on a Linux machine with the .NET 10

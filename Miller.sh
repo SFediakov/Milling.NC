@@ -4,7 +4,7 @@
 root="$(dirname "$(readlink -f "$0")")"
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) app="$root/dist/win-x64/Miller.exe" ;;
-  *) app="$root/dist/linux-x64/Miller" ;;
+  *) app="$root/dist/linux-x64/Miller"; export DRI_PRIME=1 ;;
 esac
 if [ ! -x "$app" ]; then
   echo "Miller.sh: $app not found. Run 'bash build.sh' first." >&2

@@ -50,6 +50,7 @@ public partial class App : Avalonia.Application
             timer.Start();
             desktop.Exit += (_, _) => timer.Dispose();
             log.Info($"started {Program.AppVersion}");
+            RegisterGpuPreference(log);
 
             // An STL path on the command line opens that file once the window is up.
             var startupStl = desktop.Args?.FirstOrDefault(a => a.EndsWith(".stl", StringComparison.OrdinalIgnoreCase));
@@ -60,5 +61,25 @@ public partial class App : Avalonia.Application
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    // The registry entry only helps machines with two GPUs; a refused write is logged, not fatal.
+    private static void RegisterGpuPreference(LogService log)
+    {
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(exe))
+        {
+            log.Error("GPU preference skipped: the process path is unknown", null);
+            return;
+        }
+
+        try
+        {
+            log.Info($"GPU preference for {exe}: {GpuPreference.EnsureHighPerformance(exe)}");
+        }
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException or InvalidOperationException)
+        {
+            log.Error($"GPU preference for {exe} not written", ex);
+        }
     }
 }
