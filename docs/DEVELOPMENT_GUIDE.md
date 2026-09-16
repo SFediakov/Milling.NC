@@ -319,6 +319,13 @@ Uncuttable classification (`UncuttableRegions`):
   at the level below. The coverage of "3 axis precise" is the model region and
   the innermost trench; the standing stock is part of the tip map the strategies
   stay above.
+- Material islands (`MillingProject.MinIslandVolume`, separation only): standing
+  stock the trench encloses on all sides (it touches neither the stock border
+  nor the outside of a cylinder) is an island; its volume is what milling it
+  out removes (standing height minus reach floor over its cells, terraces
+  included). An island below the value is milled out like the unrestricted plan
+  would; 0 keeps every island; the outer frame is never removed. The heart
+  pendant's loop encloses 51 mm3.
 - Nodes (`NodeLattice`): the tool positions a route visits are the region's
   cells on a square lattice spaced by the stepover (`Stepover` for the levels,
   `FinishingStepover` for "3 axis precise"; the first and last grid line always
@@ -1483,6 +1490,14 @@ check that decides done.
 - Input: user request (free 3-axis movement over the map, fastest route)
 - Output: one route over the coverage lattice plus step cells at their tip height; `SurfacePath` lifts a crossing to every plateau touching it (a corner crossing touches four cells, which the plateau model judges by one of them)
 - Acceptance: the bump plate is followed without level quantization and without gouge; every coverage cell ends at its floor; wall cells are nodes; deterministic; the user's heart: 6.1 min estimated, zero gouge violations and zero events
+- Status: done
+
+#### T-121 Material islands in the separation scope
+- Depends on: T-113
+- Files: `src/Miller.Core/Slicing/MaterialIslands.cs`, `src/Miller.Core/Slicing/SeparationRegion.cs`, `src/Miller.Core/Setup/MillingProject.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.Application/Services/PipelineService.cs`, `src/Miller.App/ViewModels/StrategySelectionViewModel.cs`, `src/Miller.App/Views/StrategySelectionView.axaml`, tests
+- Input: user request (a volume in mm3; islands of standing stock smaller than it are milled out even in separation)
+- Output: `MinIslandVolume` on the project (default 0, validated non-negative as `Strategy.MinIslandVolume`), `MaterialIslands.Find` and `RemoveBelow` applied at the end of `SeparationRegion.Build`, `ScopedPlan.MilledIslands`, a field under Cut scope enabled for Separation
+- Acceptance: synthetic ring: one island of core plus terrace with the exact volume, the frame excluded, a gap or a no-stock cell turns the island into frame; a square ring model keeps its hole island at 0 and mills it out above its volume (hole floor at the stock bottom, corners standing, zero events); threshold 0 leaves every fixture unchanged; the user's heart loop (51 mm3) is milled out at 100
 - Status: done
 
 ### M8 Packaging and release
