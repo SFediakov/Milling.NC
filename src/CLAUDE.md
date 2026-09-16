@@ -287,3 +287,10 @@
 - The reach map's quickselect over 113 tops per position runs the 300 x 300 heart grid in 0.12 s;
   Span.Sort per position took 0.4 s and, under parallel test load, more than the 2 s the timing
   test allows.
+- Settings panels only see validator messages whose field starts with their prefix ("Tool.",
+  "Parameters.", "Strategy."), so a root-level project value edited on the Strategy tab must be
+  reported as "Strategy.<Name>" or its error never reaches the panel.
+- Under the majority reach map the tool axis stays inside a hole and reaches its wall lines; the
+  cut-back into the walls happens through the footprint, not by moving the axis outward. An
+  island inside a 20 x 20 hole is therefore the hole minus the one-cell trench band, not the hole
+  widened by the cutter radius.
