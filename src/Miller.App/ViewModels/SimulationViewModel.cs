@@ -5,9 +5,10 @@ using Miller.Application.Services;
 
 namespace Miller.App.ViewModels;
 
-// Play, pause, stop, step and run to end with enable rules per state, the speed factor shared by
-// slider and text box and persisted in the settings, progress, simulated time and the collision
-// events. The menu binds to the same commands, so the rules exist once.
+// Play, pause, stop, step, run to end and seek (a press on the progress bar) with enable rules per
+// state, the speed factor shared by slider and text box and persisted in the settings, progress,
+// simulated time and the collision events. The menu binds to the same commands, so the rules exist
+// once.
 public sealed partial class SimulationViewModel : ViewModelBase
 {
     public const double StepSeconds = 1.0;
@@ -17,6 +18,7 @@ public sealed partial class SimulationViewModel : ViewModelBase
     public const string StoppedStatus = "Simulation stopped";
     public const string FinishedStatus = "Simulation finished";
     public const string RunningStatus = "Simulating the whole toolpath";
+    public const string SeekingStatus = "Moving the simulation";
     public const string NotLoadedText = "Generate a toolpath to simulate it.";
     public const string SpeedFormat = "0.###";
     public const string SpeedInvalidMessage = "Speed must be a number between 0.1 and 1000.";
@@ -42,6 +44,9 @@ public sealed partial class SimulationViewModel : ViewModelBase
     private bool _isRunningToEnd;
 
     [ObservableProperty]
+    private bool _isSeeking;
+
+    [ObservableProperty]
     private string? _speedError;
 
     public SimulationViewModel(SimulationService simulation, SettingsService settings, ViewportViewModel viewport)
@@ -63,8 +68,13 @@ public sealed partial class SimulationViewModel : ViewModelBase
 
     public bool IsFinished => _simulation.IsFinished;
 
+    // A sweep on another thread is in progress (run to end or seek): generation and the other
+    // simulation commands wait for it.
+    public bool IsWorking => IsRunningToEnd || IsSeeking;
+
     public string StateText => !IsLoaded ? NotLoadedText
         : IsRunningToEnd ? RunningStatus
+        : IsSeeking ? SeekingStatus
         : IsFinished ? FinishedStatus
         : IsPlaying ? PlayingStatus
         : Progress > 0 ? PausedStatus : ReadyStatus;
@@ -101,11 +111,13 @@ public sealed partial class SimulationViewModel : ViewModelBase
         }
     }
 
-    private bool CanPlay => IsLoaded && !IsPlaying && !IsFinished && !IsRunningToEnd;
+    private bool CanPlay => IsLoaded && !IsPlaying && !IsFinished && !IsWorking;
 
-    private bool CanPause => IsPlaying;
+    private bool CanPause => IsPlaying && !IsWorking;
 
-    private bool CanStop => IsLoaded && !IsRunningToEnd;
+    private bool CanStop => IsLoaded && !IsWorking;
+
+    private bool CanSeek => IsLoaded && !IsWorking;
 
     [RelayCommand(CanExecute = nameof(CanPlay))]
     private void Play()
@@ -165,6 +177,40 @@ public sealed partial class SimulationViewModel : ViewModelBase
         }
     }
 
+    // A press on the progress bar at a fraction of its width. The sweep runs off the UI thread like
+    // run to end; a simulation that was playing continues from the new position unless it is the end.
+    [RelayCommand(CanExecute = nameof(CanSeek))]
+    private async Task SeekAsync(float fraction)
+    {
+        var resume = IsPlaying;
+        _simulation.Pause();
+        IsSeeking = true;
+        PlaybackStarted?.Invoke(this, EventArgs.Empty);
+        Announce(SeekingStatus);
+        Refresh();
+        try
+        {
+            var snapshot = await Task.Run(() => _simulation.SeekTo(fraction));
+            ShowStock();
+            _finishAnnounced = false;
+            Apply(snapshot);
+            if (resume && !snapshot.Finished)
+            {
+                _simulation.Play();
+                Announce(PlayingStatus);
+            }
+            else if (!snapshot.Finished)
+            {
+                Announce(PausedStatus);
+            }
+        }
+        finally
+        {
+            IsSeeking = false;
+            Refresh();
+        }
+    }
+
     // Space in the viewport.
     public void TogglePlayPause()
     {
@@ -214,11 +260,16 @@ public sealed partial class SimulationViewModel : ViewModelBase
         StopCommand.NotifyCanExecuteChanged();
         StepCommand.NotifyCanExecuteChanged();
         RunToEndCommand.NotifyCanExecuteChanged();
+        SeekCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(IsLoaded));
         OnPropertyChanged(nameof(IsPlaying));
         OnPropertyChanged(nameof(IsFinished));
         OnPropertyChanged(nameof(StateText));
     }
+
+    partial void OnIsRunningToEndChanged(bool value) => OnPropertyChanged(nameof(IsWorking));
+
+    partial void OnIsSeekingChanged(bool value) => OnPropertyChanged(nameof(IsWorking));
 
     public static string FormatSeconds(double seconds)
         => string.Create(CultureInfo.InvariantCulture, $"{Math.Floor(seconds / 60):0}:{seconds % 60:00.0} min");

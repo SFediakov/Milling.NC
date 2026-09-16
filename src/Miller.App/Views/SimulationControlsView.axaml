@@ -28,13 +28,13 @@
       <TextBlock Classes="validation" Text="{Binding SpeedError}" IsVisible="{Binding SpeedError, Converter={x:Static ObjectConverters.IsNotNull}}" TextWrapping="Wrap" />
 
       <TextBlock Classes="header" Text="Progress" />
-      <ProgressBar Name="SimulationProgress" Minimum="0" Maximum="1" Value="{Binding Progress}" Height="14" />
+      <ProgressBar Name="SimulationProgress" Minimum="0" Maximum="1" Value="{Binding Progress}" Height="14" Cursor="Hand" />
       <TextBlock Classes="label" Text="Simulated time" />
       <TextBlock Name="ElapsedText" Text="{Binding ElapsedText}" />
       <TextBlock Classes="label" Text="Collision events" />
       <TextBlock Name="CollisionText" Text="{Binding CollisionCount}" />
       <TextBlock Classes="warning" Name="LastEventText" Text="{Binding LastEventText}" TextWrapping="Wrap" />
-      <TextBlock Text="Space in the viewport toggles play and pause." TextWrapping="Wrap" Margin="0,8,0,0" />
+      <TextBlock Text="A press on the progress bar moves the simulation to that point. Space in the viewport toggles play and pause." TextWrapping="Wrap" Margin="0,8,0,0" />
     </StackPanel>
   </ScrollViewer>
 </UserControl>

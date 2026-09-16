@@ -141,6 +141,53 @@ public sealed class SimulationViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task Seek_MovesTheSimulation_ResumesPlaybackWhenPlaying_AndStaysPausedOtherwise()
+    {
+        var vm = await LoadedAsync();
+        var panel = vm.SimulationPanel;
+        Assert.True(panel.SeekCommand.CanExecute(0.5f));
+
+        await panel.SeekCommand.ExecuteAsync(0.5f);
+        Assert.False(panel.IsSeeking);
+        Assert.Equal(0.5f, panel.Progress, 3);
+        Assert.False(panel.IsPlaying);
+        Assert.Equal(SimulationViewModel.PausedStatus, panel.StateText);
+        Assert.Equal(SimulationViewModel.PausedStatus, vm.StatusText);
+        Assert.NotEqual(SimulationViewModel.FormatSeconds(0), panel.ElapsedText);
+        Assert.Same(vm.Simulation.Stock, vm.Viewport.StockMap);
+        Assert.Equal(vm.Simulation.SegmentsCompleted, vm.Viewport.ToolpathProgressIndex);
+
+        panel.PlayCommand.Execute(null);
+        await panel.SeekCommand.ExecuteAsync(0.25f);
+        Assert.True(panel.IsPlaying);
+        Assert.Equal(0.25f, panel.Progress, 3);
+        Assert.Equal(SimulationViewModel.PlayingStatus, vm.StatusText);
+        Assert.Same(vm.Simulation.Stock, vm.Viewport.StockMap);
+
+        await panel.SeekCommand.ExecuteAsync(1f);
+        Assert.True(panel.IsFinished);
+        Assert.False(panel.IsPlaying);
+        Assert.Equal(1f, panel.Progress);
+        Assert.StartsWith(SimulationViewModel.FinishedStatus, vm.StatusText);
+        Assert.False(panel.PlayCommand.CanExecute(null));
+
+        await panel.SeekCommand.ExecuteAsync(0f);
+        Assert.Equal(0f, panel.Progress);
+        Assert.False(panel.IsFinished);
+        Assert.True(panel.PlayCommand.CanExecute(null));
+        Assert.True(vm.GenerateCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void Seek_IsDisabledWithoutAToolpath()
+    {
+        Directory.CreateDirectory(_root);
+        var vm = TestServices.MainWindowViewModel(_root, _dialogs, _errors);
+        Assert.False(vm.SimulationPanel.SeekCommand.CanExecute(0.5f));
+        Assert.False(vm.SimulationPanel.IsWorking);
+    }
+
+    [Fact]
     public async Task SpeedText_ClampsAndReportsInvalidInput_AndPersistsTheSetting()
     {
         var vm = await LoadedAsync();

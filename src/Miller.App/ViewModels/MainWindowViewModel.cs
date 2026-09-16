@@ -82,7 +82,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         SimulationPanel.StatusChanged += (_, status) => StatusText = status;
         SimulationPanel.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(SimulationViewModel.IsRunningToEnd))
+            if (e.PropertyName == nameof(SimulationViewModel.IsWorking))
             {
                 GenerateCommand.NotifyCanExecuteChanged();
             }
@@ -162,7 +162,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public string Title => $"{App.WindowTitle} {AppVersion}{(Project.IsDirty ? " *" : string.Empty)}";
 
-    private bool CanGenerate => MeshImport.Matches(Project.Current) && !IsBusy && !SimulationPanel.IsRunningToEnd;
+    private bool CanGenerate => MeshImport.Matches(Project.Current) && !IsBusy && !SimulationPanel.IsWorking;
 
     [RelayCommand]
     private async Task OpenStlAsync()

@@ -91,6 +91,27 @@ public sealed class SimulationService
 
     public SimulationSnapshot StepOnce(double simSeconds) => Snapshot(Require().Step(simSeconds));
 
+    // Moves the simulation to a fraction of the path length. Forward from the current position the
+    // engine sweeps the part in between; backward it replays from a fresh stock, so events and the
+    // stock match a run that stopped there. The stock instance is new after a backward seek. Pauses
+    // first so a UI timer tick cannot step the engine while this runs on another thread.
+    public SimulationSnapshot SeekTo(float fraction)
+    {
+        var engine = Require();
+        _clock.Pause();
+        var target = Math.Clamp(fraction, 0f, 1f) * engine.TotalLength;
+        if (target < engine.CoveredLength)
+        {
+            ClearEvents();
+            Stock = Result!.Stock.Map.Clone();
+            engine.Reset(Stock);
+        }
+
+        var result = engine.SeekTo(target);
+        _clock.Seek(engine.ElapsedSeconds);
+        return Snapshot(result);
+    }
+
     // Pauses first so a UI timer tick cannot step the engine while this runs on another thread.
     public SimulationSnapshot RunToEnd()
     {
