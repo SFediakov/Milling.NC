@@ -48,6 +48,15 @@ public sealed class ProjectValidatorTests
     }
 
     [Fact]
+    public void MinIslandVolume_MustNotBeNegative()
+    {
+        AssertSingleError(p => p.MinIslandVolume = -1f, "Strategy.MinIslandVolume");
+        Assert.True(Validate(p => p.MinIslandVolume = 0f).IsValid);
+        Assert.True(Validate(p => p.MinIslandVolume = 250f).IsValid);
+        AssertSingleError(p => p.MinIslandVolume = float.NaN, "Strategy.MinIslandVolume");
+    }
+
+    [Fact]
     public void CutterLength_MustBePositive()
     {
         AssertSingleError(p => p.Tool.CutterLength = -1, "Tool.CutterLength");

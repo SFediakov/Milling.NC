@@ -70,6 +70,7 @@ public static class ProjectValidator
         Positive(errors, "Parameters.PlungeRate", p.PlungeRate);
         Positive(errors, "Parameters.RapidRate", p.RapidRate);
         Positive(errors, "Parameters.SpindleRpm", p.SpindleRpm);
+        NonNegative(errors, "Strategy.MinIslandVolume", project.MinIslandVolume);
 
         if (stock.Shape == StockShape.Box)
         {
@@ -133,6 +134,14 @@ public static class ProjectValidator
         if (!(value > 0))
         {
             errors.Add(new ValidationMessage(field, $"{field} must be greater than 0, got {F(value)}."));
+        }
+    }
+
+    private static void NonNegative(List<ValidationMessage> errors, string field, float value)
+    {
+        if (!(value >= 0))
+        {
+            errors.Add(new ValidationMessage(field, $"{field} must be 0 or greater, got {F(value)}."));
         }
     }
 

@@ -22,6 +22,10 @@
       <TextBlock Classes="label" Text="Cut scope" />
       <ComboBox Name="CutScopeBox" ItemsSource="{x:Static vm:StrategySelectionViewModel.CutScopes}" SelectedItem="{Binding CutScope}" Width="260" HorizontalAlignment="Left" />
       <TextBlock Text="Everything clears all reachable stock. Separation cuts the model surface and a trench that frees it, terraced where the head needs room." TextWrapping="Wrap" />
+      <TextBlock Classes="label" Text="Material islands: keep islands of at least (mm3)" />
+      <TextBox Name="MinIslandVolumeBox" Classes="numeric" Text="{Binding MinIslandVolume}" IsEnabled="{Binding IsSeparation}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding MinIslandVolumeError}" IsVisible="{Binding MinIslandVolumeError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Text="Separation only: stock the trench encloses on all sides is an island. An island smaller than this volume is milled out; 0 keeps every island." TextWrapping="Wrap" />
 
       <TextBlock Classes="label" Text="Post-processor" />
       <ComboBox Name="PostProcessorBox" ItemsSource="{Binding PostProcessors}" SelectedItem="{Binding PostProcessor}" Width="260" HorizontalAlignment="Left">

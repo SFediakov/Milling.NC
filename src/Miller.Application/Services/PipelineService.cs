@@ -133,7 +133,7 @@ public sealed class PipelineService
         var scoped = project.CutScope switch
         {
             CutScope.Everything => SeparationRegion.Everything(sliced, effective),
-            CutScope.Separation => SeparationRegion.Build(sliced, effective, stock.Map, project.Tool, p, stock.StockTop, floor),
+            CutScope.Separation => SeparationRegion.Build(sliced, effective, stock.Map, project.Tool, p, stock.StockTop, floor, project.MinIslandVolume),
             _ => throw new ArgumentException($"Unknown cut scope {project.CutScope}.", nameof(project)),
         };
         var plan = scoped.Plan;
