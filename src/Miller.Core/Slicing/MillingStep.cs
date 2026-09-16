@@ -1,20 +1,13 @@
 namespace Miller.Core.Slicing;
 
-public enum MillingOperation
-{
-    Roughing,
-    Finishing,
-}
-
-// One step of the job: a Z level, the operation and the cells that take part. Mask is indexed
+// One Z level of the job and the cells whose tool position takes part in it. Mask is indexed
 // [i, j] like the heightmaps it was derived from.
 public sealed class MillingStep
 {
-    public MillingStep(float level, MillingOperation operation, bool[,] mask)
+    public MillingStep(float level, bool[,] mask)
     {
         ArgumentNullException.ThrowIfNull(mask);
         Level = level;
-        Operation = operation;
         Mask = mask;
         var count = 0;
         foreach (var cell in mask)
@@ -29,8 +22,6 @@ public sealed class MillingStep
     }
 
     public float Level { get; }
-
-    public MillingOperation Operation { get; }
 
     public bool[,] Mask { get; }
 

@@ -3,10 +3,10 @@ using Miller.Core.Setup;
 
 namespace Miller.Core.Slicing;
 
-// Decomposes the job into steps. Roughing levels are z_k = stockTop - k * Stepdown while z_k is above
-// the lowest effective tip; the last level is clamped to that lowest tip. A cell takes part in a
-// roughing level when the cutter may sit at that level there (effectiveTip <= level) and the stock
-// still has material above it (stock > level). One finishing step always follows.
+// Decomposes the job into levels z_k = stockTop - k * Stepdown while z_k is above the lowest
+// effective tip; the last level is clamped to that lowest tip. A cell takes part in a level when
+// the tool may sit at that level there (effectiveTip <= level) and the stock still has material
+// above it (stock > level). The coverage mask holds every cell with an effective tip.
 public static class Slicer
 {
     public static SlicePlan Build(HeightMap effectiveTip, HeightMap stock, CuttingParameters parameters)
@@ -32,19 +32,18 @@ public static class Slicer
         }
 
         var steps = new List<MillingStep>();
-        foreach (var level in RoughingLevels(stockTop, lowest, parameters.Stepdown))
+        foreach (var level in Levels(stockTop, lowest, parameters.Stepdown))
         {
-            steps.Add(new MillingStep(level, MillingOperation.Roughing, RoughingMask(effectiveTip, stock, level)));
+            steps.Add(new MillingStep(level, LevelMask(effectiveTip, stock, level)));
         }
 
-        steps.Add(new MillingStep(lowest, MillingOperation.Finishing, MaterialMask(effectiveTip)));
-        return new SlicePlan(steps, lowest);
+        return new SlicePlan(steps, MaterialMask(effectiveTip), lowest);
     }
 
     // Float slack so a value sitting on a level is not lifted to the level above.
     public const float LevelTolerance = 1e-4f;
 
-    // Material is removed level by level, so a surface at z stands at the lowest roughing level that
+    // Material is removed level by level, so a surface at z stands at the lowest level that
     // is still at or above z until the pass that reaches z; z above the first level stays at the top.
     public static float CeilToLevel(float z, float stockTop, float stepdown)
     {
@@ -74,7 +73,7 @@ public static class Slicer
         return result;
     }
 
-    public static IEnumerable<float> RoughingLevels(float stockTop, float lowest, float stepdown)
+    public static IEnumerable<float> Levels(float stockTop, float lowest, float stepdown)
     {
         for (var k = 1; ; k++)
         {
@@ -97,16 +96,15 @@ public static class Slicer
     // rasterized heights carry float rounding (a 30 top reads 30.000002, a head limit from it
     // 18.000002), and a cell excluded here would be left one level higher than the head limit
     // assumes, so the head would hit it.
-    private static bool[,] RoughingMask(HeightMap tip, HeightMap stock, float level)
+    private static bool[,] LevelMask(HeightMap tip, HeightMap stock, float level)
     {
         var mask = new bool[tip.Width, tip.Height];
         for (var j = 0; j < tip.Height; j++)
         {
             for (var i = 0; i < tip.Width; i++)
             {
-                var t = tip[i, j];
                 var s = stock[i, j];
-                mask[i, j] = !float.IsNaN(t) && !float.IsNaN(s) && t <= level + LevelTolerance && s > level;
+                mask[i, j] = ReachMap.ReachableAt(tip[i, j], level) && !float.IsNaN(s) && s > level;
             }
         }
 

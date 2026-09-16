@@ -25,7 +25,6 @@ public static class TestContexts
         FeedRate = 800f,
         PlungeRate = 200f,
         RapidRate = 3000f,
-        Direction = MillingDirection.Zigzag,
     };
 
     public static ToolpathContext Build(Mesh mesh, StockDefinition stock, ToolDefinition tool, CuttingParameters parameters)
@@ -36,7 +35,7 @@ public static class TestContexts
         var model = MeshRasterizer.CreateGridFor(geometry.Bounds, parameters.CellSize, geometry.StockBottom);
         MeshRasterizer.Rasterize(machineMesh, model, geometry.StockBottom);
         var profile = ToolProfile.Create(tool, parameters.CellSize);
-        var tip = HeightMapDilation.ComputeTipMap(model, profile);
+        var tip = ReachMap.Compute(model, geometry.Map, profile, geometry.StockBottom);
         var limit = HeadClearance.ComputeHeadLimit(model, profile, tool.CutterLength);
         var effective = HeadClearance.ApplyHeadLimit(tip, limit);
         var plan = Slicer.Build(effective, geometry.Map, parameters);
