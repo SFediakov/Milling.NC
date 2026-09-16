@@ -100,8 +100,6 @@ public sealed class SettingsViewModelsTests : IDisposable
         _vm.Cutting.CellSize = 0.5f;
         Assert.Null(_vm.Cutting.CellSizeWarning);
 
-        _vm.Cutting.Direction = MillingDirection.OneWay;
-        Assert.Equal(MillingDirection.OneWay, _vm.Project.Current.Parameters.Direction);
         _vm.Cutting.SafeHeight = 0f;
         Assert.NotNull(_vm.Cutting.SafeHeightError);
     }
@@ -109,13 +107,12 @@ public sealed class SettingsViewModelsTests : IDisposable
     [Fact]
     public void Strategy_ListsTheRegistriesAndWritesIds()
     {
-        Assert.Equal(new[] { "raster-roughing", "layer-complete" }, _vm.Strategy.RoughingStrategies.Select(s => s.Id));
-        Assert.Equal(new[] { "raster-finishing", "contour-finishing" }, _vm.Strategy.FinishingStrategies.Select(s => s.Id));
+        Assert.Equal(new[] { "z-layer-by-layer", "three-axis-precise" }, StrategySelectionViewModel.Strategies.Select(s => s.Id));
         Assert.Equal(new[] { "grbl" }, _vm.Strategy.PostProcessors.Select(p => p.Id));
-        Assert.Equal("raster-finishing", _vm.Strategy.Finishing!.Id);
+        Assert.Equal("z-layer-by-layer", _vm.Strategy.Strategy!.Id);
 
-        _vm.Strategy.Finishing = StrategyRegistry.GetById("contour-finishing");
-        Assert.Equal("contour-finishing", _vm.Project.Current.FinishingStrategyId);
+        _vm.Strategy.Strategy = StrategyRegistry.GetById("three-axis-precise");
+        Assert.Equal("three-axis-precise", _vm.Project.Current.RoutingStrategyId);
         Assert.True(_vm.Project.IsDirty);
         Assert.Equal(StrategySelectionViewModel.NoToolpathText, _vm.Strategy.StatisticsText);
         Assert.Same(_vm.GenerateCommand, _vm.Strategy.GenerateCommand);

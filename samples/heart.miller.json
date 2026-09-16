@@ -1,5 +1,5 @@
 {
-  "SchemaVersion": 2,
+  "SchemaVersion": 3,
   "Models": [
     {
       "StlPath": "../Milling_Heart_V2.STL",
@@ -49,10 +49,8 @@
     "Stepdown": 2,
     "SafeHeight": 5,
     "CellSize": 0.2,
-    "Tolerance": 0.05,
-    "Direction": "Zigzag"
+    "Tolerance": 0.05
   },
-  "RoughingStrategyId": "raster-roughing",
-  "FinishingStrategyId": "raster-finishing",
+  "RoutingStrategyId": "z-layer-by-layer",
   "PostProcessorId": "grbl"
 }

@@ -22,7 +22,7 @@ public sealed class ProjectServiceTests : IDisposable
         var service = new ProjectService();
         Assert.Null(service.Path);
         Assert.False(service.IsDirty);
-        Assert.Equal(MillingProject.DefaultRoughingStrategyId, service.Current.RoughingStrategyId);
+        Assert.Equal(MillingProject.DefaultRoutingStrategyId, service.Current.RoutingStrategyId);
     }
 
     [Fact]

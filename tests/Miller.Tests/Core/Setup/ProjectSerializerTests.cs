@@ -57,10 +57,8 @@ public sealed class ProjectSerializerTests
             SafeHeight = 8,
             CellSize = 0.1f,
             Tolerance = 0.02f,
-            Direction = MillingDirection.OneWay,
         },
-        RoughingStrategyId = "custom-roughing",
-        FinishingStrategyId = "contour-finishing",
+        RoutingStrategyId = "three-axis-precise",
         PostProcessorId = "grbl",
     };
 
@@ -69,12 +67,14 @@ public sealed class ProjectSerializerTests
     {
         var project = MillingProject.Default();
 
-        Assert.Equal(2, MillingProject.CurrentSchemaVersion);
+        Assert.Equal(3, MillingProject.CurrentSchemaVersion);
         Assert.Equal(MillingProject.CurrentSchemaVersion, project.SchemaVersion);
         Assert.Empty(project.Models);
         Assert.Null(project.StlPath);
-        Assert.Equal(MillingProject.DefaultRoughingStrategyId, project.RoughingStrategyId);
-        Assert.Equal("raster-finishing", project.FinishingStrategyId);
+        Assert.Equal(MillingProject.DefaultRoutingStrategyId, project.RoutingStrategyId);
+        Assert.Equal("z-layer-by-layer", project.RoutingStrategyId);
+        Assert.Null(project.RoughingStrategyId);
+        Assert.Null(project.FinishingStrategyId);
         Assert.Equal("grbl", project.PostProcessorId);
 
         Assert.Equal(6f, project.Tool.CutterDiameter);
@@ -99,7 +99,7 @@ public sealed class ProjectSerializerTests
         Assert.Equal(5f, project.Parameters.SafeHeight);
         Assert.Equal(0.2f, project.Parameters.CellSize);
         Assert.Equal(0.05f, project.Parameters.Tolerance);
-        Assert.Equal(MillingDirection.Zigzag, project.Parameters.Direction);
+        Assert.Null(project.Parameters.Direction);
     }
 
     [Fact]
@@ -116,8 +116,10 @@ public sealed class ProjectSerializerTests
         Assert.Equal(new Vector3(1, 2, 3), model.Offset);
         Assert.Equal(15f, model.RotationZ);
         Assert.DoesNotContain("\"StlPath\": null", json);
-        Assert.Equal(original.RoughingStrategyId, copy.RoughingStrategyId);
-        Assert.Equal(original.FinishingStrategyId, copy.FinishingStrategyId);
+        Assert.DoesNotContain("RoughingStrategyId", json);
+        Assert.DoesNotContain("FinishingStrategyId", json);
+        Assert.DoesNotContain("Direction", json);
+        Assert.Equal(original.RoutingStrategyId, copy.RoutingStrategyId);
         Assert.Equal(original.PostProcessorId, copy.PostProcessorId);
 
         Assert.Equal(original.Tool.Name, copy.Tool.Name);
@@ -158,7 +160,6 @@ public sealed class ProjectSerializerTests
         Assert.Equal(original.Parameters.SafeHeight, copy.Parameters.SafeHeight);
         Assert.Equal(original.Parameters.CellSize, copy.Parameters.CellSize);
         Assert.Equal(original.Parameters.Tolerance, copy.Parameters.Tolerance);
-        Assert.Equal(original.Parameters.Direction, copy.Parameters.Direction);
 
         Assert.Equal(json, ProjectSerializer.Serialize(copy));
     }
@@ -173,8 +174,8 @@ public sealed class ProjectSerializerTests
         Assert.Contains("\"Placement\": \"Explicit\"", json);
         Assert.Contains("\"MapX\": \"Y\"", json);
         Assert.Contains("\"OriginMode\": \"Custom\"", json);
-        Assert.Contains("\"Direction\": \"OneWay\"", json);
-        Assert.Contains("\"SchemaVersion\": 2", json);
+        Assert.Contains("\"RoutingStrategyId\": \"three-axis-precise\"", json);
+        Assert.Contains("\"SchemaVersion\": 3", json);
         Assert.Contains("\n", json);
         Assert.DoesNotContain("\"TipType\": 1", json);
     }
@@ -201,7 +202,7 @@ public sealed class ProjectSerializerTests
     [Fact]
     public void Deserialize_UnknownSchemaVersion_Throws()
     {
-        var json = ProjectSerializer.Serialize(MillingProject.Default()).Replace("\"SchemaVersion\": 2", "\"SchemaVersion\": 7");
+        var json = ProjectSerializer.Serialize(MillingProject.Default()).Replace("\"SchemaVersion\": 3", "\"SchemaVersion\": 7");
         var ex = Assert.Throws<InvalidDataException>(() => ProjectSerializer.Deserialize(json));
         Assert.Contains("7", ex.Message);
     }
@@ -219,7 +220,7 @@ public sealed class ProjectSerializerTests
     {
         var project = ProjectSerializer.Deserialize("{ \"SchemaVersion\": 1 }");
         Assert.Equal(6f, project.Tool.CutterDiameter);
-        Assert.Equal(MillingProject.DefaultRoughingStrategyId, project.RoughingStrategyId);
+        Assert.Equal(MillingProject.DefaultRoutingStrategyId, project.RoutingStrategyId);
     }
 
     [Fact]
@@ -231,6 +232,29 @@ public sealed class ProjectSerializerTests
         Assert.Equal("parts/heart.stl", model.StlPath);
         Assert.Equal(Vector3.Zero, model.Offset);
         Assert.Null(project.StlPath);
-        Assert.Throws<InvalidDataException>(() => ProjectSerializer.Deserialize("{ \"SchemaVersion\": 3 }"));
+        Assert.Throws<InvalidDataException>(() => ProjectSerializer.Deserialize("{ \"SchemaVersion\": 4 }"));
+        Assert.Throws<InvalidDataException>(() => ProjectSerializer.Deserialize("{ \"SchemaVersion\": 0 }"));
+    }
+
+    // A schema 2 file names a roughing and a finishing strategy and a milling direction; all three
+    // are dropped, the routing strategy is the default and nothing legacy is written back.
+    [Fact]
+    public void Deserialize_SchemaTwo_DropsTheStrategyPairAndTheDirection()
+    {
+        const string json = "{ \"SchemaVersion\": 2, \"RoughingStrategyId\": \"layer-complete\", \"FinishingStrategyId\": \"raster-finishing\", " +
+            "\"Parameters\": { \"Stepover\": 0.9, \"Direction\": \"OneWay\" }, \"CutScope\": \"Separation\" }";
+        var project = ProjectSerializer.Deserialize(json);
+        Assert.Equal(MillingProject.CurrentSchemaVersion, project.SchemaVersion);
+        Assert.Equal(MillingProject.DefaultRoutingStrategyId, project.RoutingStrategyId);
+        Assert.Null(project.RoughingStrategyId);
+        Assert.Null(project.FinishingStrategyId);
+        Assert.Null(project.Parameters.Direction);
+        Assert.Equal(0.9f, project.Parameters.Stepover);
+        Assert.Equal(CutScope.Separation, project.CutScope);
+        var written = ProjectSerializer.Serialize(project);
+        Assert.DoesNotContain("RoughingStrategyId", written);
+        Assert.DoesNotContain("FinishingStrategyId", written);
+        Assert.DoesNotContain("Direction", written);
+        Assert.Contains("\"SchemaVersion\": 3", written);
     }
 }
