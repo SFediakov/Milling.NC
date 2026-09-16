@@ -213,3 +213,18 @@
   analysis view off (SimulationViewModel.PlaybackStarted), and the analysis returns the simulation
   stock when its view is switched off, so the dirty-rectangle updates always target the map that
   the engine mutates.
+- Miller.exe is a GUI-subsystem binary: cmd waits for it inside a batch file, PowerShell's `&`
+  does not (no output, no exit code), so launcher behaviour is verified from a batch probe, not
+  from PowerShell. Inside a parenthesised cmd block `%ERRORLEVEL%` expands before the block runs;
+  `exit /b` without a code passes the app's code through. `start "" "%APP%" %*` detaches the
+  window so the console closes; a first argument starting with `--` keeps the console and waits.
+- Before a launcher check, list the running Miller processes: the check closes the instances it
+  finds from dist, and one was already open before the check ran.
+- Windows selects the GPU per executable path from the user's DirectX graphics preferences
+  (the key Settings > Display > Graphics writes). GpuPreference writes the high performance entry
+  only when none exists, because an existing entry is the user's own choice, and the choice
+  applies from the next process start. Registry tests use a root of their own
+  (`Software\MillerTests`) deleted as a tree; deleting only the value leaves empty keys behind.
+- A python patch script in a heredoc breaks twice on backslashes: the tool collapses doubled ones
+  and a Windows path such as `\Users` then turns into a unicode escape error. Scripts that carry
+  backslashes go to a file through the Write tool and use raw strings.
