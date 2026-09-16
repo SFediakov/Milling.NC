@@ -1,6 +1,6 @@
 namespace Miller.Core.Setup;
 
-// How much of the stock the roughing removes: everything the cutter can reach, or only the model
+// How much of the stock the levels remove: everything the cutter can reach, or only the model
 // surface plus the trench that frees the model from the surrounding stock (SeparationRegion).
 public enum CutScope
 {
@@ -11,12 +11,11 @@ public enum CutScope
 // Everything a .miller.json file contains.
 public sealed class MillingProject
 {
-    // Schema 2 holds a list of models; schema 1 files with one StlPath are migrated on load.
-    public const int CurrentSchemaVersion = 2;
-    public const int LegacySchemaVersion = 1;
-    // Layer complete clears the strip beside walls at every level, which the head limit relies on.
-    public const string DefaultRoughingStrategyId = "layer-complete";
-    public const string DefaultFinishingStrategyId = "raster-finishing";
+    // Schema 3 holds one routing strategy; schema 2 files with a roughing and a finishing strategy
+    // and a milling direction, and schema 1 files with one StlPath, are migrated on load.
+    public const int CurrentSchemaVersion = 3;
+    public const int OldestSchemaVersion = 1;
+    public const string DefaultRoutingStrategyId = "z-layer-by-layer";
     public const string DefaultPostProcessorId = "grbl";
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
@@ -35,9 +34,14 @@ public sealed class MillingProject
 
     public CuttingParameters Parameters { get; set; } = CuttingParameters.Default();
 
-    public string RoughingStrategyId { get; set; } = DefaultRoughingStrategyId;
+    public string RoutingStrategyId { get; set; } = DefaultRoutingStrategyId;
 
-    public string FinishingStrategyId { get; set; } = DefaultFinishingStrategyId;
+    // Schema 2 fields: read for migration, never written back.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? RoughingStrategyId { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? FinishingStrategyId { get; set; }
 
     public string PostProcessorId { get; set; } = DefaultPostProcessorId;
 

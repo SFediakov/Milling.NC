@@ -9,8 +9,8 @@ using Miller.Core.Toolpaths;
 
 namespace Miller.App.ViewModels;
 
-// Strategy and post-processor choice from the registries, the cut scope, the generate and cancel
-// commands of the main view model, and the statistics of the last run.
+// Routing strategy and post-processor choice from the registries, the cut scope, the generate and
+// cancel commands of the main view model, and the statistics of the last run.
 public sealed class StrategySelectionViewModel : SettingsViewModelBase
 {
     public const string NoToolpathText = "No toolpath yet.";
@@ -22,9 +22,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         CancelCommand = cancel ?? throw new ArgumentNullException(nameof(cancel));
     }
 
-    public IReadOnlyList<IToolpathStrategy> RoughingStrategies { get; } = StrategyRegistry.ForOperation(MillingOperation.Roughing).ToList();
-
-    public IReadOnlyList<IToolpathStrategy> FinishingStrategies { get; } = StrategyRegistry.ForOperation(MillingOperation.Finishing).ToList();
+    public static IReadOnlyList<IToolpathStrategy> Strategies { get; } = StrategyRegistry.All;
 
     public IReadOnlyList<IPostProcessor> PostProcessors { get; } = PostProcessorRegistry.All;
 
@@ -34,26 +32,14 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
 
     public IRelayCommand CancelCommand { get; }
 
-    public IToolpathStrategy? Roughing
+    public IToolpathStrategy? Strategy
     {
-        get => RoughingStrategies.FirstOrDefault(s => s.Id == Current.RoughingStrategyId);
+        get => Strategies.FirstOrDefault(s => s.Id == Current.RoutingStrategyId);
         set
         {
             if (value is not null)
             {
-                Edit(p => p.RoughingStrategyId = value.Id);
-            }
-        }
-    }
-
-    public IToolpathStrategy? Finishing
-    {
-        get => FinishingStrategies.FirstOrDefault(s => s.Id == Current.FinishingStrategyId);
-        set
-        {
-            if (value is not null)
-            {
-                Edit(p => p.FinishingStrategyId = value.Id);
+                Edit(p => p.RoutingStrategyId = value.Id);
             }
         }
     }
@@ -89,7 +75,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Segments: {Statistics.SegmentCount}\n"));
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Feed: {Statistics.FeedLength:0.0} mm, plunge: {Statistics.PlungeLength:0.0} mm, rapid: {Statistics.RapidLength:0.0} mm\n"));
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Estimated time: {Statistics.EstimatedMinutes:0.0} min, retracts: {Statistics.RetractCount}\n"));
-            text.Append(string.Create(CultureInfo.InvariantCulture, $"Roughing levels: {Plan.RoughingLevels}, lowest level: {Plan.LowestLevel:0.000} mm"));
+            text.Append(string.Create(CultureInfo.InvariantCulture, $"Levels: {Plan.Levels}, lowest level: {Plan.LowestLevel:0.000} mm"));
             return text.ToString();
         }
     }
@@ -111,8 +97,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
 
     protected override void OnReload()
     {
-        OnPropertyChanged(nameof(Roughing));
-        OnPropertyChanged(nameof(Finishing));
+        OnPropertyChanged(nameof(Strategy));
         OnPropertyChanged(nameof(PostProcessor));
         OnPropertyChanged(nameof(CutScope));
     }

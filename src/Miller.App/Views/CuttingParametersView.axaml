@@ -20,20 +20,18 @@
       <TextBlock Classes="validation" Text="{Binding SpindleRpmError}" IsVisible="{Binding SpindleRpmError, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
       <TextBlock Classes="header" Text="Clearances" />
-      <TextBlock Classes="label" Text="Roughing stepover (mm)" />
+      <TextBlock Classes="label" Text="Stepover of Z layer by layer (mm)" />
       <TextBox Name="StepoverBox" Classes="numeric" Text="{Binding Stepover}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding StepoverError}" IsVisible="{Binding StepoverError, Converter={x:Static ObjectConverters.IsNotNull}}" />
-      <TextBlock Classes="label" Text="Finishing stepover (mm)" />
+      <TextBlock Classes="label" Text="Stepover of 3 axis precise (mm)" />
       <TextBox Name="FinishingStepoverBox" Classes="numeric" Text="{Binding FinishingStepover}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding FinishingStepoverError}" IsVisible="{Binding FinishingStepoverError, Converter={x:Static ObjectConverters.IsNotNull}}" />
-      <TextBlock Classes="label" Text="Stepdown per roughing level (mm)" />
+      <TextBlock Classes="label" Text="Stepdown per level of Z layer by layer (mm)" />
       <TextBox Name="StepdownBox" Classes="numeric" Text="{Binding Stepdown}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding StepdownError}" IsVisible="{Binding StepdownError, Converter={x:Static ObjectConverters.IsNotNull}}" />
       <TextBlock Classes="label" Text="Safe height above the stock top (mm)" />
       <TextBox Name="SafeHeightBox" Classes="numeric" Text="{Binding SafeHeight}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding SafeHeightError}" IsVisible="{Binding SafeHeightError, Converter={x:Static ObjectConverters.IsNotNull}}" />
-      <TextBlock Classes="label" Text="Direction" />
-      <ComboBox Name="DirectionBox" ItemsSource="{Binding Directions}" SelectedItem="{Binding Direction}" Width="140" HorizontalAlignment="Left" />
 
       <TextBlock Classes="header" Text="Resolution" />
       <TextBlock Classes="label" Text="Cell size (mm)" />

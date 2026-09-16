@@ -7,25 +7,17 @@
              x:DataType="vm:StrategySelectionViewModel">
   <ScrollViewer>
     <StackPanel Margin="8" Spacing="4">
-      <TextBlock Classes="header" Text="Strategies" />
+      <TextBlock Classes="header" Text="Strategy" />
 
-      <TextBlock Classes="label" Text="Roughing" />
-      <ComboBox Name="RoughingBox" ItemsSource="{Binding RoughingStrategies}" SelectedItem="{Binding Roughing}" Width="260" HorizontalAlignment="Left">
+      <TextBlock Classes="label" Text="Routing strategy" />
+      <ComboBox Name="StrategyBox" ItemsSource="{x:Static vm:StrategySelectionViewModel.Strategies}" SelectedItem="{Binding Strategy}" Width="260" HorizontalAlignment="Left">
         <ComboBox.ItemTemplate>
           <DataTemplate x:DataType="tp:IToolpathStrategy">
             <TextBlock Text="{Binding DisplayName}" />
           </DataTemplate>
         </ComboBox.ItemTemplate>
       </ComboBox>
-
-      <TextBlock Classes="label" Text="Finishing" />
-      <ComboBox Name="FinishingBox" ItemsSource="{Binding FinishingStrategies}" SelectedItem="{Binding Finishing}" Width="260" HorizontalAlignment="Left">
-        <ComboBox.ItemTemplate>
-          <DataTemplate x:DataType="tp:IToolpathStrategy">
-            <TextBlock Text="{Binding DisplayName}" />
-          </DataTemplate>
-        </ComboBox.ItemTemplate>
-      </ComboBox>
+      <TextBlock Text="Z layer by layer cuts each cave level by level (Stepdown, Stepover) and rises only when the cave is done. 3 axis precise follows the surface in one route (Stepover of 3 axis precise). Both take the fastest route the solver finds." TextWrapping="Wrap" />
 
       <TextBlock Classes="label" Text="Cut scope" />
       <ComboBox Name="CutScopeBox" ItemsSource="{x:Static vm:StrategySelectionViewModel.CutScopes}" SelectedItem="{Binding CutScope}" Width="260" HorizontalAlignment="Left" />

@@ -1,12 +1,7 @@
 namespace Miller.Core.Setup;
 
-public enum MillingDirection
-{
-    Zigzag,
-    OneWay,
-}
-
-// Units: mm, mm/min, rpm.
+// Units: mm, mm/min, rpm. Stepover spaces the nodes of "Z layer by layer", FinishingStepover those
+// of "3 axis precise", Stepdown is the layer height of "Z layer by layer".
 public sealed class CuttingParameters
 {
     public const float DefaultFeedRate = 800f;
@@ -41,7 +36,10 @@ public sealed class CuttingParameters
 
     public float Tolerance { get; set; } = DefaultTolerance;
 
-    public MillingDirection Direction { get; set; } = MillingDirection.Zigzag;
+    // Schema 2 field (zigzag or one way): read for migration, never written back; the route solver
+    // decides the direction of every move.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? Direction { get; set; }
 
     public static CuttingParameters Default() => new();
 }

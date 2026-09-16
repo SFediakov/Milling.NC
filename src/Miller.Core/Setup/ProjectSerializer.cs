@@ -26,10 +26,10 @@ public static class ProjectSerializer
         ArgumentNullException.ThrowIfNull(json);
         var project = JsonSerializer.Deserialize<MillingProject>(json, Options)
             ?? throw new InvalidDataException("Project JSON is null.");
-        if (project.SchemaVersion != MillingProject.CurrentSchemaVersion && project.SchemaVersion != MillingProject.LegacySchemaVersion)
+        if (project.SchemaVersion < MillingProject.OldestSchemaVersion || project.SchemaVersion > MillingProject.CurrentSchemaVersion)
         {
             throw new InvalidDataException(
-                $"Unsupported project schema version {project.SchemaVersion}; this build reads versions {MillingProject.LegacySchemaVersion} and {MillingProject.CurrentSchemaVersion}.");
+                $"Unsupported project schema version {project.SchemaVersion}; this build reads versions {MillingProject.OldestSchemaVersion} to {MillingProject.CurrentSchemaVersion}.");
         }
 
         // Schema 1: the single StlPath becomes the first model placement.
@@ -38,7 +38,12 @@ public static class ProjectSerializer
             project.Models.Insert(0, new ModelPlacement { StlPath = project.StlPath });
         }
 
+        // Schema 2: the roughing and finishing strategies and the milling direction are dropped; the
+        // routing strategy keeps its default, "Z layer by layer", the level-based one of the two.
         project.StlPath = null;
+        project.RoughingStrategyId = null;
+        project.FinishingStrategyId = null;
+        project.Parameters.Direction = null;
         project.SchemaVersion = MillingProject.CurrentSchemaVersion;
         return project;
     }
