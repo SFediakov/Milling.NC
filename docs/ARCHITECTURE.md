@@ -165,6 +165,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | Toolpath/Strategies | `RasterRoughingStrategy.cs` | Id `raster-roughing`. Z-level raster clearing: per level, parallel rows at `Stepover`, cut where mask is true |
 | Toolpath/Strategies | `RasterFinishingStrategy.cs` | Id `raster-finishing`. Parallel rows following the tip map height cell by cell |
 | Toolpath/Strategies | `ContourFinishingStrategy.cs` | Id `contour-finishing`. Marching-squares contours of the tip map per finishing level |
+| Toolpath/Strategies | `LayerCompleteStrategy.cs` | Id `layer-complete` (default roughing). Per level the raster runs of the level mask followed by its contour loops, the next level only after both |
 | GCode | `GCodeFormatter.cs` | Invariant number formatting, 3 decimals, trailing zero trimming |
 | GCode | `IPostProcessor.cs` | `Id`, `DisplayName`, `FileExtension`, `Write(Toolpath, MillingProject, TextWriter)` |
 | GCode | `PostProcessorRegistry.cs` | Explicit static list; `GetById`, `All` |
