@@ -30,11 +30,11 @@ public sealed class SlicerTests
     [Fact]
     public void Levels_StepDownFromTheStockTopAndClampToTheLowestTip()
     {
-        Assert.Equal(new[] { 3f, 1f, 0f }, Slicer.RoughingLevels(5f, 0f, 2f));
-        Assert.Equal(new[] { 3f, 1f, -1f, -2.5f }, Slicer.RoughingLevels(5f, -2.5f, 2f));
-        Assert.Equal(new[] { 0f }, Slicer.RoughingLevels(5f, 0f, 10f));
-        Assert.Empty(Slicer.RoughingLevels(5f, 5f, 2f));
-        Assert.Empty(Slicer.RoughingLevels(5f, 6f, 2f));
+        Assert.Equal(new[] { 3f, 1f, 0f }, Slicer.Levels(5f, 0f, 2f));
+        Assert.Equal(new[] { 3f, 1f, -1f, -2.5f }, Slicer.Levels(5f, -2.5f, 2f));
+        Assert.Equal(new[] { 0f }, Slicer.Levels(5f, 0f, 10f));
+        Assert.Empty(Slicer.Levels(5f, 5f, 2f));
+        Assert.Empty(Slicer.Levels(5f, 6f, 2f));
     }
 
     [Fact]
@@ -51,21 +51,18 @@ public sealed class SlicerTests
         }
 
         var plan = Slicer.Build(tip, Map(5f), Parameters(2f));
-        Assert.Equal(3, plan.RoughingLevels);
-        Assert.True(plan.HasFinishing);
+        Assert.Equal(3, plan.Levels);
         Assert.Equal(0f, plan.LowestLevel);
-        Assert.Equal(new[] { 3f, 1f, 0f }, plan.RoughingSteps.Select(s => s.Level));
+        Assert.Equal(new[] { 3f, 1f, 0f }, plan.Steps.Select(s => s.Level));
 
-        var counts = plan.RoughingSteps.Select(s => s.MaskCount).ToArray();
+        var counts = plan.Steps.Select(s => s.MaskCount).ToArray();
         Assert.Equal(new[] { 144, 16, 16 }, counts);
         for (var k = 1; k < counts.Length; k++)
         {
             Assert.True(counts[k] <= counts[k - 1]);
         }
 
-        var finishing = Assert.IsType<MillingStep>(plan.FinishingStep);
-        Assert.Equal(Size * Size, finishing.MaskCount);
-        Assert.Equal(4, plan.Steps.Count);
+        Assert.Equal(Size * Size, plan.Coverage.Cast<bool>().Count(b => b));
     }
 
     [Fact]
@@ -78,7 +75,7 @@ public sealed class SlicerTests
         tip[2, 0] = 3f;            // tip exactly at the level: allowed
         tip[3, 0] = 3.5f;          // tip above the level: not allowed
         var plan = Slicer.Build(tip, stock, Parameters(2f));
-        var level3 = plan.RoughingSteps.First();
+        var level3 = plan.Steps.First();
         Assert.Equal(3f, level3.Level);
         Assert.False(level3.Mask[0, 0]);
         Assert.False(level3.Mask[1, 0]);
@@ -88,13 +85,12 @@ public sealed class SlicerTests
     }
 
     [Fact]
-    public void FlatTipAtTheStockTop_GivesNoRoughingAndOneFinishingStep()
+    public void FlatTipAtTheStockTop_GivesNoLevelsButFullCoverage()
     {
         var plan = Slicer.Build(Map(5f), Map(5f), Parameters(2f));
-        Assert.Equal(0, plan.RoughingLevels);
-        Assert.True(plan.HasFinishing);
-        var only = Assert.Single(plan.Steps);
-        Assert.Equal(MillingOperation.Finishing, only.Operation);
+        Assert.Equal(0, plan.Levels);
+        Assert.Empty(plan.Steps);
+        Assert.Equal(Size * Size, plan.Coverage.Cast<bool>().Count(b => b));
         Assert.Equal(5f, plan.LowestLevel);
     }
 

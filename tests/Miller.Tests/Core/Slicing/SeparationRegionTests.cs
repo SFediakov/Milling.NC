@@ -16,7 +16,7 @@ public sealed class SeparationRegionTests
         // Levels 28 .. 0 in a 30 mm stock with a 12 mm cutter: the first slab (top 30) is entered by
         // the head of every level below 18, the shallowest being 16 (index 6); slabs with a top of
         // 12 or less are entered by none.
-        var steps = Enumerable.Range(1, 15).Select(k => new MillingStep(30f - 2f * k, MillingOperation.Roughing, new bool[1, 1])).ToList();
+        var steps = Enumerable.Range(1, 15).Select(k => new MillingStep(30f - 2f * k, new bool[1, 1])).ToList();
         Assert.Equal(6, SeparationRegion.HeadReach(steps, 0, 30f, 12f));
         Assert.Equal(7, SeparationRegion.HeadReach(steps, 1, 30f, 12f));
         Assert.Equal(-1, SeparationRegion.HeadReach(steps, 9, 30f, 12f));
@@ -49,8 +49,8 @@ public sealed class SeparationRegionTests
         Assert.All(everything.Standing.Z, z => Assert.True(float.IsNaN(z)));
 
         var region = SeparationRegion.ModelRegion(context.EffectiveTip, floor);
-        var full = context.Plan.RoughingSteps.ToList();
-        var restricted = scoped.Plan.RoughingSteps.ToList();
+        var full = context.Plan.Steps.ToList();
+        var restricted = scoped.Plan.Steps.ToList();
         Assert.Equal(full.Count, restricted.Count);
         var cellSize = context.EffectiveTip.CellSize;
         var adjacency = SeparationRegion.AdjacencyMargin(cellSize);
@@ -104,12 +104,12 @@ public sealed class SeparationRegionTests
             .Select(k => (I: k % context.EffectiveTip.Width, J: k / context.EffectiveTip.Width))
             .First(c => deepest.Mask[c.I, c.J] && !region[c.I, c.J]);
         Assert.Equal(deepest.Level, scoped.Standing[bandCell.I, bandCell.J]);
-        // Finishing covers the model region and the innermost band only.
-        var finishing = scoped.Plan.FinishingMask;
-        Assert.True(Count(finishing) < Count(context.Plan.FinishingMask));
-        Assert.True(finishing[ci, cj]);
-        Assert.False(finishing[0, 0]);
-        Assert.True(finishing[bandCell.I, bandCell.J]);
+        // The coverage keeps the model region and the innermost band only.
+        var coverage = scoped.Plan.Coverage;
+        Assert.True(Count(coverage) < Count(context.Plan.Coverage));
+        Assert.True(coverage[ci, cj]);
+        Assert.False(coverage[0, 0]);
+        Assert.True(coverage[bandCell.I, bandCell.J]);
     }
 
     [Fact]
@@ -117,8 +117,8 @@ public sealed class SeparationRegionTests
     {
         var context = TestContexts.BumpPlate();
         var scoped = SeparationRegion.Build(context.Plan, context.EffectiveTip, context.Stock, context.Tool, context.Parameters, context.StockTop, 0f);
-        var steps = scoped.Plan.RoughingSteps.ToList();
-        var full = context.Plan.RoughingSteps.ToList();
+        var steps = scoped.Plan.Steps.ToList();
+        var full = context.Plan.Steps.ToList();
         for (var k = 1; k < steps.Count; k++)
         {
             for (var j = 0; j < context.EffectiveTip.Height; j++)
@@ -143,7 +143,7 @@ public sealed class SeparationRegionTests
         var parameters = TestContexts.Parameters(0.5f);
         var context = TestContexts.Build(TestMeshes.Box(10, 10, 5), new StockDefinition { SizeX = 40, SizeY = 40, SizeZ = 30 }, tool, parameters);
         var scoped = SeparationRegion.Build(context.Plan, context.EffectiveTip, context.Stock, context.Tool, parameters, context.StockTop, context.Plan.LowestLevel);
-        var steps = scoped.Plan.RoughingSteps.ToList();
+        var steps = scoped.Plan.Steps.ToList();
         var top = steps[0];
         var bottom = steps[^1];
         Assert.True(top.MaskCount > bottom.MaskCount * 2, $"top {top.MaskCount} cells, bottom {bottom.MaskCount}: no terrace");
@@ -173,7 +173,7 @@ public sealed class SeparationRegionTests
         Assert.Equal(context.StockTop, scoped.Standing[0, 0]);
     }
     [Fact]
-    public void CylinderStock_KeepsNaNOutsideTheCircle_AndFlatModelNeedsNoRoughing()
+    public void CylinderStock_KeepsNaNOutsideTheCircle_AndFlatModelNeedsNoLevel()
     {
         var parameters = TestContexts.Parameters();
         var cylinder = TestContexts.Build(TestMeshes.Box(10, 10, 5), new StockDefinition { Shape = StockShape.Cylinder, Diameter = 30, Height = 5 }, TestContexts.FlatTool6(), parameters);
@@ -183,22 +183,13 @@ public sealed class SeparationRegionTests
         var (ci, cj) = cylinder.Stock.CellOf(15f, 1f);
         Assert.False(float.IsNaN(cylinder.Stock[ci, cj]));
         Assert.Equal(cylinder.StockTop, scoped.Standing[ci, cj], 3);
-        Assert.True(scoped.Plan.RoughingSteps.All(s => s.MaskCount > 0));
+        Assert.True(scoped.Plan.Steps.All(s => s.MaskCount > 0));
 
-        // A plate filling the stock top: no roughing level, the finishing covers every material cell.
+        // A plate filling the stock top: no level, the coverage keeps every material cell.
         var flat = TestContexts.Build(TestMeshes.Box(20, 20, 5), new StockDefinition { SizeX = 20, SizeY = 20, SizeZ = 5 }, TestContexts.FlatTool6(), parameters);
-        Assert.Equal(0, flat.Plan.RoughingLevels);
+        Assert.Equal(0, flat.Plan.Levels);
         var flatScoped = SeparationRegion.Build(flat.Plan, flat.EffectiveTip, flat.Stock, flat.Tool, parameters, flat.StockTop, 0f);
-        Assert.Equal(flat.Plan.FinishingMask.Cast<bool>().Count(b => b), flatScoped.Plan.FinishingMask.Cast<bool>().Count(b => b));
+        Assert.Equal(flat.Plan.Coverage.Cast<bool>().Count(b => b), flatScoped.Plan.Coverage.Cast<bool>().Count(b => b));
         Assert.All(flatScoped.Standing.Z, z => Assert.True(float.IsNaN(z)));
-    }
-
-    [Fact]
-    public void PlanWithoutAFinishingStep_IsRejected()
-    {
-        var context = TestContexts.BoxInStock();
-        var roughingOnly = new SlicePlan(context.Plan.RoughingSteps.ToList(), context.Plan.LowestLevel);
-        Assert.Throws<InvalidOperationException>(() => roughingOnly.FinishingMask);
-        Assert.Throws<ArgumentException>(() => SeparationRegion.Build(roughingOnly, context.EffectiveTip, context.Stock, context.Tool, context.Parameters, context.StockTop, 0f));
     }
 }

@@ -32,10 +32,24 @@ public sealed class UncuttableRegionsTests
         return UncuttableRegions.Compute(machineMesh, context.Model, context.EffectiveTip, headLimited, context.Profile, floor, Tolerance);
     }
 
+    // The reach map decides by majority: a 4 mm slot is 42% of a 12 mm footprint, so the tool stays
+    // out and the slot floor is corner limited; it is 78% of a 6 mm footprint, so the tool enters.
     [Fact]
-    public void NarrowSlotWithAWideCutter_IsCornerLimited()
+    public void SlotWiderThanHalfTheFootprint_IsReached()
     {
         var tool = new ToolDefinition { CutterDiameter = 6f, HeadDiameter = 10f, CutterLength = 20f };
+        var (context, machineMesh) = Build(TestMeshes.SlottedPlate(), PlateStock(), tool);
+        var result = Compute(context, machineMesh, 0f);
+        Assert.Equal(0, result.CornerLimitedCells);
+        var model = context.Model;
+        var (ci, cj) = model.CellOf(TestMeshes.SlottedPlateSize / 2, TestMeshes.SlottedPlateSize / 2);
+        Assert.Equal(SlotFloorMachine(model), context.EffectiveTip[ci, cj], 3);
+    }
+
+    [Fact]
+    public void SlotNarrowerThanHalfTheFootprint_IsCornerLimited()
+    {
+        var tool = new ToolDefinition { CutterDiameter = 12f, HeadDiameter = 16f, CutterLength = 20f };
         var (context, machineMesh) = Build(TestMeshes.SlottedPlate(), PlateStock(), tool);
         var result = Compute(context, machineMesh, 0f);
         Assert.Equal(0, result.OverhangCells);

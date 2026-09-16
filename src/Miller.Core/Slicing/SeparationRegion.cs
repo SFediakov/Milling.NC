@@ -5,11 +5,11 @@ using Miller.Core.Setup;
 namespace Miller.Core.Slicing;
 
 // The plan restricted to the chosen cut scope, and what stands after it besides the model:
-// Standing holds the stock surface over cells the roughing never touches, the terrace level over
+// Standing holds the stock surface over cells the levels never touch, the terrace level over
 // trench cells, and NaN where nothing but the model constrains the tool (model region, no stock).
 public sealed record ScopedPlan(SlicePlan Plan, HeightMap Standing);
 
-// Separation scope: the roughing removes only what frees the model from the stock. Per level the
+// Separation scope: the levels remove only what frees the model from the stock. Per level the
 // mask keeps the model region (cells whose tip stands above the floor: the tool must reach them to
 // finish the model) plus the trench region of that level, built from the bottom up:
 //   - the cells next to the obstacles of the level (tip above the level), one cell wide;
@@ -46,8 +46,7 @@ public static class SeparationRegion
             throw new ArgumentException("Tip map and stock map must share the same grid.", nameof(stock));
         }
 
-        var steps = plan.RoughingSteps.ToList();
-        var finishing = plan.FinishingStep ?? throw new ArgumentException("The plan has no finishing step.", nameof(plan));
+        var steps = plan.Steps.ToList();
         var width = effectiveTip.Width;
         var height = effectiveTip.Height;
         var cellSize = effectiveTip.CellSize;
@@ -85,7 +84,7 @@ public static class SeparationRegion
         }
 
         var standing = new HeightMap(effectiveTip.OriginX, effectiveTip.OriginY, cellSize, width, height, float.NaN);
-        var finishingMask = new bool[width, height];
+        var coverage = new bool[width, height];
         var innermost = steps.Count > 0 ? masks[^1] : null;
         for (var j = 0; j < height; j++)
         {
@@ -93,7 +92,7 @@ public static class SeparationRegion
             {
                 var tip = effectiveTip[i, j];
                 var stockZ = stock[i, j];
-                finishingMask[i, j] = finishing.Mask[i, j] && (modelRegion[i, j] || (innermost is not null && innermost[i, j]));
+                coverage[i, j] = plan.Coverage[i, j] && (modelRegion[i, j] || (innermost is not null && innermost[i, j]));
                 if (float.IsNaN(tip) || float.IsNaN(stockZ) || modelRegion[i, j])
                 {
                     continue;
@@ -103,14 +102,13 @@ public static class SeparationRegion
             }
         }
 
-        var scoped = new List<MillingStep>(steps.Count + 1);
+        var scoped = new List<MillingStep>(steps.Count);
         for (var k = 0; k < steps.Count; k++)
         {
-            scoped.Add(new MillingStep(steps[k].Level, MillingOperation.Roughing, masks[k]));
+            scoped.Add(new MillingStep(steps[k].Level, masks[k]));
         }
 
-        scoped.Add(new MillingStep(finishing.Level, MillingOperation.Finishing, finishingMask));
-        return new ScopedPlan(new SlicePlan(scoped, plan.LowestLevel), standing);
+        return new ScopedPlan(new SlicePlan(scoped, coverage, plan.LowestLevel), standing);
     }
 
     // Cells the tool must visit to finish the model: the tip stands above the floor there.
