@@ -74,7 +74,7 @@ global.json                  SDK pin
 .editorconfig
 build.sh                     restore, build, test, publish (both RIDs), assemble dist/
 Miller.sh                    root start file for Linux and Git Bash: runs dist/<rid>/Miller with the arguments
-Miller.cmd                   root start file for Windows Explorer and cmd: runs dist\win-x64\Miller.exe
+Miller.cmd                   root start file for Windows Explorer and cmd: starts dist\win-x64\Miller.exe detached, waits only for -- commands
 launchers/Miller.sh          Linux start file (copied to dist/linux-x64/)
 scripts/vendor-packages.sh   one-time online download of packages into third_party/nuget/
 third_party/nuget/           vendored .nupkg files
@@ -117,7 +117,13 @@ Start files:
 - Root launchers (after `bash build.sh`): `Miller.cmd` for Windows Explorer or cmd,
   `Miller.sh` for Linux and Git Bash. Both forward every argument to the published
   binary (`Miller.cmd Milling_Heart_V2.STL`, `./Miller.sh --version`) and print a
-  one-line hint to run `bash build.sh` when `dist/` is missing.
+  one-line hint to run `bash build.sh` when `dist/` is missing. `Miller.cmd` starts the
+  window detached and its console closes; a `--` command (`--version`, `--export`)
+  runs in the console and waits.
+- Discrete GPU: on Windows the app writes `GpuPreference=2;` for its own executable
+  when no entry exists (a choice made in Settings is kept) under `HKCU\Software\Microsoft\DirectX\UserGpuPreferences` at start (the entry
+  Settings > Display > Graphics creates), effective from the next start. The Linux
+  launchers export `DRI_PRIME=1`.
 
 Linux build: the same `bash build.sh` on a Linux machine with the .NET 10 SDK
 installed. Both RIDs are produced there as well; cross-publishing `win-x64`
@@ -1327,6 +1333,14 @@ check that decides done.
 - Input: T-107 to T-109
 - Output: architecture data model and pipeline sections describe the model list; sample project in schema 2; lessons recorded
 - Acceptance: `bash build.sh --no-publish` green; export of the sample unchanged
+- Status: done
+
+#### T-111 Launcher auto-close and discrete GPU
+- Depends on: T-106, root launchers
+- Files: `Miller.cmd`, `Miller.sh`, `launchers/Miller.sh`, `src/Miller.App/Services/GpuPreference.cs`, `src/Miller.App/App.axaml.cs`, `tests/Miller.Tests/App/GpuPreferenceTests.cs`
+- Input: user request after M9 batch D
+- Output: `Miller.cmd` starts the window detached (console closes) and only waits for `--` commands; `GpuPreference.EnsureHighPerformance` writes the high performance entry for the executable into the user's DirectX graphics preferences on Windows when none exists (effective from the next start), logged at start; Linux launchers export `DRI_PRIME=1`
+- Acceptance: `cmd /c Miller.cmd` returns while the app keeps running and `Miller.cmd --version` waits; registry test under a temporary key sets once, keeps an existing power saving entry and cleans up
 - Status: done
 
 ### M8 Packaging and release
