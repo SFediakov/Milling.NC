@@ -28,7 +28,9 @@ public sealed class LayerCompleteStrategy : IToolpathStrategy
             cancellation.ThrowIfCancellationRequested();
             var step = steps[s];
             var level = new List<Toolpath>();
-            level.AddRange(RasterRoughingStrategy.RowPasses(map, step.Mask, step.Level, p, cancellation));
+            // A row run of one cell has no length; that cell lies on the mask outline, which the
+            // profile loop cuts, so the plunge and retract such a run would cost are not needed.
+            level.AddRange(RasterRoughingStrategy.RowPasses(map, step.Mask, step.Level, p, cancellation).Where(pass => pass.TotalLength() > 0));
             level.AddRange(ContourFinishingStrategy.LoopPasses(step.Mask, map, step.Level, p));
             groups.Add(level);
             progress?.Report((s + 1f) / steps.Count);
