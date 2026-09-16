@@ -174,4 +174,20 @@ public sealed class ToolpathSimplifierTests
         Assert.True(simplified.Count <= 3);
         Assert.Empty(GougeChecker.Verify(simplified, map, Tolerance));
     }
+    [Fact]
+    public void ZeroLengthSegmentsInsideARun_AreAbsorbed_AndASinglePointRunStays()
+    {
+        var path = new Toolpath();
+        path.Add(new ToolpathSegment(new Vector3(1, 1, 0), new Vector3(2, 1, 0), MoveKind.Feed, Feed));
+        path.Add(new ToolpathSegment(new Vector3(2, 1, 0), new Vector3(2, 1, 0), MoveKind.Feed, Feed));
+        path.Add(new ToolpathSegment(new Vector3(2, 1, 0), new Vector3(3, 1, 0), MoveKind.Feed, Feed));
+        path.Add(new ToolpathSegment(new Vector3(3, 1, 0), new Vector3(3, 1, 10), MoveKind.Rapid, 3000));
+        path.Add(new ToolpathSegment(new Vector3(7, 7, 0), new Vector3(7, 7, 0), MoveKind.Feed, Feed));
+        var simplified = ToolpathSimplifier.Simplify(path, Flat, Tolerance);
+        Assert.Equal(3, simplified.Count);
+        Assert.Equal(new Vector3(1, 1, 0), simplified.Segments[0].Start);
+        Assert.Equal(new Vector3(3, 1, 0), simplified.Segments[0].End);
+        Assert.Equal(path.Segments[3], simplified.Segments[1]);
+        Assert.Equal(path.Segments[4], simplified.Segments[2]);
+    }
 }

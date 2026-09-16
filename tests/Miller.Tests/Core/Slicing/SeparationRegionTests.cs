@@ -172,4 +172,33 @@ public sealed class SeparationRegionTests
         Assert.InRange(Width(top) - Width(bottom), 2 * overhangCells - 2, 2 * overhangCells + 2);
         Assert.Equal(context.StockTop, scoped.Standing[0, 0]);
     }
+    [Fact]
+    public void CylinderStock_KeepsNaNOutsideTheCircle_AndFlatModelNeedsNoRoughing()
+    {
+        var parameters = TestContexts.Parameters();
+        var cylinder = TestContexts.Build(TestMeshes.Box(10, 10, 5), new StockDefinition { Shape = StockShape.Cylinder, Diameter = 30, Height = 5 }, TestContexts.FlatTool6(), parameters);
+        var scoped = SeparationRegion.Build(cylinder.Plan, cylinder.EffectiveTip, cylinder.Stock, cylinder.Tool, parameters, cylinder.StockTop, 0f);
+        Assert.True(float.IsNaN(scoped.Standing[0, 0]));
+        Assert.True(float.IsNaN(cylinder.Stock[0, 0]));
+        var (ci, cj) = cylinder.Stock.CellOf(15f, 1f);
+        Assert.False(float.IsNaN(cylinder.Stock[ci, cj]));
+        Assert.Equal(cylinder.StockTop, scoped.Standing[ci, cj], 3);
+        Assert.True(scoped.Plan.RoughingSteps.All(s => s.MaskCount > 0));
+
+        // A plate filling the stock top: no roughing level, the finishing covers every material cell.
+        var flat = TestContexts.Build(TestMeshes.Box(20, 20, 5), new StockDefinition { SizeX = 20, SizeY = 20, SizeZ = 5 }, TestContexts.FlatTool6(), parameters);
+        Assert.Equal(0, flat.Plan.RoughingLevels);
+        var flatScoped = SeparationRegion.Build(flat.Plan, flat.EffectiveTip, flat.Stock, flat.Tool, parameters, flat.StockTop, 0f);
+        Assert.Equal(flat.Plan.FinishingMask.Cast<bool>().Count(b => b), flatScoped.Plan.FinishingMask.Cast<bool>().Count(b => b));
+        Assert.All(flatScoped.Standing.Z, z => Assert.True(float.IsNaN(z)));
+    }
+
+    [Fact]
+    public void PlanWithoutAFinishingStep_IsRejected()
+    {
+        var context = TestContexts.BoxInStock();
+        var roughingOnly = new SlicePlan(context.Plan.RoughingSteps.ToList(), context.Plan.LowestLevel);
+        Assert.Throws<InvalidOperationException>(() => roughingOnly.FinishingMask);
+        Assert.Throws<ArgumentException>(() => SeparationRegion.Build(roughingOnly, context.EffectiveTip, context.Stock, context.Tool, context.Parameters, context.StockTop, 0f));
+    }
 }
