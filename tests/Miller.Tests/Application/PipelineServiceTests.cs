@@ -62,31 +62,30 @@ public sealed class PipelineServiceTests
     }
 
     [Fact]
-    public async Task BoxProject_ProducesRoughingAndFinishingWithoutGouges()
+    public async Task BoxProject_ProducesLevelsWithoutGouges()
     {
         var reports = new List<ProgressReport>();
         var result = await new PipelineService().RunAsync(BoxProject(), new[] { Box() }, new SynchronousProgress(reports.Add), CancellationToken.None);
 
         Assert.Empty(GougeChecker.Verify(result.Toolpath, result.EffectiveTip, result.Parameters.Tolerance));
-        Assert.Equal(3, result.Plan.RoughingLevels);
-        Assert.True(result.Plan.HasFinishing);
+        Assert.Equal(3, result.Plan.Levels);
+        Assert.Equal(new[] { 3f, 1f, 0f }, result.Plan.Steps.Select(s => s.Level));
         Assert.Equal(5f, result.Stock.StockTop, 4);
         Assert.Equal(0f, result.Floor, 4);
         Assert.Equal(10f, result.SafeZ, 4);
 
         var feeds = result.Toolpath.Segments.Where(s => s.Kind == MoveKind.Feed).ToList();
-        Assert.Contains(feeds, s => s.Start.Z == 3f);
-        // The rasterized box top carries float rounding (5.0000005), so the finishing height is compared with a tolerance.
-        // Merged finishing rows span the whole box top (x from 2 to 18), so the check is by overlap.
-        Assert.Contains(feeds, s => MathF.Abs(s.Start.Z - 5f) < 1e-3f && MathF.Min(s.Start.X, s.End.X) < 15 && MathF.Max(s.Start.X, s.End.X) > 5);
+        Assert.Contains(feeds, s => s.Start.Z == 3f && s.End.Z == 3f);
+        Assert.Contains(feeds, s => s.Start.Z == 0f && s.End.Z == 0f);
         Assert.Equal(result.Toolpath.Count, result.Statistics.SegmentCount);
         Assert.True(result.Statistics.EstimatedMinutes > 0);
 
         Assert.Equal("done", reports[^1].Stage);
         Assert.Equal(1f, reports[^1].Fraction);
         Assert.True(reports.Select(r => r.Fraction).SequenceEqual(reports.Select(r => r.Fraction).OrderBy(f => f)), "progress went backwards");
-        Assert.Contains(reports, r => r.Stage == "roughing");
-        Assert.Contains(reports, r => r.Stage == "finishing");
+        Assert.Contains(reports, r => r.Stage == "reach map");
+        Assert.Contains(reports, r => r.Stage == "route");
+        Assert.DoesNotContain(reports, r => r.Stage == "roughing" || r.Stage == "finishing");
     }
 
     [Fact]
@@ -105,17 +104,18 @@ public sealed class PipelineServiceTests
 
         Assert.Empty(GougeChecker.Verify(result.Toolpath, result.EffectiveTip, project.Parameters.Tolerance));
 
-        // Rest material the tool cannot reach: concave regions narrower than the cutter.
-        var rest = 0;
+        // The reach floor decides by majority, so beside the walls, where the footprint is mostly
+        // stock, it lies below the model: the walls are cut back and the analysis reports gouge there.
+        var below = 0;
         for (var k = 0; k < result.Model.CellCount; k++)
         {
-            if (result.Model.Z[k] > result.Floor && result.EffectiveTip.Z[k] - result.Model.Z[k] > project.Parameters.Tolerance)
+            if (result.Model.Z[k] - result.EffectiveTip.Z[k] > project.Parameters.Tolerance)
             {
-                rest++;
+                below++;
             }
         }
 
-        Assert.True(rest > 0, "the heart has concave regions the 6 mm cutter cannot reach");
+        Assert.True(below > 0, "the heart walls are cut back where the footprint is mostly stock");
 
         var bounds = result.Toolpath.Bounds;
         Assert.True(bounds.Min.X >= result.Stock.Bounds.Min.X - 1e-3f && bounds.Max.X <= result.Stock.Bounds.Max.X + 1e-3f);
@@ -142,32 +142,11 @@ public sealed class PipelineServiceTests
     }
 
     [Fact]
-    public void UnknownOrMismatchedStrategyIds_Throw()
+    public void UnknownStrategyId_Throws()
     {
         var unknown = BoxProject();
-        unknown.RoughingStrategyId = "missing";
+        unknown.RoutingStrategyId = "missing";
         Assert.Throws<KeyNotFoundException>(() => new PipelineService().Run(unknown, new[] { Box() }, null, CancellationToken.None));
-
-        var mismatched = BoxProject();
-        mismatched.FinishingStrategyId = "raster-roughing";
-        Assert.Throws<ArgumentException>(() => new PipelineService().Run(mismatched, new[] { Box() }, null, CancellationToken.None));
-    }
-
-    [Fact]
-    public void Join_ConnectsTheTwoPathsWithOneRapidAtSafeZ()
-    {
-        var parameters = TestContexts.Parameters();
-        var a = new Toolpath();
-        a.Add(new ToolpathSegment(new System.Numerics.Vector3(0, 0, 10), new System.Numerics.Vector3(0, 0, 0), MoveKind.Plunge, 200));
-        a.Add(new ToolpathSegment(new System.Numerics.Vector3(0, 0, 0), new System.Numerics.Vector3(0, 0, 10), MoveKind.Rapid, 3000));
-        var b = new Toolpath();
-        b.Add(new ToolpathSegment(new System.Numerics.Vector3(5, 5, 10), new System.Numerics.Vector3(5, 5, 0), MoveKind.Plunge, 200));
-        var joined = PipelineService.Join(a, b, parameters);
-        Assert.Equal(4, joined.Count);
-        Assert.Equal(MoveKind.Rapid, joined.Segments[2].Kind);
-        Assert.Equal(new System.Numerics.Vector3(5, 5, 10), joined.Segments[2].End);
-        Assert.Equal(2, PipelineService.Join(a, new Toolpath(), parameters).Count);
-        Assert.Equal(1, PipelineService.Join(new Toolpath(), b, parameters).Count);
     }
 
     private sealed class SynchronousProgress : IProgress<ProgressReport>

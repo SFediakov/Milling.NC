@@ -1,7 +1,7 @@
 using System.Numerics;
 using Miller.Core.HeightMaps;
 using Miller.Core.Toolpaths;
-using Miller.Core.Toolpaths.Strategies;
+using Miller.Solver;
 using Xunit;
 
 namespace Miller.Tests.Core.Toolpaths;
@@ -154,7 +154,7 @@ public sealed class ToolpathSimplifierTests
     }
 
     [Fact]
-    public void SlopedRow_FromTheFinishingStrategy_IsOneInteriorSegment()
+    public void SlopedRow_FromTheSurfacePath_IsOneInteriorSegment()
     {
         var map = new HeightMap(0, 0, CellSize, 60, 1, 0f);
         for (var i = 0; i < map.Width; i++)
@@ -162,9 +162,14 @@ public sealed class ToolpathSimplifierTests
             map[i, 0] = 0.5f * map.CellCenter(i, 0).X;
         }
 
-        var points = RasterFinishingStrategy.RowPoints(map, 0, map.Width - 1, 0);
+        var grid = new RouteGrid(map.Z, map.Width, map.Height, map.OriginX, map.OriginY, map.CellSize);
+        var first = map.CellCenter(0, 0);
+        var last = map.CellCenter(map.Width - 1, 0);
+        var traced = new List<RoutePoint> { new(first.X, first.Y, map[0, 0]) };
+        SurfacePath.Trace(grid, traced[0], new RoutePoint(last.X, last.Y, map[map.Width - 1, 0]), traced);
+        var points = traced.Select(p => new Vector3(p.X, p.Y, p.Z)).ToList();
         // Half-cell lead-in from the first center, one line through the boundary points, flat lead-out.
-        Assert.Equal(4, points.Count);
+        Assert.Equal(map.Width + 1, points.Count);
         Assert.Equal(map[0, 0], points[0].Z);
         Assert.Equal(map[map.Width - 1, 0], points[^1].Z);
         var row = Chain(MoveKind.Feed, Feed, points.ToArray());
