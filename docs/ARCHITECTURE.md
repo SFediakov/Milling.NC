@@ -20,7 +20,7 @@ list that implements it is in `docs/DEVELOPMENT_GUIDE.md`.
 | G9 | Axis positioning, direction and rotation | `src/Miller.Core/Setup/AxisSetup.cs`, `src/Miller.App/Views/AxisSettingsView.axaml` |
 | G10 | Simulation preview of head movement and material removal, speed 0.1x to 1000x | `src/Miller.Core/Simulation/SimulationEngine.cs`, `src/Miller.Core/Simulation/MaterialRemover.cs`, `src/Miller.Core/Simulation/SimulationClock.cs`, `src/Miller.App/Rendering/HeightMapRenderer.cs`, `src/Miller.App/Rendering/ToolRenderer.cs`, `src/Miller.App/Views/SimulationControlsView.axaml` |
 | G11 | Preview of the final cut model including inaccuracy and uncuttable areas | `src/Miller.Core/Analysis/FinalModelAnalyzer.cs`, `src/Miller.Core/Analysis/UncuttableRegions.cs`, `src/Miller.App/Views/AnalysisView.axaml` |
-| G12 | Modular, exchangeable routing algorithms | `src/Miller.Core/Toolpath/IToolpathStrategy.cs`, `src/Miller.Core/Toolpath/StrategyRegistry.cs`, `src/Miller.Core/Toolpath/Strategies/RasterRoughingStrategy.cs` |
+| G12 | Modular, exchangeable routing algorithms | `src/Miller.Core/Toolpath/IToolpathStrategy.cs`, `src/Miller.Core/Toolpath/StrategyRegistry.cs`, `src/Miller.Core/Toolpath/Strategies/ZLayerByLayerStrategy.cs`, `src/Miller.Core/Toolpath/Strategies/ThreeAxisPreciseStrategy.cs` |
 
 Project rules that constrain the design (root `CLAUDE.md`):
 
@@ -101,13 +101,22 @@ three decimals.
 | Miller.Core   Geometry, Io, Setup, HeightMap, Slicing,         |  Domain
 |               Toolpath, GCode, Simulation, Analysis            |
 +---------------------------------------------------------------+
+        | references
+        v
++---------------------------------------------------------------+
+| Miller.Solver   Route solver over flat arrays (no domain types)|  Numeric
++---------------------------------------------------------------+
 
-Miller.Tests references all three.
+Miller.Tests references all four.
 ```
 
 Rules:
 
-- `Miller.Core` references no package and no other project. It has no file
+- `Miller.Solver` references nothing. It holds the hot numeric loops of the
+  routing (surface polyline, pair costs, nearest-neighbour walk, 2-opt and
+  Or-opt local search) over flat `float[]` arrays and knows no domain type, so
+  the same assembly boundary is where a native implementation would go.
+- `Miller.Core` references `Miller.Solver` and no package. It has no file
   dialogs, no threads of its own, no timers. It is deterministic: same input,
   same output, on every OS.
 - `Miller.Application` references `Miller.Core` only. It owns long-running
@@ -142,34 +151,47 @@ placeholder; the task that implements it is written in the placeholder header.
 | Setup | `StockDefinition.cs` | `Shape` (Box, Cylinder); Box: `SizeX`, `SizeY`, `SizeZ`; Cylinder: `Diameter`, `Height`; `Placement` (AutoFitWithMargin, Explicit) and `Margin`; auto-fit alignment of the model union per axis `AlignX`, `AlignY`, `AlignZ` (`StockAlignment` Min, Center, Max; defaults Center, Center, Max) |
 | Setup | `AxisSetup.cs` | Mapping of model axes to machine X, Y, Z; direction sign per axis; rotation angles (degrees) about X, Y, Z; `OriginMode` (StockCornerMinXYMinZ, StockCornerMinXYTopZ, StockCenterTopZ, Custom); `ToMatrix()` |
 | Setup | `CuttingParameters.cs` | `FeedRate`, `PlungeRate`, `RapidRate` (mm/min), `SpindleRpm`, `Stepover`, `Stepdown`, `SafeHeight`, `CellSize`, `Tolerance`, `MillingDirection` (Zigzag, OneWay) |
-| Setup | `MillingProject.cs` | Aggregate of all setup objects + `Models` (list of `ModelPlacement`), `RoughingStrategyId`, `FinishingStrategyId`, `PostProcessorId`, `CutScope` (Everything, Separation); JSON serializable, schema 2 (schema 1 `StlPath` migrated on load) |
+| Setup | `MillingProject.cs` | Aggregate of all setup objects + `Models` (list of `ModelPlacement`), `RoutingStrategyId`, `PostProcessorId`, `CutScope` (Everything, Separation); JSON serializable, schema 3 (schema 1 `StlPath`, schema 2 `RoughingStrategyId`, `FinishingStrategyId` and `Parameters.Direction` are read and dropped on load) |
 | Setup | `ModelPlacement.cs`, `ModelLayout.cs` | One STL with offset and rotation about Z; the layout places every model (orientation, rotation, offset), takes machine zero from the stock corner around the union and merges the machine meshes; aligning one model to the stock minimum, middle or maximum per axis (`AlignedOffset`) is a fixed point because the stock follows the union, and it reports when the stock follows that model |
 | Setup | `ProjectSerializer.cs` | `System.Text.Json` read/write with invariant culture and schema version |
 | HeightMap | `HeightMap.cs` | Uniform grid: `OriginX`, `OriginY`, `CellSize`, `Width`, `Height`, `float[] Z`; `float.NaN` = no material / outside stock; cell-world conversions; `Clone()`; `Min()`, `Max()` |
 | HeightMap | `MeshRasterizer.cs` | Model map: top-down rasterization of triangles, max Z per cell; uncovered cells = `floor` value |
 | HeightMap | `ToolProfile.cs` | Footprint of a tool on the grid: list of `(dx, dy, dz)` where `dz(d) = 0` (flat) or `r - sqrt(r^2 - d^2)` (ball) |
-| HeightMap | `HeightMapDilation.cs` | Tool-tip map: `tip[i,j] = max over footprint of (model[i+dx, j+dy] - dz)` (the drop-cutter on a grid) |
+| HeightMap | `HeightMapDilation.cs` | Drop cutter: `tip[i,j] = max over footprint of (model[i+dx, j+dy] - dz)`, and the closing `ComputeRemaining` (material left when the tip has been everywhere a map allows) |
+| HeightMap | `ReachMap.cs` | Reach floor by majority: the `(n / 2 + 1)`-th largest of the `n` values `model - dz` over the footprint cells holding stock, never below the stock floor; the pipeline's tip map. A mixed footprint is entered when at least half of it is stock, so the minority cells are cut on purpose |
 | HeightMap | `HeadClearance.cs` | Head-limit map: `limit[i,j] = max over annulus (cutter radius < d <= head radius) of model - CutterLength`; effective tip = `max(tip, limit)`; head-limited mask |
 | HeightMap | `DistanceTransform.cs` | Exact Euclidean distance of every cell to the nearest cell of a mask (separable lower envelope of parabolas), used by the separation region |
-| Slicing | `MillingStep.cs` | One step: `Level` (Z), `Operation` (Roughing, Finishing), region mask, strategy id |
-| Slicing | `SlicePlan.cs` | Ordered list of `MillingStep` plus summary counts |
-| Slicing | `Slicer.cs` | Builds the plan: levels from stock top down by `Stepdown` to the lowest tip value, roughing masks per level (a tip within `LevelTolerance` above a level counts as on it), one finishing step |
-| Slicing | `SeparationRegion.cs` | Cut scope: `Everything` keeps the plan; `Separation` restricts every roughing mask to the model region plus a terraced trench (one cell next to the level's obstacles, everything cut below, and the positions of the deepest level whose head enters the slab widened by `HeadRadius - CutterRadius + margin`), restricts the finishing mask to the model region and the innermost trench, and returns the `Standing` map (stock surface over never-cut cells, terrace level over trench cells, NaN elsewhere) |
+| Slicing | `MillingStep.cs` | One level: `Level` (Z) and the mask of tool positions taking part |
+| Slicing | `SlicePlan.cs` | The levels (`Steps`), the `Coverage` mask of the surface-following strategy, `LowestLevel` |
+| Slicing | `Slicer.cs` | Builds the plan: levels from stock top down by `Stepdown` to the lowest tip value, one mask per level (a tip within `LevelTolerance` above a level counts as on it), coverage = every material cell |
+| Slicing | `SeparationRegion.cs` | Cut scope: `Everything` keeps the plan; `Separation` restricts every level mask to the model region plus a terraced trench (one cell next to the level's obstacles, everything cut below, and the positions of the deepest level whose head enters the slab widened by `HeadRadius - CutterRadius + margin`), restricts the coverage to the model region and the innermost trench, and returns the `Standing` map (stock surface over never-cut cells, terrace level over trench cells, NaN elsewhere) |
 | Toolpath | `ToolpathSegment.cs` | `enum MoveKind { Rapid, Feed, Plunge }` and the segment: `Start`, `End` (`Vector3`), `Kind`, `FeedRate` |
 | Toolpath | `Toolpath.cs` | Segment list, `Bounds`, `TotalLength(kind)` |
 | Toolpath | `ToolpathStatistics.cs` | Lengths per kind, estimated time from rates, segment counts |
 | Toolpath | `ToolpathContext.cs` | Inputs handed to a strategy: tip map, head-limit map, stock map, slice plan, tool, parameters |
-| Toolpath | `IToolpathStrategy.cs` | `Id`, `DisplayName`, `Operation`, `Generate(ToolpathContext, IProgress<float>, CancellationToken) -> Toolpath` |
-| Toolpath | `StrategyRegistry.cs` | Explicit static list of strategies; `GetById`, `All`; duplicate id = exception |
-| Toolpath | `MarchingSquares.cs` | Iso-contours of a `HeightMap` at level Z as closed polylines |
-| Toolpath | `ToolpathLinker.cs` | Inserts retract to safe height, rapid, plunge between disjoint passes |
+| Toolpath | `IToolpathStrategy.cs` | `Id`, `DisplayName`, `Generate(ToolpathContext, IProgress<float>, CancellationToken) -> Toolpath` (the whole program, first plunge to last retract) |
+| Toolpath | `StrategyRegistry.cs` | Explicit static list of the two routing strategies; `GetById`, `All`; duplicate id = exception |
+| Toolpath | `NodeLattice.cs` | Tool positions a route visits inside a region: the cells on a square lattice spaced by the stepover (first and last grid line always included) plus the outline cells of the region |
+| Toolpath | `CaveTree.cs` | Level masks as a forest of caves: 8-connected components per level, each hanging under the component of the level above that contains it (masks are nested because the reach floor is monotone) |
+| Toolpath | `RouteWriter.cs` | Node order to segments: cuts follow `SurfacePath` (feeds; a descent steeper than `MaxRampSlope` becomes a feed over the point and a plunge), travels take the polyline or a retract by time, plunge from safe Z at the start, retract at the end |
 | Toolpath | `GougeChecker.cs` | Verifies no feed segment goes below the tip map (used by tests and analysis) |
-| Toolpath | `ToolpathSimplifier.cs` | Vector output: every run of consecutive feed segments at one rate is reduced by Douglas-Peucker to the vertices needed within `Tolerance`; a chord is also rejected when it dips below the effective tip map; rapids, plunges and run end points are untouched |
-| Toolpath/Strategies | `RasterRoughingStrategy.cs` | Id `raster-roughing`. Z-level raster clearing: per level, parallel rows at `Stepover`, cut where mask is true |
-| Toolpath/Strategies | `RasterFinishingStrategy.cs` | Id `raster-finishing`. Parallel rows through the cell boundaries at the higher of the two tips (first and last cell center included) inside the plan's finishing mask; a constant slope is one line |
-| Toolpath/Strategies | `ContourFinishingStrategy.cs` | Id `contour-finishing`. Marching-squares contours of the tip map per finishing level inside the plan's finishing mask |
-| Toolpath/Strategies | `LayerCompleteStrategy.cs` | Id `layer-complete` (default roughing). Per level the raster runs of the level mask (one-cell runs dropped, the loop cuts them) followed by its contour loops, the next level only after both |
+| Toolpath | `ToolpathSimplifier.cs` | Vector output: every run of consecutive feed segments at one rate is reduced by Douglas-Peucker to the vertices needed within `Tolerance`, then a merge pass drops kept vertices whose neighbours' chord still holds; a chord is also rejected when it dips below the effective tip map; rapids, plunges and run end points are untouched |
+| Toolpath/Strategies | `ZLayerByLayerStrategy.cs` | Id `z-layer-by-layer` (default). Cave by cave: the nodes of a cave at its level (`NodeLattice` at `Stepover`) in the order `RouteSolver` finds over the material as it stands then, one level down in place, the children before the next sibling, a rise only when a subtree is done |
+| Toolpath/Strategies | `ThreeAxisPreciseStrategy.cs` | Id `three-axis-precise`. One route over the coverage cells on the `FinishingStepover` lattice plus every cell where the tip steps by more than `Tolerance`, each at its tip height; moves follow the surface polyline, no level |
 | GCode | `GCodeFormatter.cs` | Invariant number formatting, 3 decimals, trailing zero trimming |
+
+`src/Miller.Solver` (namespace `Miller.Solver`, no references):
+
+| File | Responsibility |
+|---|---|
+| `RouteGrid.cs` | Flat row-major clearance field (`Floor[j * Width + i]`, NaN = nothing stands there) |
+| `RouteProblem.cs` | Nodes as `X`, `Y`, `Z` arrays over a `RouteGrid` |
+| `SurfacePath.cs` | The polyline between two points that never dips under a plateau: DDA over the grid lines, every crossing lifted to the highest plateau touching it (two at an edge, four at a corner) and never below the straight line between the ends, rise and descent in place at the ends; returns the vertical travel |
+| `RouteCost.cs` | `XySpeedFactor = 3`, `ZSpeedFactor = 1`; exact cost = XY / 3 + climb of the polyline; lower bound = XY / 3 + height difference |
+| `RouteBudget.cs` | `MaxEvaluations = 40,000,000` candidate moves per program, shared by all route instances in proportion to their nodes |
+| `SpatialBuckets.cs` | Uniform buckets for k-nearest and nearest-unvisited ring searches |
+| `RouteSolver.cs` | `Solve(problem, start, budget, allowance, cancellation)`: candidate lists (10 planar-nearest with exact costs), nearest-neighbour walk, then `LocalSearch`; deterministic; `PathCost` |
+| `LocalSearch.cs` | 2-opt and Or-opt (segments of 1 to 3) on an open path with a fixed first node, don't-look bits, current edge costs kept, free edges bounded from below before an exact trace, a direct-mapped pair-cost cache, segment moves as two or three reversals |
 | GCode | `IPostProcessor.cs` | `Id`, `DisplayName`, `FileExtension`, `Write(Toolpath, MillingProject, TextWriter)` |
 | GCode | `PostProcessorRegistry.cs` | Explicit static list; `GetById`, `All` |
 | GCode | `GrblPostProcessor.cs` | Id `grbl`, extension `.nc`. Header comments, `G21 G90 G94 G17`, `S.. M3`, `G0`/`G1` with `F`, `M5`, `M30` |
@@ -270,14 +292,13 @@ STL file
   -> AxisSetup.ToMatrix() ..... Mesh (machine coordinates, Z up, origin per OriginMode)
   -> StockModel ............... stock HeightMap (box or cylinder, top = stock top)
   -> MeshRasterizer ........... model HeightMap (max Z per cell, floor where no model)
-  -> HeightMapDilation ........ tip HeightMap (lowest allowed cutter tip per cell)
+  -> ReachMap ................. tip HeightMap: reach floor per position by footprint majority
   -> HeadClearance ............ head-limit HeightMap, effective tip = max(tip, limit)
-  -> Slicer ................... SlicePlan (levels, masks, operations)
+  -> Slicer ................... SlicePlan (levels with masks, coverage)
   -> SeparationRegion ......... plan restricted to the cut scope, Standing map; strategies see
                                 effective tip = max(effective tip, standing)
-  -> StrategyRegistry.GetById(RoughingStrategyId).Generate(context)  -> Toolpath A
-  -> StrategyRegistry.GetById(FinishingStrategyId).Generate(context) -> Toolpath B
-  -> ToolpathLinker ........... Toolpath (A + B with retracts, rapids, plunges)
+  -> StrategyRegistry.GetById(RoutingStrategyId).Generate(context) -> Toolpath
+                                (NodeLattice, CaveTree, RouteSolver, RouteWriter)
   -> ToolpathSimplifier ....... feed runs reduced to vectors within Tolerance
   -> ToolpathStatistics
   -> PostProcessorRegistry.GetById(PostProcessorId).Write(...) -> .nc file
@@ -322,7 +343,9 @@ HeightMapRenderer colors cells by category using Colors.axaml resources.
 ### 6.1 Adding a toolpath strategy
 
 1. Add `src/Miller.Core/Toolpath/Strategies/<Name>Strategy.cs` implementing
-   `IToolpathStrategy` with a unique lowercase id (for example `adaptive-roughing`).
+   `IToolpathStrategy` with a unique lowercase id (for example `adaptive-clearing`);
+   it returns the whole program, so it ends with `RouteWriter.Finish()` or the
+   equivalent.
 2. Add one line to the list in `StrategyRegistry.cs`.
 3. Add `tests/Miller.Tests/Core/Toolpath/<Name>StrategyTests.cs` with at least a
    gouge check (`GougeChecker`) and a coverage check.

@@ -80,6 +80,7 @@ scripts/vendor-packages.sh   one-time online download of packages into third_par
 third_party/nuget/           vendored .nupkg files
 samples/heart.miller.json    sample project for the fixture STL
 Milling_Heart_V2.STL         fixture (binary STL, 4050 triangles)
+src/Miller.Solver/           route solver over flat arrays: surface polyline, costs, budget, 2-opt and Or-opt (no domain types)
 src/Miller.Core/             domain: geometry, io, setup, heightmap, slicing, toolpath, gcode, simulation, analysis
 src/Miller.Application/      services, validation, progress
 src/Miller.App/              Avalonia UI: views, view models, rendering, ui services, styles, assets
@@ -239,11 +240,32 @@ Tool profile (`ToolProfile`): for every grid offset `(dx, dy)` with
 - Flat: `dz = 0`
 - Ball: `dz = r - sqrt(r^2 - d^2)`
 
-Tip map (`HeightMapDilation`), the lowest tip height that does not gouge:
+Drop cutter (`HeightMapDilation.ComputeTipMap`), the lowest tip height that
+does not gouge anywhere under the footprint:
 
 ```
-tip[i,j] = max over footprint of ( model[i+dx, j+dy] - dz(dx,dy) )
+drop[i,j] = max over footprint of ( model[i+dx, j+dy] - dz(dx,dy) )
 ```
+
+Reach map (`ReachMap`), the tip map the pipeline uses. At a level z every
+footprint cell that holds stock is "unintended" when the model stands above the
+tool bottom there (`model - dz > z`) and "intended" otherwise; the position is
+reachable at z when the intended cells are at least as many as the unintended
+ones (a tie counts as reachable). Lowering z only turns intended cells into
+unintended ones, so reachability is monotone and one height per position
+describes it:
+
+```
+values = { model[i+dx, j+dy] - dz(dx,dy) : footprint cell holds stock }, n = count
+tip[i,j] = max( the (n / 2 + 1)-th largest of values, floor )
+```
+
+Consequences to keep in mind: the tool axis reaches a straight wall up to the
+wall line, so a wall is cut back by one cutter radius and the analysis reports
+those cells as Gouge; a feature narrower than half the footprint (a thin rib, a
+slot narrower than about 0.42 of the diameter) is cut away; a ball tip dimples a
+flat surface because the edge cells outvote the center. A footprint that is all
+model or all stock gives the drop-cutter value.
 
 Head limit (`HeadClearance`), annulus `r < d <= HeadDiameter/2`:
 
@@ -279,38 +301,67 @@ Uncuttable classification (`UncuttableRegions`):
 - CornerLimited: `effectiveTip[i,j] - model[i,j] > Tolerance` and not HeadLimited
   (the cutter radius is larger than the local concave radius).
 
-### 6.4 Slicing and toolpath parameters
+### 6.4 Slicing and routing parameters
 
-- `Stepdown`: Z distance between roughing levels, and nothing else: the Z
-  steps of the finishing come from the surface and the tolerance. Levels:
-  `z_k = stockTop - k * Stepdown` for k = 1.. until `z_k <= min(effectiveTip)`;
-  the last level is clamped to `min(effectiveTip)`.
-- Roughing mask at level z: cells where `effectiveTip[i,j] <= z + LevelTolerance`
-  and the stock still has material above z.
-- Cut scope (`MillingProject.CutScope`): `Everything` roughs every mask cell;
+- One routing strategy (`MillingProject.RoutingStrategyId`) produces the whole
+  program: `z-layer-by-layer` (default) or `three-axis-precise`.
+- `Stepdown`: Z distance between the levels of "Z layer by layer", and nothing
+  else. Levels: `z_k = stockTop - k * Stepdown` for k = 1.. until
+  `z_k <= min(effectiveTip)`; the last level is clamped to `min(effectiveTip)`.
+- Level mask at level z: cells where `effectiveTip[i,j] <= z + LevelTolerance`
+  and the stock still has material above z. The masks are nested, so their
+  8-connected components form a tree of caves (`CaveTree`).
+- Cut scope (`MillingProject.CutScope`): `Everything` keeps every mask cell;
   `Separation` keeps per level only the model region (tip above the floor) and
   a trench next to that level's obstacles, widened by
   `HeadRadius - CutterRadius + margin` around every tool position of the deepest
   level whose head (CutterLength above it) enters the slab, and everything cut
-  at the level below. The finishing covers the model region and the innermost
-  trench; the standing stock is part of the tip map the strategies stay above.
-  Thin trenches need a profile pass (layer-complete); raster rows skip them.
-- Vector output: after linking, every run of consecutive feed segments at one
-  rate is reduced by Douglas-Peucker so that no dropped vertex lies farther than
-  `Tolerance` from its chord, and a chord that dips below the tip map by more
-  than `Tolerance` is split as well. The raster finishing rows run through the
-  cell boundaries at the higher of the two tips, so a constant slope is one
-  segment and the surface is lifted by at most slope x cell size / 2.
-- `Stepover`: distance between adjacent parallel passes. Valid range
-  `(0, CutterDiameter]`. Finishing typically uses a smaller stepover than
-  roughing; both come from the same parameter set with a `FinishingStepover`
-  field.
+  at the level below. The coverage of "3 axis precise" is the model region and
+  the innermost trench; the standing stock is part of the tip map the strategies
+  stay above.
+- Nodes (`NodeLattice`): the tool positions a route visits are the region's
+  cells on a square lattice spaced by the stepover (`Stepover` for the levels,
+  `FinishingStepover` for "3 axis precise"; the first and last grid line always
+  count) plus the region's outline cells, so walls are cut at the outline. Discs
+  of radius r at a lattice spacing of at most r x sqrt(2) cover the region
+  whatever the visiting order; a wider stepover relies on the straight strips
+  between consecutive nodes. "3 axis precise" adds every cell where the tip
+  steps by more than `Tolerance` to a neighbour.
+- Route (`Miller.Solver`): the cost of a move is `XY / 3 + Z` (XY moves three
+  times faster than Z), the Z part being the vertical travel of the surface
+  polyline between the two nodes (`SurfacePath`: every cell-edge crossing lifted
+  to the highest plateau touching it, never below the straight line between the
+  ends, rise and descent in place at the ends). `RouteSolver` walks nearest
+  neighbour over candidate lists (10 planar-nearest) and improves with 2-opt and
+  Or-opt until nothing improves or the program's budget of 40,000,000 evaluated
+  candidate moves (`RouteBudget.MaxEvaluations`, shared in proportion to node
+  counts) is spent. Going around an obstacle is not a separate search: the
+  tour through the intermediate nodes is the way around, and the cost of a move
+  over an obstacle is its climb.
+- "Z layer by layer": cave by cave. A cave is cut completely at its level, then
+  the tool drops one level in place into the first child cave; a sibling is
+  visited only when the whole subtree is done, nearest first. Every route is
+  solved over the material as it stands at that moment (the cave's cells at the
+  level, everything else at what the previous routes left), so a move that
+  leaves the cave climbs the standing material instead of slotting through it.
+- "3 axis precise": one route over all coverage nodes at their tip height, moves
+  follow the surface polyline; `Stepdown` plays no part, a wall is cut at full
+  depth. The program starts with a plunge from safe Z at the first node.
+- Segments (`RouteWriter`): level, rising and gently descending parts of the
+  polyline are feeds; a descent steeper than `MaxRampSlope` (2, about 63
+  degrees) is a feed over the lower point and a plunge. A travel between two
+  routes takes the polyline or a retract to safe Z, a rapid and a plunge,
+  whichever the rates make faster.
+- Vector output: every run of consecutive feed segments at one rate is reduced
+  by Douglas-Peucker so that no dropped vertex lies farther than `Tolerance`
+  from its chord, a merge pass drops kept vertices whose neighbours' chord still
+  holds, and a chord that dips below the tip map by more than `Tolerance` is
+  split as well.
+- `Stepover`, `FinishingStepover`: valid range `(0, CutterDiameter]`.
 - `SafeHeight`: clearance above the stock top for rapid moves. The absolute rapid Z is
   stock top + `SafeHeight`; the value must be > 0 and does not depend on the origin mode.
 - Feed kinds: `Feed` uses `FeedRate`, `Plunge` uses `PlungeRate`, `Rapid` uses
   `RapidRate` (only for time estimation and simulation; G-code emits `G0`).
-- `MillingDirection`: `Zigzag` alternates row direction; `OneWay` retracts and
-  rapids back for every row.
 
 ### 6.5 G-code (Grbl post-processor)
 
@@ -1392,6 +1443,46 @@ check that decides done.
 - Input: user request (a press on the progress bar moves the simulation there while it plays)
 - Output: `SimulationEngine.SeekTo(length)`, `ElapsedSeconds`; `SimulationClock.Seek`; `SimulationService.SeekTo(fraction)`; `SimulationViewModel.SeekCommand` off the UI thread with `IsSeeking` and `IsWorking`; pointer handler on the progress bar
 - Acceptance: seek by distance equals stepping by time cell by cell; a backward seek equals a fresh run to that point (stock, events, time); playing resumes after a seek; headless press at half the bar seeks to 0.5
+- Status: done
+
+#### T-116 Single routing strategy
+- Depends on: T-113
+- Files: `src/Miller.Core/Setup/MillingProject.cs`, `src/Miller.Core/Setup/CuttingParameters.cs`, `src/Miller.Core/Setup/ProjectSerializer.cs`, `src/Miller.Core/Toolpath/IToolpathStrategy.cs`, `src/Miller.Core/Toolpath/StrategyRegistry.cs`, `src/Miller.Application/Services/PipelineService.cs`, `src/Miller.App/ViewModels/StrategySelectionViewModel.cs`, `src/Miller.App/ViewModels/CuttingParametersViewModel.cs`, `src/Miller.App/Views/StrategySelectionView.axaml`, `src/Miller.App/Views/CuttingParametersView.axaml`, `samples/heart.miller.json`, tests
+- Input: user request (one "Routing strategy" instead of roughing plus finishing, named "Z layer by layer" and "3 axis precise")
+- Output: schema 3 with `RoutingStrategyId`; `RoughingStrategyId`, `FinishingStrategyId` and `Parameters.Direction` read and dropped on load; `MillingOperation`, `ToolpathLinker`, `PassOrdering`, `RasterRows`, `MarchingSquares` and the four old strategies removed; one "route" pipeline stage; Cutting tab without direction
+- Acceptance: registry holds exactly the two strategies; a schema 2 file loads, maps to "Z layer by layer" and saves without legacy keys; the Strategy tab shows one combo; suite green
+- Status: done
+
+#### T-117 Reach map
+- Depends on: T-025
+- Files: `src/Miller.Core/HeightMap/ReachMap.cs`, `src/Miller.Core/Slicing/Slicer.cs`, `src/Miller.Application/Services/PipelineService.cs`, `tests/Miller.Tests/Core/HeightMap/ReachMapTests.cs`
+- Input: user request (doubtful positions decided by which quantity is larger, intended or unintended cells, ties to intended)
+- Output: `ReachMap.Compute` (order statistic per position, quickselect, never below the floor, 300 x 300 with a 113-cell footprint in about 0.1 s); the pipeline feeds it where the drop cutter was; the analysis reports the minority cells as Gouge
+- Acceptance: 1 of 5 cells reachable, 4 of 5 not, 2 of 4 reachable; a straight wall is reached up to its line; masks nested; uniform footprints equal the drop cutter
+- Status: done
+
+#### T-118 Route solver
+- Depends on: none
+- Files: `src/Miller.Solver/*`, `Miller.sln`, `tests/Miller.Tests/Solver/*`
+- Input: user request (fastest route with XY three times faster than Z, a budget of 40,000,000, a separate fast library)
+- Output: `Miller.Solver` assembly (`RouteGrid`, `RouteProblem`, `SurfacePath`, `RouteCost`, `RouteBudget`, `SpatialBuckets`, `RouteSolver`, `LocalSearch`), deterministic, cancellable
+- Acceptance: never worse than nearest neighbour; the allowance is never exceeded and a valid path is returned for any allowance; the gap in a wall beats climbing it; measured 20 M evaluations per second on a flat 10,000-node instance and 6 M on a rugged one
+- Status: done
+
+#### T-119 Z layer by layer
+- Depends on: T-117, T-118
+- Files: `src/Miller.Core/Toolpath/CaveTree.cs`, `src/Miller.Core/Toolpath/NodeLattice.cs`, `src/Miller.Core/Toolpath/RouteWriter.cs`, `src/Miller.Core/Toolpath/Strategies/ZLayerByLayerStrategy.cs`, `src/Miller.Core/Toolpath/ToolpathSimplifier.cs`, tests, `tests/Miller.Tests/Golden/heart_grbl.nc`
+- Input: user request (cover the level of a cave, descend, rise only when the cave is done, fastest route)
+- Output: cave tree, lattice plus outline nodes, routes over the standing material, writer with the ramp rule and the travel-by-time rule, simplifier merge pass
+- Acceptance: two caves give the level sequence 3, 1, 0, 3, 1, 0 with one rise; a split cave finishes one subtree before the other and crosses at the split level; every reachable cell ends at its floor and nothing below it; the user's heart (1.2 mm cutter, 0.1 mm cells, separation): 3,194 retracts to 1, estimated 208 min to 14.3 min, zero gouge violations and zero events
+- Status: done
+
+#### T-120 3 axis precise
+- Depends on: T-117, T-118
+- Files: `src/Miller.Core/Toolpath/Strategies/ThreeAxisPreciseStrategy.cs`, `src/Miller.Solver/SurfacePath.cs`, tests
+- Input: user request (free 3-axis movement over the map, fastest route)
+- Output: one route over the coverage lattice plus step cells at their tip height; `SurfacePath` lifts a crossing to every plateau touching it (a corner crossing touches four cells, which the plateau model judges by one of them)
+- Acceptance: the bump plate is followed without level quantization and without gouge; every coverage cell ends at its floor; wall cells are nodes; deterministic; the user's heart: 6.1 min estimated, zero gouge violations and zero events
 - Status: done
 
 ### M8 Packaging and release
