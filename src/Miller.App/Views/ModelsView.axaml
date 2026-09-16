@@ -12,25 +12,43 @@
         <Button Name="RemoveModelButton" Content="Remove" Command="{Binding RemoveCommand}" />
       </StackPanel>
 
+      <TextBlock Classes="header" Text="Stock around all models (auto-fit)" />
+      <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" RowDefinitions="Auto" IsEnabled="{Binding IsAutoFit}">
+        <TextBlock Grid.Column="0" Text="X" VerticalAlignment="Center" Margin="0,0,4,0" />
+        <ComboBox Grid.Column="1" Name="StockAlignXBox" ItemsSource="{x:Static vm:ModelsViewModel.StockAlignments}" SelectedItem="{Binding StockAlignX}" MinWidth="92" Margin="0,0,8,0" />
+        <TextBlock Grid.Column="2" Text="Y" VerticalAlignment="Center" Margin="0,0,4,0" />
+        <ComboBox Grid.Column="3" Name="StockAlignYBox" ItemsSource="{x:Static vm:ModelsViewModel.StockAlignments}" SelectedItem="{Binding StockAlignY}" MinWidth="92" Margin="0,0,8,0" />
+        <TextBlock Grid.Column="4" Text="Z" VerticalAlignment="Center" Margin="0,0,4,0" />
+        <ComboBox Grid.Column="5" Name="StockAlignZBox" ItemsSource="{x:Static vm:ModelsViewModel.StockAlignments}" SelectedItem="{Binding StockAlignZ}" MinWidth="92" />
+      </Grid>
+      <TextBlock Text="Min puts the models' lowest point at the stock minimum (Z: model bottom on the stock bottom), Max the highest at the stock maximum (Z: model top at the stock top). Explicit stock placement ignores this." TextWrapping="Wrap" />
+
       <TextBlock Classes="header" Name="PlacementText" Text="{Binding PlacementText}" TextWrapping="Wrap" />
       <TextBlock Classes="label" Text="Offset X" />
       <StackPanel Orientation="Horizontal" Spacing="8">
         <TextBox Name="OffsetXBox" Classes="numeric" Text="{Binding OffsetX}" IsEnabled="{Binding HasSelection}" />
-        <Button Name="CenterXButton" Content="Center X" Command="{Binding CenterXCommand}" />
+        <Button Name="AlignXMinButton" Content="Min" Command="{Binding AlignCommand}" CommandParameter="{x:Static vm:AlignTarget.XMin}" />
+        <Button Name="CenterXButton" Content="Center" Command="{Binding AlignCommand}" CommandParameter="{x:Static vm:AlignTarget.XCenter}" />
+        <Button Name="AlignXMaxButton" Content="Max" Command="{Binding AlignCommand}" CommandParameter="{x:Static vm:AlignTarget.XMax}" />
       </StackPanel>
       <TextBlock Classes="label" Text="Offset Y" />
       <StackPanel Orientation="Horizontal" Spacing="8">
         <TextBox Name="OffsetYBox" Classes="numeric" Text="{Binding OffsetY}" IsEnabled="{Binding HasSelection}" />
-        <Button Name="CenterYButton" Content="Center Y" Command="{Binding CenterYCommand}" />
+        <Button Name="AlignYMinButton" Content="Min" Command="{Binding AlignCommand}" CommandParameter="{x:Static vm:AlignTarget.YMin}" />
+        <Button Name="CenterYButton" Content="Center" Command="{Binding AlignCommand}" CommandParameter="{x:Static vm:AlignTarget.YCenter}" />
+        <Button Name="AlignYMaxButton" Content="Max" Command="{Binding AlignCommand}" CommandParameter="{x:Static vm:AlignTarget.YMax}" />
       </StackPanel>
       <TextBlock Classes="label" Text="Offset Z" />
       <StackPanel Orientation="Horizontal" Spacing="8">
         <TextBox Name="OffsetZBox" Classes="numeric" Text="{Binding OffsetZ}" IsEnabled="{Binding HasSelection}" />
-        <Button Name="CenterZButton" Content="Center Z" Command="{Binding CenterZCommand}" />
+        <Button Name="AlignZMinButton" Content="Min" Command="{Binding AlignCommand}" CommandParameter="{x:Static vm:AlignTarget.ZMin}" />
+        <Button Name="CenterZButton" Content="Center" Command="{Binding AlignCommand}" CommandParameter="{x:Static vm:AlignTarget.ZCenter}" />
+        <Button Name="AlignZMaxButton" Content="Max" Command="{Binding AlignCommand}" CommandParameter="{x:Static vm:AlignTarget.ZMax}" />
       </StackPanel>
+      <TextBlock Classes="validation" Name="AlignmentMessageText" Text="{Binding AlignmentMessage}" IsVisible="{Binding AlignmentMessage, Converter={x:Static ObjectConverters.IsNotNull}}" TextWrapping="Wrap" />
       <TextBlock Classes="label" Text="Rotation about Z (degrees)" />
       <TextBox Name="RotationZBox" Classes="numeric" Text="{Binding RotationZ}" IsEnabled="{Binding HasSelection}" HorizontalAlignment="Left" />
-      <TextBlock Text="Left click in the viewport selects a model; offsets move it relative to the stock." TextWrapping="Wrap" Margin="0,8,0,0" />
+      <TextBlock Text="Min, Center and Max move the selected model inside the stock on that axis. Left click in the viewport selects a model; offsets move it relative to the stock." TextWrapping="Wrap" Margin="0,8,0,0" />
     </StackPanel>
   </ScrollViewer>
 </UserControl>

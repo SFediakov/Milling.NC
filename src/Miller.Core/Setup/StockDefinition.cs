@@ -14,6 +14,15 @@ public enum StockPlacement
     Explicit,
 }
 
+// Where the union of the placed models sits inside an auto-fit stock on one axis: its minimum at
+// the stock minimum, centred, or its maximum at the stock maximum (on Z: model top at stock top).
+public enum StockAlignment
+{
+    Min,
+    Center,
+    Max,
+}
+
 public sealed class StockDefinition
 {
     public const float DefaultSizeX = 100f;
@@ -36,6 +45,14 @@ public sealed class StockDefinition
     public float Height { get; set; } = DefaultHeight;
 
     public StockPlacement Placement { get; set; } = StockPlacement.AutoFitWithMargin;
+
+    // Auto-fit alignment of the model union per axis; the defaults are centred in XY with the model
+    // top at the stock top.
+    public StockAlignment AlignX { get; set; } = StockAlignment.Center;
+
+    public StockAlignment AlignY { get; set; } = StockAlignment.Center;
+
+    public StockAlignment AlignZ { get; set; } = StockAlignment.Max;
 
     public float Margin { get; set; } = DefaultMargin;
 

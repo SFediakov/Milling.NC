@@ -119,4 +119,62 @@ public sealed class ModelsViewModelTests : IDisposable
         Assert.Equal(2, reopened.Viewport.Meshes.Count);
         Assert.Empty(_errors.Shown);
     }
+    [Fact]
+    public async Task Align_MovesTheSelectedModelToTheStockSide_AndReportsWhenTheStockFollowsIt()
+    {
+        var vm = await WithTwoCubesAsync();
+        vm.Models.SelectedIndex = 1;
+        vm.Models.OffsetX = 20f;
+        Assert.True(vm.Models.AlignCommand.CanExecute(AlignTarget.XMax));
+
+        // Auto-fit stock centred on the union: the second cube reaches the stock's +X side and its
+        // bottom while the first cube anchors the union.
+        vm.Models.AlignCommand.Execute(AlignTarget.XMax);
+        Assert.Null(vm.Models.AlignmentMessage);
+        var stock = vm.Project.Current.Stock;
+        var machine = ModelLayout.MachineBounds(vm.Project.Current, vm.MeshImport.Bounds);
+        Assert.Equal(machine.Max.X, vm.Viewport.Meshes[1].Bounds.Max.X, 2);
+        Assert.Equal(stock.SizeX, machine.Max.X, 2);
+        vm.Models.AlignCommand.Execute(AlignTarget.ZMin);
+        Assert.Null(vm.Models.AlignmentMessage);
+        Assert.Equal(0f, vm.Viewport.Meshes[1].Bounds.Min.Z, 2);
+
+        // A lone cube: the stock hangs from its top, so Z Min has no fixed point and says so; the
+        // message clears when the selection changes.
+        vm.Models.RemoveCommand.Execute(null);
+        vm.Models.SelectedIndex = 0;
+        vm.Models.AlignCommand.Execute(AlignTarget.ZMin);
+        Assert.NotNull(vm.Models.AlignmentMessage);
+        Assert.Contains("Z", vm.Models.AlignmentMessage);
+        Assert.Equal(Vector3.Zero, vm.Project.Current.Models[0].Offset);
+        vm.Models.SelectedIndex = -1;
+        Assert.Null(vm.Models.AlignmentMessage);
+        Assert.False(vm.Models.AlignCommand.CanExecute(AlignTarget.XMin));
+    }
+
+    [Fact]
+    public async Task StockAlignment_MovesTheUnionInsideTheStock()
+    {
+        var vm = await WithTwoCubesAsync();
+        Assert.True(vm.Models.IsAutoFit);
+        Assert.Equal(StockAlignment.Max, vm.Models.StockAlignZ);
+        Assert.Equal(new[] { StockAlignment.Min, StockAlignment.Center, StockAlignment.Max }, ModelsViewModel.StockAlignments);
+
+        vm.Models.StockAlignZ = StockAlignment.Min;
+        Assert.Equal(StockAlignment.Min, vm.Project.Current.Stock.AlignZ);
+        Assert.True(vm.Project.IsDirty);
+        var machine = ModelLayout.MachineBounds(vm.Project.Current, vm.MeshImport.Bounds);
+        Assert.Equal(0f, machine.Min.Z, 3);
+        Assert.Equal(0f, vm.Viewport.Meshes[0].Bounds.Min.Z, 3);
+
+        vm.Models.StockAlignX = StockAlignment.Min;
+        machine = ModelLayout.MachineBounds(vm.Project.Current, vm.MeshImport.Bounds);
+        Assert.Equal(0f, machine.Min.X, 3);
+
+        vm.Stock.Placement = StockPlacement.Explicit;
+        Assert.False(vm.Models.IsAutoFit);
+        vm.NewProjectCommand.Execute(null);
+        Assert.Equal(StockAlignment.Max, vm.Models.StockAlignZ);
+        Assert.True(vm.Models.IsAutoFit);
+    }
 }
