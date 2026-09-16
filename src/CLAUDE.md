@@ -228,3 +228,37 @@
 - A python patch script in a heredoc breaks twice on backslashes: the tool collapses doubled ones
   and a Windows path such as `\Users` then turns into a unicode escape error. Scripts that carry
   backslashes go to a file through the Write tool and use raw strings.
+- The vector output lives in one place, ToolpathSimplifier, run by the pipeline after linking; the
+  strategies still emit cell-by-cell chains and their tests compare vertex sets with marching
+  squares, so simplifying inside a strategy or the linker would break those tests for no gain.
+  Douglas-Peucker alone is not enough on a plateau grid: a chord within the tolerance can still
+  cross a wall cell, so every accepted chord also passes GougeChecker.IsClear.
+- Raster finishing rows keep the cell centers only at both ends; the interior points are the cell
+  boundaries at the higher tip. The old center-plus-boundary staircase was never collinear on a
+  slope and left a sawtooth; the boundary polyline lifts the tool by slope x cell / 2 instead.
+- The roughing mask must use the same slack as CeilToLevel (Slicer.LevelTolerance): a rasterized
+  30 top reads 30.000002, the head limit from it 18.000002, and an exact "tip <= level" left that
+  cell out of the level-18 mask while the head limit assumed it stood at 18. The head then hit it
+  from the level below (132 events on a 30 mm stock with a 12 mm cutter, in both cut scopes).
+- The separation region must not feed its standing map back into the head-limit iteration: the
+  limit from the standing outer stock raises the effective tip beside the trench, that widens the
+  model region (tip above the floor), the trench moves outward, and after eight rounds the whole
+  stock is model region. The terraces guarantee head clearance by construction; the standing map
+  only joins the tip map the strategies stay above.
+- Terrace widening must start from every tool position of the deeper level (the whole mask, model
+  region included), not from the trench cells alone: the tool also works on the model-region ring
+  the head limit leaves beside a tall part, and the outer wall above must clear its head too.
+- The heart sample pins raster-roughing, whose rows skip anything thinner than a stepover; the 47
+  head events it reports are that strategy's known limitation, and thin separation trenches need
+  the profile pass of layer-complete (zero events on the heart in both scopes).
+- Git with core.autocrlf=true rewrites a stashed and restored file with CRLF; a `python -c` patch
+  that searches for LF text then finds nothing. Normalise the file back to LF before patching, or
+  read it with newline='' and match on the ending it has.
+- With two models the second one can always reach a stock side by its offset (the first anchors
+  the union); only a lone model, or the one that defines the extreme the stock hangs on, has no
+  fixed point. The alignment loop halves the shift per round in the anchored case, so 16 rounds
+  ended 1e-4 short from a 7 mm start; 32 rounds plus a residual check decide convergence.
+- Seeking backward is Stop plus a replay: the engine only covers forward, the service swaps in a
+  fresh stock clone first, so the view model re-uploads the stock map after every seek exactly as
+  it does after Stop. The clock is paused before the background sweep and gets the engine's
+  elapsed time afterwards; resume only when the seek did not land on the end.
