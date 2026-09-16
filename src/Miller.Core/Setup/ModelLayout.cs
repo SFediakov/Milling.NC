@@ -75,15 +75,21 @@ public static class ModelLayout
     public static Mesh MergeMachineMeshes(MillingProject project, IReadOnlyList<Mesh> meshes)
         => new(MachineMeshes(project, meshes).SelectMany(m => m.Triangles));
 
-    // Centering converges in a few rounds because the stock follows the union of the models.
-    public const int CenterIterations = 16;
-    public const float CenterTolerance = 1e-4f;
+    // Alignment converges by halving when another model anchors the union, so 32 rounds reach the
+    // tolerance from any offset the stock can hold.
+    public const int AlignIterations = 32;
+    public const float AlignTolerance = 1e-4f;
 
-    // The offset that puts model index at the stock middle on one axis (0 = X, 1 = Y, 2 = Z) while
-    // the other components stay. The stock corner sits around the union of all models, so moving
-    // the model moves the stock too; the fixed point is found by repeating the shift until it is
-    // negligible (a single model in an auto-fit stock is already there).
     public static Vector3 CenteredOffset(MillingProject project, IReadOnlyList<BoundingBox> modelBounds, int index, int axis)
+        => AlignedOffset(project, modelBounds, index, axis, StockAlignment.Center);
+
+    // The offset that puts model index at the stock minimum, middle or maximum on one axis (0 = X,
+    // 1 = Y, 2 = Z) while the other components stay. The stock corner sits around the union of all
+    // models, so moving the model moves the stock too; the fixed point is found by repeating the
+    // shift until it is negligible. When the stock follows this model on that axis (a lone model, or
+    // the one that defines the union extreme the stock hangs on) no offset reaches the target, and
+    // that is reported instead of an offset that changes nothing.
+    public static Vector3 AlignedOffset(MillingProject project, IReadOnlyList<BoundingBox> modelBounds, int index, int axis, StockAlignment alignment)
     {
         RequireAligned(project, modelBounds);
         if (index < 0 || index >= modelBounds.Count)
@@ -101,16 +107,19 @@ public static class ModelLayout
         var offset = original;
         try
         {
-            for (var round = 0; round < CenterIterations; round++)
+            for (var round = 0; ; round++)
             {
                 placement.Offset = offset;
-                var corner = AxisSetup.StockCorner(PlacedBounds(project, modelBounds), project.Stock);
-                var stockCenter = corner + AxisSetup.StockBoundingSize(project.Stock) / 2;
-                var modelCenter = AxisSetup.TransformBounds(modelBounds[index], PlacementMatrix(project.Axes, placement, modelBounds[index])).Center;
-                var shift = Component(stockCenter - modelCenter, axis);
-                if (MathF.Abs(shift) <= CenterTolerance)
+                var shift = AlignmentShift(project, modelBounds, index, axis, alignment);
+                if (MathF.Abs(shift) <= AlignTolerance)
                 {
-                    break;
+                    return offset;
+                }
+
+                if (round >= AlignIterations)
+                {
+                    throw new InvalidOperationException(
+                        $"The stock follows this model on {AxisName(axis)}, so no offset moves the model to the stock {alignment.ToString().ToLowerInvariant()}; choose the stock alignment instead.");
                 }
 
                 offset = axis switch
@@ -125,9 +134,25 @@ public static class ModelLayout
         {
             placement.Offset = original;
         }
-
-        return offset;
     }
+
+    // Distance from the model's reference point to the stock's on one axis for the current offsets.
+    private static float AlignmentShift(MillingProject project, IReadOnlyList<BoundingBox> modelBounds, int index, int axis, StockAlignment alignment)
+    {
+        var corner = AxisSetup.StockCorner(PlacedBounds(project, modelBounds), project.Stock);
+        var size = AxisSetup.StockBoundingSize(project.Stock);
+        var model = AxisSetup.TransformBounds(modelBounds[index], PlacementMatrix(project.Axes, project.Models[index], modelBounds[index]));
+        var (stockPoint, modelPoint) = alignment switch
+        {
+            StockAlignment.Min => (corner, model.Min),
+            StockAlignment.Center => (corner + size / 2, model.Center),
+            StockAlignment.Max => (corner + size, model.Max),
+            _ => throw new ArgumentException($"Unknown stock alignment {alignment}.", nameof(alignment)),
+        };
+        return Component(stockPoint - modelPoint, axis);
+    }
+
+    private static string AxisName(int axis) => axis switch { 0 => "X", 1 => "Y", _ => "Z" };
 
     private static float Component(Vector3 v, int axis) => axis switch { 0 => v.X, 1 => v.Y, _ => v.Z };
 

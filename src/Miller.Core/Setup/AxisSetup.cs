@@ -94,11 +94,20 @@ public sealed class AxisSetup
         var size = StockBoundingSize(stock);
         return stock.Placement == StockPlacement.AutoFitWithMargin
             ? new Vector3(
-                modelBounds.Center.X - size.X / 2,
-                modelBounds.Center.Y - size.Y / 2,
-                modelBounds.Max.Z - size.Z)
+                AlignedMin(modelBounds.Min.X, modelBounds.Max.X, size.X, stock.AlignX),
+                AlignedMin(modelBounds.Min.Y, modelBounds.Max.Y, size.Y, stock.AlignY),
+                AlignedMin(modelBounds.Min.Z, modelBounds.Max.Z, size.Z, stock.AlignZ))
             : modelBounds.Min + stock.ExplicitOrigin;
     }
+
+    // Stock minimum on one axis for a model span [min, max] and a stock extent.
+    public static float AlignedMin(float min, float max, float extent, StockAlignment alignment) => alignment switch
+    {
+        StockAlignment.Min => min,
+        StockAlignment.Center => (min + max) / 2 - extent / 2,
+        StockAlignment.Max => max - extent,
+        _ => throw new ArgumentException($"Unknown stock alignment {alignment}.", nameof(alignment)),
+    };
 
     // Machine zero relative to the stock's minimum corner.
     public Vector3 OriginOffset(StockDefinition stock)
