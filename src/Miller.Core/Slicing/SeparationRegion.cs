@@ -6,8 +6,9 @@ namespace Miller.Core.Slicing;
 
 // The plan restricted to the chosen cut scope, and what stands after it besides the model:
 // Standing holds the stock surface over cells the levels never touch, the terrace level over
-// trench cells, and NaN where nothing but the model constrains the tool (model region, no stock).
-public sealed record ScopedPlan(SlicePlan Plan, HeightMap Standing);
+// trench cells, and NaN where nothing but the model constrains the tool (model region, no stock,
+// islands milled out). MilledIslands lists the islands below the volume to keep.
+public sealed record ScopedPlan(SlicePlan Plan, HeightMap Standing, IReadOnlyList<MaterialIsland> MilledIslands);
 
 // Separation scope: the levels remove only what frees the model from the stock. Per level the
 // mask keeps the model region (cells whose tip stands above the floor: the tool must reach them to
@@ -17,7 +18,9 @@ public sealed record ScopedPlan(SlicePlan Plan, HeightMap Standing);
 //   - the region of the shallowest deeper level whose tool head reaches into this slab (slab top
 //     above that level plus CutterLength), widened by HeadRadius - CutterRadius + margin, so the
 //     head working down there clears the trench wall.
-// The trench is therefore a terrace whose steps are one cutter length apart.
+// The trench is therefore a terrace whose steps are one cutter length apart. Islands of standing
+// stock the trench encloses (MaterialIslands) whose volume is below minIslandVolume are milled
+// out like the unrestricted plan would.
 public static class SeparationRegion
 {
     // Cells adjacent to an obstacle, diagonals included, form the innermost trench.
@@ -31,10 +34,10 @@ public static class SeparationRegion
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(grid);
-        return new ScopedPlan(plan, new HeightMap(grid.OriginX, grid.OriginY, grid.CellSize, grid.Width, grid.Height, float.NaN));
+        return new ScopedPlan(plan, new HeightMap(grid.OriginX, grid.OriginY, grid.CellSize, grid.Width, grid.Height, float.NaN), Array.Empty<MaterialIsland>());
     }
 
-    public static ScopedPlan Build(SlicePlan plan, HeightMap effectiveTip, HeightMap stock, ToolDefinition tool, CuttingParameters parameters, float stockTop, float floor)
+    public static ScopedPlan Build(SlicePlan plan, HeightMap effectiveTip, HeightMap stock, ToolDefinition tool, CuttingParameters parameters, float stockTop, float floor, float minIslandVolume)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(effectiveTip);
@@ -102,13 +105,16 @@ public static class SeparationRegion
             }
         }
 
+        var islands = MaterialIslands.Find(standing, effectiveTip, stock, parameters.Tolerance);
+        var milled = MaterialIslands.RemoveBelow(islands, minIslandVolume, steps.Select(s => s.Mask).ToList(), masks, plan.Coverage, coverage, standing);
+
         var scoped = new List<MillingStep>(steps.Count);
         for (var k = 0; k < steps.Count; k++)
         {
             scoped.Add(new MillingStep(steps[k].Level, masks[k]));
         }
 
-        return new ScopedPlan(new SlicePlan(scoped, coverage, plan.LowestLevel), standing);
+        return new ScopedPlan(new SlicePlan(scoped, coverage, plan.LowestLevel), standing, milled);
     }
 
     // Cells the tool must visit to finish the model: the tip stands above the floor there.

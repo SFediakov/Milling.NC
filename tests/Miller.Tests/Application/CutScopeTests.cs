@@ -84,6 +84,46 @@ public sealed class CutScopeTests
     }
 
     [Fact]
+    public void Separation_MillsOutTheHoleIslandBelowTheVolume_EndToEnd()
+    {
+        var project = MillingProject.Default();
+        project.CutScope = CutScope.Separation;
+        project.Stock.SizeX = 50;
+        project.Stock.SizeY = 50;
+        project.Stock.SizeZ = 5;
+        project.Parameters.CellSize = 0.5f;
+        project.Models.Add(new ModelPlacement { StlPath = "ring.stl" });
+        var mesh = Miller.Tests.Core.Slicing.MaterialIslandsTests.Ring();
+
+        var kept = new PipelineService().Run(project, new[] { mesh }, null, CancellationToken.None);
+        var stockKept = Simulate(kept);
+        var (ci, cj) = stockKept.CellOf(25f, 25f);
+        Assert.Equal(kept.Stock.StockTop, stockKept[ci, cj], 3);
+        Assert.Equal(kept.Stock.StockTop, stockKept[0, 0], 3);
+
+        project.MinIslandVolume = 4000f;
+        var milled = new PipelineService().Run(project, new[] { mesh }, null, CancellationToken.None);
+        Assert.Empty(GougeChecker.Verify(milled.Toolpath, milled.EffectiveTip, milled.Tolerance));
+        var stockMilled = Simulate(milled);
+        Assert.Equal(milled.Floor, stockMilled[ci, cj], 3);
+        Assert.Equal(milled.Stock.StockTop, stockMilled[0, 0], 3);
+        Assert.True(float.IsNaN(milled.Standing[ci, cj]));
+        Assert.True(milled.Statistics.FeedLength > kept.Statistics.FeedLength);
+        // The ring itself is finished the same way.
+        var (ri, rj) = stockMilled.CellOf(10f, 25f);
+        Assert.Equal(5f, stockMilled[ri, rj], 2);
+    }
+
+    private static Miller.Core.HeightMaps.HeightMap Simulate(PipelineResult result)
+    {
+        var simulation = new SimulationService();
+        simulation.Load(result);
+        simulation.RunToEnd();
+        Assert.Empty(simulation.Events);
+        return simulation.Stock!;
+    }
+
+    [Fact]
     public void Separation_NeverFeedsBelowTheStandingStock()
     {
         var result = Run(BoxProject(CutScope.Separation));

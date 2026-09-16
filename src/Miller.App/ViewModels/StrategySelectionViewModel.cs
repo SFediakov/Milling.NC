@@ -56,7 +56,21 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         }
     }
 
-    public CutScope CutScope { get => Current.CutScope; set => Edit(p => p.CutScope = value); }
+    public CutScope CutScope
+    {
+        get => Current.CutScope;
+        set
+        {
+            Edit(p => p.CutScope = value);
+            OnPropertyChanged(nameof(IsSeparation));
+        }
+    }
+
+    public bool IsSeparation => Current.CutScope == CutScope.Separation;
+
+    public float MinIslandVolume { get => Current.MinIslandVolume; set => Edit(p => p.MinIslandVolume = value); }
+
+    public string? MinIslandVolumeError => ErrorFor("Strategy.MinIslandVolume");
 
     public ToolpathStatistics? Statistics { get; private set; }
 
@@ -100,6 +114,15 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         OnPropertyChanged(nameof(Strategy));
         OnPropertyChanged(nameof(PostProcessor));
         OnPropertyChanged(nameof(CutScope));
+        OnPropertyChanged(nameof(IsSeparation));
+        OnPropertyChanged(nameof(MinIslandVolume));
+        OnPropertyChanged(nameof(MinIslandVolumeError));
+    }
+
+    protected override void OnErrorsChanged()
+    {
+        base.OnErrorsChanged();
+        OnPropertyChanged(nameof(MinIslandVolumeError));
     }
 
     private void RaiseStatistics()

@@ -135,6 +135,30 @@ public sealed class SettingsViewModelsTests : IDisposable
     }
 
     [Fact]
+    public void Strategy_MinIslandVolume_FollowsTheScopeAndValidates()
+    {
+        Assert.False(_vm.Strategy.IsSeparation);
+        Assert.Equal(0f, _vm.Strategy.MinIslandVolume);
+        var raised = new List<string?>();
+        _vm.Strategy.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        _vm.Strategy.CutScope = CutScope.Separation;
+        Assert.True(_vm.Strategy.IsSeparation);
+        Assert.Contains(nameof(StrategySelectionViewModel.IsSeparation), raised);
+
+        _vm.Strategy.MinIslandVolume = 30f;
+        Assert.Equal(30f, _vm.Project.Current.MinIslandVolume);
+        Assert.Null(_vm.Strategy.MinIslandVolumeError);
+        _vm.Strategy.MinIslandVolume = -2f;
+        Assert.NotNull(_vm.Strategy.MinIslandVolumeError);
+        Assert.Contains(nameof(StrategySelectionViewModel.MinIslandVolumeError), raised);
+
+        _vm.NewProjectCommand.Execute(null);
+        Assert.False(_vm.Strategy.IsSeparation);
+        Assert.Equal(0f, _vm.Strategy.MinIslandVolume);
+        Assert.Null(_vm.Strategy.MinIslandVolumeError);
+    }
+
+    [Fact]
     public void NewProject_ReloadsEveryPanelWithoutMarkingDirty()
     {
         _vm.Tool.CutterDiameter = 4f;

@@ -43,7 +43,7 @@ public sealed class SeparationRegionTests
     {
         var context = TestContexts.BoxInStock();
         var floor = 0f;
-        var scoped = SeparationRegion.Build(context.Plan, context.EffectiveTip, context.Stock, context.Tool, context.Parameters, context.StockTop, floor);
+        var scoped = SeparationRegion.Build(context.Plan, context.EffectiveTip, context.Stock, context.Tool, context.Parameters, context.StockTop, floor, 0f);
         var everything = SeparationRegion.Everything(context.Plan, context.EffectiveTip);
         Assert.Same(context.Plan, everything.Plan);
         Assert.All(everything.Standing.Z, z => Assert.True(float.IsNaN(z)));
@@ -116,7 +116,7 @@ public sealed class SeparationRegionTests
     public void Masks_AreMonotone_DeeperCellsAreCutAtEveryLevelAbove()
     {
         var context = TestContexts.BumpPlate();
-        var scoped = SeparationRegion.Build(context.Plan, context.EffectiveTip, context.Stock, context.Tool, context.Parameters, context.StockTop, 0f);
+        var scoped = SeparationRegion.Build(context.Plan, context.EffectiveTip, context.Stock, context.Tool, context.Parameters, context.StockTop, 0f, 0f);
         var steps = scoped.Plan.Steps.ToList();
         var full = context.Plan.Steps.ToList();
         for (var k = 1; k < steps.Count; k++)
@@ -142,7 +142,7 @@ public sealed class SeparationRegionTests
         var tool = new ToolDefinition { CutterDiameter = 6, HeadDiameter = 10, CutterLength = 12 };
         var parameters = TestContexts.Parameters(0.5f);
         var context = TestContexts.Build(TestMeshes.Box(10, 10, 5), new StockDefinition { SizeX = 40, SizeY = 40, SizeZ = 30 }, tool, parameters);
-        var scoped = SeparationRegion.Build(context.Plan, context.EffectiveTip, context.Stock, context.Tool, parameters, context.StockTop, context.Plan.LowestLevel);
+        var scoped = SeparationRegion.Build(context.Plan, context.EffectiveTip, context.Stock, context.Tool, parameters, context.StockTop, context.Plan.LowestLevel, 0f);
         var steps = scoped.Plan.Steps.ToList();
         var top = steps[0];
         var bottom = steps[^1];
@@ -177,7 +177,7 @@ public sealed class SeparationRegionTests
     {
         var parameters = TestContexts.Parameters();
         var cylinder = TestContexts.Build(TestMeshes.Box(10, 10, 5), new StockDefinition { Shape = StockShape.Cylinder, Diameter = 30, Height = 5 }, TestContexts.FlatTool6(), parameters);
-        var scoped = SeparationRegion.Build(cylinder.Plan, cylinder.EffectiveTip, cylinder.Stock, cylinder.Tool, parameters, cylinder.StockTop, 0f);
+        var scoped = SeparationRegion.Build(cylinder.Plan, cylinder.EffectiveTip, cylinder.Stock, cylinder.Tool, parameters, cylinder.StockTop, 0f, 0f);
         Assert.True(float.IsNaN(scoped.Standing[0, 0]));
         Assert.True(float.IsNaN(cylinder.Stock[0, 0]));
         var (ci, cj) = cylinder.Stock.CellOf(15f, 1f);
@@ -188,7 +188,7 @@ public sealed class SeparationRegionTests
         // A plate filling the stock top: no level, the coverage keeps every material cell.
         var flat = TestContexts.Build(TestMeshes.Box(20, 20, 5), new StockDefinition { SizeX = 20, SizeY = 20, SizeZ = 5 }, TestContexts.FlatTool6(), parameters);
         Assert.Equal(0, flat.Plan.Levels);
-        var flatScoped = SeparationRegion.Build(flat.Plan, flat.EffectiveTip, flat.Stock, flat.Tool, parameters, flat.StockTop, 0f);
+        var flatScoped = SeparationRegion.Build(flat.Plan, flat.EffectiveTip, flat.Stock, flat.Tool, parameters, flat.StockTop, 0f, 0f);
         Assert.Equal(flat.Plan.Coverage.Cast<bool>().Count(b => b), flatScoped.Plan.Coverage.Cast<bool>().Count(b => b));
         Assert.All(flatScoped.Standing.Z, z => Assert.True(float.IsNaN(z)));
     }

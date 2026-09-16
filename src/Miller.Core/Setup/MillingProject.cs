@@ -47,5 +47,9 @@ public sealed class MillingProject
 
     public CutScope CutScope { get; set; } = CutScope.Everything;
 
+    // Separation scope only: the smallest island of standing stock (enclosed by the trench, mm3)
+    // that stays; smaller islands are milled out. 0 keeps every island.
+    public float MinIslandVolume { get; set; }
+
     public static MillingProject Default() => new();
 }

@@ -60,6 +60,8 @@ public sealed class ProjectSerializerTests
         },
         RoutingStrategyId = "three-axis-precise",
         PostProcessorId = "grbl",
+        CutScope = CutScope.Separation,
+        MinIslandVolume = 120.5f,
     };
 
     [Fact]
@@ -121,6 +123,8 @@ public sealed class ProjectSerializerTests
         Assert.DoesNotContain("Direction", json);
         Assert.Equal(original.RoutingStrategyId, copy.RoutingStrategyId);
         Assert.Equal(original.PostProcessorId, copy.PostProcessorId);
+        Assert.Equal(CutScope.Separation, copy.CutScope);
+        Assert.Equal(120.5f, copy.MinIslandVolume);
 
         Assert.Equal(original.Tool.Name, copy.Tool.Name);
         Assert.Equal(original.Tool.CutterDiameter, copy.Tool.CutterDiameter);
@@ -251,6 +255,7 @@ public sealed class ProjectSerializerTests
         Assert.Null(project.Parameters.Direction);
         Assert.Equal(0.9f, project.Parameters.Stepover);
         Assert.Equal(CutScope.Separation, project.CutScope);
+        Assert.Equal(0f, project.MinIslandVolume);
         var written = ProjectSerializer.Serialize(project);
         Assert.DoesNotContain("RoughingStrategyId", written);
         Assert.DoesNotContain("FinishingStrategyId", written);
