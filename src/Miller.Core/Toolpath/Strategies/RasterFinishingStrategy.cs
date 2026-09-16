@@ -5,9 +5,11 @@ using Miller.Core.Slicing;
 
 namespace Miller.Core.Toolpaths.Strategies;
 
-// Parallel rows along X at FinishingStepover following the effective tip map. Between two cells the
-// tool crosses the cell boundary at the higher of the two tips, so the path is safe under the
-// plateau model of GougeChecker; collinear points are merged. NaN cells break a row into runs.
+// Parallel rows along X at FinishingStepover following the effective tip map. A row runs from the
+// first cell center through the cell boundaries, each at the higher of the two tips it separates, to
+// the last cell center: every point is at or above the plateau of the cell it is in, so the path is
+// safe under the plateau model of GougeChecker, and a constant slope gives collinear boundary points
+// that merge into one segment. NaN cells and cells outside the finishing mask break a row into runs.
 // Zigzag joins consecutive rows with a feed when that feed is clear.
 public sealed class RasterFinishingStrategy : IToolpathStrategy
 {
@@ -73,8 +75,10 @@ public sealed class RasterFinishingStrategy : IToolpathStrategy
         return ToolpathLinker.Link(passes, p, context.SafeZ, map);
     }
 
-    // Cell centers at their tip heights, with the cell boundary between two cells at the higher of
-    // the two tips; straight stretches are merged into one segment. Travels from first to last.
+    // First cell center at its tip, every cell boundary at the higher of the two tips it separates,
+    // last cell center at its tip; straight stretches are merged into one segment. Travels from first
+    // to last. The interior points lift the tool by half a cell of rise on a slope instead of the
+    // sawtooth a center-and-boundary staircase leaves, and a constant slope becomes one line.
     public static List<Vector3> RowPoints(HeightMap map, int first, int last, int j)
     {
         var y = map.CellCenter(0, j).Y;
@@ -85,12 +89,14 @@ public sealed class RasterFinishingStrategy : IToolpathStrategy
         while (i != last)
         {
             var next = i + step;
-            var zHere = map[i, j];
-            var zNext = map[next, j];
             var boundaryX = (map.CellCenter(i, j).X + map.CellCenter(next, j).X) / 2;
-            Append(points, new Vector3(boundaryX, y, MathF.Max(zHere, zNext)));
-            Append(points, new Vector3(map.CellCenter(next, j).X, y, zNext));
+            Append(points, new Vector3(boundaryX, y, MathF.Max(map[i, j], map[next, j])));
             i = next;
+        }
+
+        if (last != first)
+        {
+            Append(points, new Vector3(map.CellCenter(last, j).X, y, map[last, j]));
         }
 
         return points;

@@ -30,7 +30,8 @@ public sealed record PipelineResult(
     public CuttingParameters Parameters { get; init; } = CuttingParameters.Default();
 }
 
-// Runs the stages of docs/ARCHITECTURE.md 5.1 in order. Progress fractions are cumulative over the
+// Runs the stages of docs/ARCHITECTURE.md 5.1 in order; the linked toolpath is simplified to vectors
+// within the tolerance before the statistics. Progress fractions are cumulative over the
 // stage weights below; cancellation is honoured between stages and inside the strategies.
 public sealed class PipelineService
 {
@@ -44,7 +45,8 @@ public sealed class PipelineService
         ("head clearance", 0.10f),
         ("slice", 0.05f),
         ("roughing", 0.20f),
-        ("finishing", 0.20f),
+        ("finishing", 0.18f),
+        ("simplify", 0.02f),
         ("statistics", 0.05f),
     };
 
@@ -134,7 +136,10 @@ public sealed class PipelineService
         cancellation.ThrowIfCancellationRequested();
 
         reporter.Begin(9);
-        var toolpath = Join(roughingPath, finishingPath, p);
+        var toolpath = ToolpathSimplifier.Simplify(Join(roughingPath, finishingPath, p), effective, p.Tolerance);
+        cancellation.ThrowIfCancellationRequested();
+
+        reporter.Begin(10);
         var statistics = ToolpathStatistics.Compute(toolpath, p);
         reporter.Done();
 
