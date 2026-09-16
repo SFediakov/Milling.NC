@@ -139,20 +139,22 @@ placeholder; the task that implements it is written in the placeholder header.
 | Io | `StlAsciiParser.cs` | `solid`/`facet normal`/`outer loop`/`vertex`/`endsolid` grammar, invariant culture |
 | Io | `StlImportReport.cs` | Triangle count, bounds, degenerate triangle count, format detected |
 | Setup | `ToolDefinition.cs` | `CutterDiameter`, `CutterLength` (usable length below the head), `HeadDiameter` (> cutter), `TipType` (Flat, Ball), `Name` |
-| Setup | `StockDefinition.cs` | `Shape` (Box, Cylinder); Box: `SizeX`, `SizeY`, `SizeZ`; Cylinder: `Diameter`, `Height`; `Placement` (AutoFitWithMargin, Explicit) and `Margin` |
+| Setup | `StockDefinition.cs` | `Shape` (Box, Cylinder); Box: `SizeX`, `SizeY`, `SizeZ`; Cylinder: `Diameter`, `Height`; `Placement` (AutoFitWithMargin, Explicit) and `Margin`; auto-fit alignment of the model union per axis `AlignX`, `AlignY`, `AlignZ` (`StockAlignment` Min, Center, Max; defaults Center, Center, Max) |
 | Setup | `AxisSetup.cs` | Mapping of model axes to machine X, Y, Z; direction sign per axis; rotation angles (degrees) about X, Y, Z; `OriginMode` (StockCornerMinXYMinZ, StockCornerMinXYTopZ, StockCenterTopZ, Custom); `ToMatrix()` |
 | Setup | `CuttingParameters.cs` | `FeedRate`, `PlungeRate`, `RapidRate` (mm/min), `SpindleRpm`, `Stepover`, `Stepdown`, `SafeHeight`, `CellSize`, `Tolerance`, `MillingDirection` (Zigzag, OneWay) |
-| Setup | `MillingProject.cs` | Aggregate of all setup objects + `Models` (list of `ModelPlacement`), `RoughingStrategyId`, `FinishingStrategyId`, `PostProcessorId`; JSON serializable, schema 2 (schema 1 `StlPath` migrated on load) |
-| Setup | `ModelPlacement.cs`, `ModelLayout.cs` | One STL with offset and rotation about Z; the layout places every model (orientation, rotation, offset), takes machine zero from the stock corner around the union and merges the machine meshes; centering per axis is a fixed point because the stock follows the union |
+| Setup | `MillingProject.cs` | Aggregate of all setup objects + `Models` (list of `ModelPlacement`), `RoughingStrategyId`, `FinishingStrategyId`, `PostProcessorId`, `CutScope` (Everything, Separation); JSON serializable, schema 2 (schema 1 `StlPath` migrated on load) |
+| Setup | `ModelPlacement.cs`, `ModelLayout.cs` | One STL with offset and rotation about Z; the layout places every model (orientation, rotation, offset), takes machine zero from the stock corner around the union and merges the machine meshes; aligning one model to the stock minimum, middle or maximum per axis (`AlignedOffset`) is a fixed point because the stock follows the union, and it reports when the stock follows that model |
 | Setup | `ProjectSerializer.cs` | `System.Text.Json` read/write with invariant culture and schema version |
 | HeightMap | `HeightMap.cs` | Uniform grid: `OriginX`, `OriginY`, `CellSize`, `Width`, `Height`, `float[] Z`; `float.NaN` = no material / outside stock; cell-world conversions; `Clone()`; `Min()`, `Max()` |
 | HeightMap | `MeshRasterizer.cs` | Model map: top-down rasterization of triangles, max Z per cell; uncovered cells = `floor` value |
 | HeightMap | `ToolProfile.cs` | Footprint of a tool on the grid: list of `(dx, dy, dz)` where `dz(d) = 0` (flat) or `r - sqrt(r^2 - d^2)` (ball) |
 | HeightMap | `HeightMapDilation.cs` | Tool-tip map: `tip[i,j] = max over footprint of (model[i+dx, j+dy] - dz)` (the drop-cutter on a grid) |
 | HeightMap | `HeadClearance.cs` | Head-limit map: `limit[i,j] = max over annulus (cutter radius < d <= head radius) of model - CutterLength`; effective tip = `max(tip, limit)`; head-limited mask |
+| HeightMap | `DistanceTransform.cs` | Exact Euclidean distance of every cell to the nearest cell of a mask (separable lower envelope of parabolas), used by the separation region |
 | Slicing | `MillingStep.cs` | One step: `Level` (Z), `Operation` (Roughing, Finishing), region mask, strategy id |
 | Slicing | `SlicePlan.cs` | Ordered list of `MillingStep` plus summary counts |
-| Slicing | `Slicer.cs` | Builds the plan: levels from stock top down by `Stepdown` to the lowest tip value, roughing masks per level, one finishing step |
+| Slicing | `Slicer.cs` | Builds the plan: levels from stock top down by `Stepdown` to the lowest tip value, roughing masks per level (a tip within `LevelTolerance` above a level counts as on it), one finishing step |
+| Slicing | `SeparationRegion.cs` | Cut scope: `Everything` keeps the plan; `Separation` restricts every roughing mask to the model region plus a terraced trench (one cell next to the level's obstacles, everything cut below, and the positions of the deepest level whose head enters the slab widened by `HeadRadius - CutterRadius + margin`), restricts the finishing mask to the model region and the innermost trench, and returns the `Standing` map (stock surface over never-cut cells, terrace level over trench cells, NaN elsewhere) |
 | Toolpath | `ToolpathSegment.cs` | `enum MoveKind { Rapid, Feed, Plunge }` and the segment: `Start`, `End` (`Vector3`), `Kind`, `FeedRate` |
 | Toolpath | `Toolpath.cs` | Segment list, `Bounds`, `TotalLength(kind)` |
 | Toolpath | `ToolpathStatistics.cs` | Lengths per kind, estimated time from rates, segment counts |
@@ -162,18 +164,19 @@ placeholder; the task that implements it is written in the placeholder header.
 | Toolpath | `MarchingSquares.cs` | Iso-contours of a `HeightMap` at level Z as closed polylines |
 | Toolpath | `ToolpathLinker.cs` | Inserts retract to safe height, rapid, plunge between disjoint passes |
 | Toolpath | `GougeChecker.cs` | Verifies no feed segment goes below the tip map (used by tests and analysis) |
+| Toolpath | `ToolpathSimplifier.cs` | Vector output: every run of consecutive feed segments at one rate is reduced by Douglas-Peucker to the vertices needed within `Tolerance`; a chord is also rejected when it dips below the effective tip map; rapids, plunges and run end points are untouched |
 | Toolpath/Strategies | `RasterRoughingStrategy.cs` | Id `raster-roughing`. Z-level raster clearing: per level, parallel rows at `Stepover`, cut where mask is true |
-| Toolpath/Strategies | `RasterFinishingStrategy.cs` | Id `raster-finishing`. Parallel rows following the tip map height cell by cell |
-| Toolpath/Strategies | `ContourFinishingStrategy.cs` | Id `contour-finishing`. Marching-squares contours of the tip map per finishing level |
-| Toolpath/Strategies | `LayerCompleteStrategy.cs` | Id `layer-complete` (default roughing). Per level the raster runs of the level mask followed by its contour loops, the next level only after both |
+| Toolpath/Strategies | `RasterFinishingStrategy.cs` | Id `raster-finishing`. Parallel rows through the cell boundaries at the higher of the two tips (first and last cell center included) inside the plan's finishing mask; a constant slope is one line |
+| Toolpath/Strategies | `ContourFinishingStrategy.cs` | Id `contour-finishing`. Marching-squares contours of the tip map per finishing level inside the plan's finishing mask |
+| Toolpath/Strategies | `LayerCompleteStrategy.cs` | Id `layer-complete` (default roughing). Per level the raster runs of the level mask (one-cell runs dropped, the loop cuts them) followed by its contour loops, the next level only after both |
 | GCode | `GCodeFormatter.cs` | Invariant number formatting, 3 decimals, trailing zero trimming |
 | GCode | `IPostProcessor.cs` | `Id`, `DisplayName`, `FileExtension`, `Write(Toolpath, MillingProject, TextWriter)` |
 | GCode | `PostProcessorRegistry.cs` | Explicit static list; `GetById`, `All` |
 | GCode | `GrblPostProcessor.cs` | Id `grbl`, extension `.nc`. Header comments, `G21 G90 G94 G17`, `S.. M3`, `G0`/`G1` with `F`, `M5`, `M30` |
 | Simulation | `StockModel.cs` | Stock `HeightMap` from `StockDefinition` (cylinder: NaN outside the circle), positioned relative to the model per `AxisSetup` |
 | Simulation | `MaterialRemover.cs` | Sweeps one segment: samples at most `CellSize / 2` apart; per sample `stock = min(stock, z + dz)` over the footprint; returns the dirty rectangle |
-| Simulation | `SimulationClock.cs` | Speed factor clamped to [0.1, 1000]; `Advance(realSeconds) -> simSeconds`; pause |
-| Simulation | `SimulationEngine.cs` | Position along the toolpath (segment index + distance), `Step(simSeconds)`, `RunToEnd()`, `Reset()`, current tool position, progress |
+| Simulation | `SimulationClock.cs` | Speed factor clamped to [0.1, 1000]; `Advance(realSeconds) -> simSeconds`; pause; `Seek(simSeconds)` |
+| Simulation | `SimulationEngine.cs` | Position along the toolpath (segment index + distance), `Step(simSeconds)`, `SeekTo(length)` (forward, by path length), `RunToEnd()`, `Reset()`, current tool position, progress, `ElapsedSeconds` |
 | Simulation | `CollisionDetector.cs` | Head annulus vs current stock, rapid move into material; emits `SimulationEvent` |
 | Simulation | `SimulationEvent.cs` | Kind (HeadCollision, RapidIntoMaterial), segment index, position |
 | Analysis | `DeviationMap.cs` | `stock - model` per cell where model exists; category per cell (Ok, RestMaterial, Gouge, NoModel) |
@@ -186,9 +189,9 @@ placeholder; the task that implements it is written in the placeholder header.
 |---|---|
 | `Services/ProjectService.cs` | Current `MillingProject`, change notification, new/load/save via `ProjectSerializer` |
 | `Services/MeshImportService.cs` | Loads STL files through `StlReader`, validates (non-empty, finite bounds), keeps one `Mesh` per model placement in project order |
-| `Services/PipelineService.cs` | mesh -> `AxisSetup` transform -> stock -> model map -> tip map -> head limit -> slice plan -> roughing strategy -> finishing strategy -> linker -> statistics; progress and cancellation |
+| `Services/PipelineService.cs` | mesh -> `AxisSetup` transform -> stock -> model map -> tip map -> head limit -> slice plan -> cut scope -> roughing strategy -> finishing strategy -> linker -> simplifier -> statistics; progress and cancellation |
 | `Services/ExportService.cs` | Toolpath + project -> post-processor -> `.nc` file |
-| `Services/SimulationService.cs` | Owns `SimulationEngine`, `SimulationClock`, `MaterialRemover`, `CollisionDetector`; `Advance(realSeconds)`; exposes snapshot (tool position, dirty rectangle, events) |
+| `Services/SimulationService.cs` | Owns `SimulationEngine`, `SimulationClock`, `MaterialRemover`, `CollisionDetector`; `Advance(realSeconds)`; `SeekTo(fraction)` (forward sweeps in place, backward replays from a fresh stock); exposes snapshot (tool position, dirty rectangle, events) |
 | `Services/AnalysisService.cs` | Runs `FinalModelAnalyzer` and `UncuttableRegions` on demand |
 | `Services/SettingsService.cs` | User preferences JSON in the per-user application data folder: last folders, window size, last speed factor |
 | `Services/LogService.cs` | Append-only text log in `logs/miller.log` next to the executable; exception formatting |
@@ -209,10 +212,10 @@ placeholder; the task that implements it is written in the placeholder header.
 | Views | `ToolSettingsView.axaml` | Cutter diameter, cutter length, head diameter, tip type |
 | Views | `StockSettingsView.axaml` | Shape, dimensions, placement, margin, fit button |
 | Views | `AxisSettingsView.axaml` | Axis mapping, directions, rotations, origin mode |
-| Views | `ModelsView.axaml` | Model list with add and remove, offset and rotation of the selected model, center per axis |
+| Views | `ModelsView.axaml` | Model list with add and remove, auto-fit stock alignment per axis (Min, Center, Max), offset and rotation of the selected model, Min, Center and Max per axis with a message when the stock follows the model |
 | Views | `CuttingParametersView.axaml` | Feed, plunge, rapid, spindle, stepover, stepdown, safe height, cell size, direction |
-| Views | `StrategySelectionView.axaml` | Roughing strategy, finishing strategy, post-processor, Generate button, statistics |
-| Views | `SimulationControlsView.axaml` | Play, pause, stop, step, run-to-end, logarithmic speed slider 0.1 to 1000 with numeric entry, progress, simulated time, collision counter |
+| Views | `StrategySelectionView.axaml` | Roughing strategy, finishing strategy, cut scope, post-processor, Generate button, statistics |
+| Views | `SimulationControlsView.axaml` | Play, pause, stop, step, run-to-end, logarithmic speed slider 0.1 to 1000 with numeric entry, progress bar (a press seeks to that fraction), simulated time, collision counter |
 | Views | `AnalysisView.axaml` | Final-model mode toggle, legend (Ok, RestMaterial, Gouge, Overhang, HeadLimited, CornerLimited), statistics |
 | Views | `AboutWindow.axaml` | Version, licenses pointer |
 | Views | `Viewport3DControl.cs` | `OpenGlControlBase` subclass: init, render, deinit; mouse orbit/pan/zoom; delegates to `SceneRenderer` |
@@ -270,9 +273,12 @@ STL file
   -> HeightMapDilation ........ tip HeightMap (lowest allowed cutter tip per cell)
   -> HeadClearance ............ head-limit HeightMap, effective tip = max(tip, limit)
   -> Slicer ................... SlicePlan (levels, masks, operations)
+  -> SeparationRegion ......... plan restricted to the cut scope, Standing map; strategies see
+                                effective tip = max(effective tip, standing)
   -> StrategyRegistry.GetById(RoughingStrategyId).Generate(context)  -> Toolpath A
   -> StrategyRegistry.GetById(FinishingStrategyId).Generate(context) -> Toolpath B
   -> ToolpathLinker ........... Toolpath (A + B with retracts, rapids, plunges)
+  -> ToolpathSimplifier ....... feed runs reduced to vectors within Tolerance
   -> ToolpathStatistics
   -> PostProcessorRegistry.GetById(PostProcessorId).Write(...) -> .nc file
 ```
@@ -291,6 +297,13 @@ snapshot -> ViewportViewModel -> HeightMapRenderer (partial update), ToolRendere
 Processing and rendering are decoupled: all segments covered by one tick are
 processed in that tick; the viewport redraws once per frame. At 1000x the work
 per tick grows; the code path does not change.
+
+A press on the progress bar calls `SimulationService.SeekTo(fraction)` on a
+background task with the clock paused: forward from the current position the
+engine sweeps the part in between, backward it replays from a fresh stock clone
+(the same sweeps, so stock, events and simulated time equal a run stopped
+there). The viewport uploads the stock again afterwards; a simulation that was
+playing continues from the new position.
 
 ### 5.3 Final model preview (AnalysisService)
 
