@@ -6,8 +6,9 @@ using Miller.Core.Slicing;
 namespace Miller.Core.Toolpaths.Strategies;
 
 // Constant-Z loops. Levels run from the stock top down by FinishingStepover to the lowest effective
-// tip (last level clamped). At each level the cells where the cutter may sit (tip <= level) form a
-// mask whose outline, pulled into the allowed cells, becomes one feed loop per contour.
+// tip (last level clamped). At each level the cells where the cutter may sit (tip <= level) inside
+// the finishing mask form a mask whose outline, pulled into the allowed cells, becomes one feed loop
+// per contour.
 public sealed class ContourFinishingStrategy : IToolpathStrategy
 {
     public const string StrategyId = "contour-finishing";
@@ -23,13 +24,14 @@ public sealed class ContourFinishingStrategy : IToolpathStrategy
         ArgumentNullException.ThrowIfNull(context);
         var p = context.Parameters;
         var map = context.EffectiveTip;
+        var finishing = context.Plan.FinishingMask;
         var levels = Slicer.RoughingLevels(context.StockTop, context.Plan.LowestLevel, p.FinishingStepover).ToList();
         var groups = new List<IReadOnlyList<Toolpath>>();
         for (var k = 0; k < levels.Count; k++)
         {
             cancellation.ThrowIfCancellationRequested();
             var level = levels[k];
-            groups.Add(LoopPasses(AllowedMask(map, level), map, level, p));
+            groups.Add(LoopPasses(AllowedMask(map, level, finishing), map, level, p));
             progress?.Report((k + 1f) / levels.Count);
         }
 
@@ -62,7 +64,10 @@ public sealed class ContourFinishingStrategy : IToolpathStrategy
     }
 
     // Cells where the cutter tip may sit at the level.
-    public static bool[,] AllowedMask(HeightMap tip, float level)
+    public static bool[,] AllowedMask(HeightMap tip, float level) => AllowedMask(tip, level, null);
+
+    // The same, restricted to the cells of a coverage mask.
+    public static bool[,] AllowedMask(HeightMap tip, float level, bool[,]? coverage)
     {
         var mask = new bool[tip.Width, tip.Height];
         for (var j = 0; j < tip.Height; j++)
@@ -70,7 +75,7 @@ public sealed class ContourFinishingStrategy : IToolpathStrategy
             for (var i = 0; i < tip.Width; i++)
             {
                 var z = tip[i, j];
-                mask[i, j] = !float.IsNaN(z) && z <= level;
+                mask[i, j] = !float.IsNaN(z) && z <= level && (coverage is null || coverage[i, j]);
             }
         }
 

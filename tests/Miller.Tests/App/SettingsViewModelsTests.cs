@@ -122,6 +122,22 @@ public sealed class SettingsViewModelsTests : IDisposable
     }
 
     [Fact]
+    public void Strategy_CutScope_WritesTheProjectAndFollowsAReload()
+    {
+        Assert.Equal(new[] { CutScope.Everything, CutScope.Separation }, StrategySelectionViewModel.CutScopes);
+        Assert.Equal(CutScope.Everything, _vm.Strategy.CutScope);
+        _vm.Strategy.CutScope = CutScope.Separation;
+        Assert.Equal(CutScope.Separation, _vm.Project.Current.CutScope);
+        Assert.True(_vm.Project.IsDirty);
+
+        var raised = new List<string?>();
+        _vm.Strategy.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        _vm.NewProjectCommand.Execute(null);
+        Assert.Equal(CutScope.Everything, _vm.Strategy.CutScope);
+        Assert.Contains(nameof(StrategySelectionViewModel.CutScope), raised);
+    }
+
+    [Fact]
     public void NewProject_ReloadsEveryPanelWithoutMarkingDirty()
     {
         _vm.Tool.CutterDiameter = 4f;

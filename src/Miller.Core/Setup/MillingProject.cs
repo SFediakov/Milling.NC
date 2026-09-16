@@ -1,5 +1,13 @@
 namespace Miller.Core.Setup;
 
+// How much of the stock the roughing removes: everything the cutter can reach, or only the model
+// surface plus the trench that frees the model from the surrounding stock (SeparationRegion).
+public enum CutScope
+{
+    Everything,
+    Separation,
+}
+
 // Everything a .miller.json file contains.
 public sealed class MillingProject
 {
@@ -32,6 +40,8 @@ public sealed class MillingProject
     public string FinishingStrategyId { get; set; } = DefaultFinishingStrategyId;
 
     public string PostProcessorId { get; set; } = DefaultPostProcessorId;
+
+    public CutScope CutScope { get; set; } = CutScope.Everything;
 
     public static MillingProject Default() => new();
 }

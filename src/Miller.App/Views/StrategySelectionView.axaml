@@ -27,6 +27,10 @@
         </ComboBox.ItemTemplate>
       </ComboBox>
 
+      <TextBlock Classes="label" Text="Cut scope" />
+      <ComboBox Name="CutScopeBox" ItemsSource="{x:Static vm:StrategySelectionViewModel.CutScopes}" SelectedItem="{Binding CutScope}" Width="260" HorizontalAlignment="Left" />
+      <TextBlock Text="Everything clears all reachable stock. Separation cuts the model surface and a trench that frees it, terraced where the head needs room." TextWrapping="Wrap" />
+
       <TextBlock Classes="label" Text="Post-processor" />
       <ComboBox Name="PostProcessorBox" ItemsSource="{Binding PostProcessors}" SelectedItem="{Binding PostProcessor}" Width="260" HorizontalAlignment="Left">
         <ComboBox.ItemTemplate>

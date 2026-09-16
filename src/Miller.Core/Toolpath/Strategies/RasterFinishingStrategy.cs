@@ -29,6 +29,7 @@ public sealed class RasterFinishingStrategy : IToolpathStrategy
         ArgumentNullException.ThrowIfNull(context);
         var p = context.Parameters;
         var map = context.EffectiveTip;
+        var mask = context.Plan.FinishingMask;
         var rows = RasterRows.RowIndices(map.Height, RasterRows.RowStepCells(p.FinishingStepover, map.CellSize)).ToList();
         var passes = new List<Toolpath>();
         var forward = true;
@@ -38,7 +39,7 @@ public sealed class RasterFinishingStrategy : IToolpathStrategy
         {
             cancellation.ThrowIfCancellationRequested();
             var j = rows[r];
-            foreach (var (i0, i1) in RasterRows.Runs(i => !float.IsNaN(map[i, j]), map.Width, forward))
+            foreach (var (i0, i1) in RasterRows.Runs(i => mask[i, j] && !float.IsNaN(map[i, j]), map.Width, forward))
             {
                 var points = RowPoints(map, i0, i1, j);
                 var start = points[0];

@@ -3,13 +3,14 @@ using System.Text;
 using CommunityToolkit.Mvvm.Input;
 using Miller.Application.Services;
 using Miller.Core.GCode;
+using Miller.Core.Setup;
 using Miller.Core.Slicing;
 using Miller.Core.Toolpaths;
 
 namespace Miller.App.ViewModels;
 
-// Strategy and post-processor choice from the registries, the generate and cancel commands of the
-// main view model, and the statistics of the last run.
+// Strategy and post-processor choice from the registries, the cut scope, the generate and cancel
+// commands of the main view model, and the statistics of the last run.
 public sealed class StrategySelectionViewModel : SettingsViewModelBase
 {
     public const string NoToolpathText = "No toolpath yet.";
@@ -26,6 +27,8 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
     public IReadOnlyList<IToolpathStrategy> FinishingStrategies { get; } = StrategyRegistry.ForOperation(MillingOperation.Finishing).ToList();
 
     public IReadOnlyList<IPostProcessor> PostProcessors { get; } = PostProcessorRegistry.All;
+
+    public static IReadOnlyList<CutScope> CutScopes { get; } = Enum.GetValues<CutScope>();
 
     public IAsyncRelayCommand GenerateCommand { get; }
 
@@ -66,6 +69,8 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
             }
         }
     }
+
+    public CutScope CutScope { get => Current.CutScope; set => Edit(p => p.CutScope = value); }
 
     public ToolpathStatistics? Statistics { get; private set; }
 
@@ -109,6 +114,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         OnPropertyChanged(nameof(Roughing));
         OnPropertyChanged(nameof(Finishing));
         OnPropertyChanged(nameof(PostProcessor));
+        OnPropertyChanged(nameof(CutScope));
     }
 
     private void RaiseStatistics()
