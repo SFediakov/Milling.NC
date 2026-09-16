@@ -281,11 +281,26 @@ Uncuttable classification (`UncuttableRegions`):
 
 ### 6.4 Slicing and toolpath parameters
 
-- `Stepdown`: Z distance between roughing levels. Levels:
+- `Stepdown`: Z distance between roughing levels, and nothing else: the Z
+  steps of the finishing come from the surface and the tolerance. Levels:
   `z_k = stockTop - k * Stepdown` for k = 1.. until `z_k <= min(effectiveTip)`;
   the last level is clamped to `min(effectiveTip)`.
-- Roughing mask at level z: cells where `effectiveTip[i,j] < z` and the stock
-  still has material above z.
+- Roughing mask at level z: cells where `effectiveTip[i,j] <= z + LevelTolerance`
+  and the stock still has material above z.
+- Cut scope (`MillingProject.CutScope`): `Everything` roughs every mask cell;
+  `Separation` keeps per level only the model region (tip above the floor) and
+  a trench next to that level's obstacles, widened by
+  `HeadRadius - CutterRadius + margin` around every tool position of the deepest
+  level whose head (CutterLength above it) enters the slab, and everything cut
+  at the level below. The finishing covers the model region and the innermost
+  trench; the standing stock is part of the tip map the strategies stay above.
+  Thin trenches need a profile pass (layer-complete); raster rows skip them.
+- Vector output: after linking, every run of consecutive feed segments at one
+  rate is reduced by Douglas-Peucker so that no dropped vertex lies farther than
+  `Tolerance` from its chord, and a chord that dips below the tip map by more
+  than `Tolerance` is split as well. The raster finishing rows run through the
+  cell boundaries at the higher of the two tips, so a constant slope is one
+  segment and the surface is lifted by at most slope x cell size / 2.
 - `Stepover`: distance between adjacent parallel passes. Valid range
   `(0, CutterDiameter]`. Finishing typically uses a smaller stepover than
   roughing; both come from the same parameter set with a `FinishingStepover`
@@ -335,6 +350,10 @@ M30
   the tick; no frame skipping logic, no second path for high speeds.
 - `RunToEnd()` processes the whole toolpath without the clock; used for the
   final-model preview.
+- `SeekTo(fraction)` moves the simulation to a fraction of the path length: a
+  forward seek sweeps from the current position, a backward seek replays from a
+  fresh stock; the clock is paused meanwhile and set to the engine's elapsed
+  time afterwards; the view model resumes play when it was playing.
 
 ### 6.7 Validation rules (`ProjectValidator`)
 
@@ -1341,6 +1360,38 @@ check that decides done.
 - Input: user request after M9 batch D
 - Output: `Miller.cmd` starts the window detached (console closes) and only waits for `--` commands; `GpuPreference.EnsureHighPerformance` writes the high performance entry for the executable into the user's DirectX graphics preferences on Windows when none exists (effective from the next start), logged at start; Linux launchers export `DRI_PRIME=1`
 - Acceptance: `cmd /c Miller.cmd` returns while the app keeps running and `Miller.cmd --version` waits; registry test under a temporary key sets once, keeps an existing power saving entry and cleans up
+- Status: done
+
+#### T-112 Vector stepping
+- Depends on: T-041, T-104
+- Files: `src/Miller.Core/Toolpath/ToolpathSimplifier.cs`, `src/Miller.Core/Toolpath/Strategies/RasterFinishingStrategy.cs`, `src/Miller.Core/Toolpath/Strategies/LayerCompleteStrategy.cs`, `src/Miller.Application/Services/PipelineService.cs`, `tests/Miller.Tests/Core/Toolpath/ToolpathSimplifierTests.cs`, `tests/Miller.Tests/Golden/heart_grbl.nc`
+- Input: user request (stepdown is the layer height; straight stretches as one move, curves split within tolerance)
+- Output: raster finishing rows through the cell boundaries (a constant slope is one line); `ToolpathSimplifier` (Douglas-Peucker with the gouge check per chord) as the pipeline stage "simplify" after linking; layer-complete drops one-cell row runs; golden regenerated (6332 lines -> 1078)
+- Acceptance: collinear chains become one segment, a circle polygon loses at least two thirds of its vertices with every chord within the tolerance, chords over a wall cell are split, rapids and plunges untouched; suite green
+- Status: done
+
+#### T-113 Cut scope
+- Depends on: T-105, T-112
+- Files: `src/Miller.Core/Setup/MillingProject.cs`, `src/Miller.Core/HeightMap/DistanceTransform.cs`, `src/Miller.Core/Slicing/SeparationRegion.cs`, `src/Miller.Core/Slicing/SlicePlan.cs`, `src/Miller.Core/Slicing/Slicer.cs`, finishing strategies, `src/Miller.Application/Services/PipelineService.cs`, `src/Miller.App/ViewModels/StrategySelectionViewModel.cs`, `src/Miller.App/Views/StrategySelectionView.axaml`, tests
+- Input: user request (cut everything, or the minimum that frees the model; deeper levels may need wider margins, so the layers above are cut too)
+- Output: `CutScope` on the project and in the Strategy tab; `SeparationRegion` with terraced trenches; finishing strategies honour the plan's finishing mask; the roughing mask tolerates a tip within `LevelTolerance` above the level (a 30.000002 top gave an 18.000002 limit that was left one level high and hit the head)
+- Acceptance: box in a 40 mm stock keeps its corners at the stock top while the model top is Ok; a 10 x 10 x 5 box in a 30 mm stock with a 12 mm cutter simulates with zero events and a trench wider at half depth than at the floor; the heart with layer-complete has zero events in both scopes and less feed in separation; JSON round trip
+- Status: done
+
+#### T-114 Model alignment
+- Depends on: T-108
+- Files: `src/Miller.Core/Setup/StockDefinition.cs`, `src/Miller.Core/Setup/AxisSetup.cs`, `src/Miller.Core/Setup/ModelLayout.cs`, `src/Miller.App/ViewModels/ModelsViewModel.cs`, `src/Miller.App/Views/ModelsView.axaml`, tests
+- Input: user request (position a model on the stock corner as well as centre it; Z bottom on the stock bottom or top at the stock top)
+- Output: `StockDefinition.AlignX/Y/Z` for the auto-fit corner rule (defaults keep today's placement), `ModelLayout.AlignedOffset` (Min, Center, Max per axis; 32 halving rounds; an `InvalidOperationException` when the stock follows the model), Models tab with the stock alignment combos and Min, Center, Max per axis plus the message
+- Acceptance: lone model bottom-aligned by the stock rule lands at Z 0; second of two boxes reaches the stock sides by offset; a lone model's Z Min reports instead of drifting; legacy files load with the defaults
+- Status: done
+
+#### T-115 Progress bar seek
+- Depends on: T-094
+- Files: `src/Miller.Core/Simulation/SimulationEngine.cs`, `src/Miller.Core/Simulation/SimulationClock.cs`, `src/Miller.Application/Services/SimulationService.cs`, `src/Miller.App/ViewModels/SimulationViewModel.cs`, `src/Miller.App/ViewModels/MainWindowViewModel.cs`, `src/Miller.App/Views/SimulationControlsView.axaml` (+ `.axaml.cs`), tests
+- Input: user request (a press on the progress bar moves the simulation there while it plays)
+- Output: `SimulationEngine.SeekTo(length)`, `ElapsedSeconds`; `SimulationClock.Seek`; `SimulationService.SeekTo(fraction)`; `SimulationViewModel.SeekCommand` off the UI thread with `IsSeeking` and `IsWorking`; pointer handler on the progress bar
+- Acceptance: seek by distance equals stepping by time cell by cell; a backward seek equals a fresh run to that point (stock, events, time); playing resumes after a seek; headless press at half the bar seeks to 0.5
 - Status: done
 
 ### M8 Packaging and release
