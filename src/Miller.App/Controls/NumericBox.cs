@@ -15,6 +15,10 @@ public sealed class NumericBox : TextBox
     public static readonly StyledProperty<float> ValueProperty =
         AvaloniaProperty.Register<NumericBox, float>(nameof(Value), defaultBindingMode: BindingMode.TwoWay);
 
+    // The start of a signed or fractional number before its first digit: not a value yet, not an
+    // error either, so a negative coordinate can be typed without a warning on the sign.
+    private static readonly string[] IncompleteTexts = { "-", "+", ".", "-.", "+." };
+
     private bool _syncing;
 
     public NumericBox()
@@ -35,6 +39,8 @@ public sealed class NumericBox : TextBox
 
     public static bool TryParse(string? text, out float value)
         => float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value) && float.IsFinite(value);
+
+    public static bool IsIncomplete(string? text) => text is not null && Array.IndexOf(IncompleteTexts, text) >= 0;
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
@@ -60,6 +66,10 @@ public sealed class NumericBox : TextBox
                 if (TryParse(text, out var parsed))
                 {
                     Value = parsed;
+                    DataValidationErrors.ClearErrors(this);
+                }
+                else if (IsIncomplete(text))
+                {
                     DataValidationErrors.ClearErrors(this);
                 }
                 else

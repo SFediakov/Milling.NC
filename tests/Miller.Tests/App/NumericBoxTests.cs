@@ -151,6 +151,65 @@ public sealed class NumericBoxTests
         }
     }
 
+    // A negative or fractional number typed from its first character: the sign alone is neither a
+    // value nor an error, and each following digit commits the number as it stands.
+    [AvaloniaFact]
+    public void TypingASignFirst_ShowsNoError_AndTheDigitsCommitTheNegativeValue()
+    {
+        var (window, box) = Show(4f);
+        try
+        {
+            box.SelectAll();
+            foreach (var (text, value, error) in new[]
+            {
+                ("-", 4f, false), ("-0", 0f, false), ("-0.", 0f, false), ("-0.5", -0.5f, false),
+            })
+            {
+                window.KeyTextInput(text[^1].ToString());
+                Assert.Equal(text, box.Text);
+                Assert.Equal(value, box.Value);
+                Assert.Equal(error, DataValidationErrors.GetHasErrors(box));
+                Assert.True(box.IsFocused);
+            }
+
+            Type(window, box, ".");
+            Assert.False(DataValidationErrors.GetHasErrors(box));
+            Assert.Equal(-0.5f, box.Value);
+            window.KeyTextInput("5");
+            Assert.Equal(".5", box.Text);
+            Assert.Equal(0.5f, box.Value);
+
+            // A second sign or a sign after digits is wrong input, not an incomplete one.
+            Type(window, box, "--");
+            Assert.True(DataValidationErrors.GetHasErrors(box));
+            Assert.Equal(0.5f, box.Value);
+            Type(window, box, "1-");
+            Assert.True(DataValidationErrors.GetHasErrors(box));
+            Assert.Equal(0.5f, box.Value);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [Theory]
+    [InlineData("-", true)]
+    [InlineData("+", true)]
+    [InlineData(".", true)]
+    [InlineData("-.", true)]
+    [InlineData("+.", true)]
+    [InlineData("", false)]
+    [InlineData("--", false)]
+    [InlineData("-e", false)]
+    [InlineData("abc", false)]
+    [InlineData("-1", false)]
+    [InlineData(null, false)]
+    public void IsIncomplete_AcceptsOnlyASignOrDecimalPointPrefix(string? text, bool expected)
+    {
+        Assert.Equal(expected, NumericBox.IsIncomplete(text));
+    }
+
     [Fact]
     public void ParseAndFormat_AreInvariant()
     {
