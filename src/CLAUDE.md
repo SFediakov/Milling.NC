@@ -294,3 +294,17 @@
   cut-back into the walls happens through the footprint, not by moving the axis outward. An
   island inside a 20 x 20 hole is therefore the hole minus the one-cell trench band, not the hole
   widened by the cutter radius.
+- A `Configuration` default in `Directory.Build.props` does not reach `dotnet build Miller.sln`:
+  the solution passes its own default (`Debug` whenever the .sln lists one) as a global property
+  that outranks every project-level default. `Miller.sln` therefore lists `Release` only; the
+  props default covers project-level commands (`dotnet run --project`, `dotnet build <csproj>`).
+- The native `.pdb` files that SkiaSharp and HarfBuzzSharp ship under `runtimes/<rid>/native`
+  are native assets, not debug symbols: `CopyDebugSymbolFilesFromPackages` never sees them and
+  `DebugType=None` does not remove them. They leave only by removing the items from
+  `NativeCopyLocalItems` and `RuntimeTargetsCopyLocalItems` after `ResolvePackageAssets`.
+- An MSBuild `Condition` cannot hold a property function whose quoted argument contains `;`
+  (MSB4090 at the `;`). Compute the value into item metadata in a first `ItemGroup`, then
+  condition the `Remove` on that metadata.
+- `git filter-branch -- --all` rewrites `refs/stash` as well and the rewritten entry can no
+  longer be popped ("not a stash-like commit"); the untouched entry is still `stash@{1}` and
+  `git stash apply` restores it. Rewrite `-- main` or pop the stash before the rewrite.
