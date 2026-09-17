@@ -14,3 +14,6 @@ dist/
 # OS / editor noise
 .DS_Store
 Thumbs.db
+
+# Vendored NuGet packages: populated once per clone by scripts/vendor-packages.sh, never committed.
+third_party/nuget/*.nupkg

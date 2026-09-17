@@ -4,7 +4,8 @@ This folder is the only package source of the solution (`NuGet.config` clears ev
 It holds `.nupkg` files for every package in `Directory.Packages.props`, their transitive dependencies,
 and the .NET runtime and apphost packs for `win-x64` and `linux-x64` needed by self-contained publishing.
 
-Populate it once, on a machine with internet access:
+The `.nupkg` files are git-ignored (only this README is tracked). Populate the folder once per
+clone, on a machine with internet access:
 
 ```bash
 bash scripts/vendor-packages.sh
@@ -18,10 +19,9 @@ dotnet restore Miller.sln
 
 Rules:
 
-- Commit the `.nupkg` files. They are binary; `.gitattributes` marks them so.
+- Never commit the `.nupkg` files; `.gitignore` excludes them and the git history holds none.
 - Never add a package without a task in `docs/DEVELOPMENT_GUIDE.md` and a matching `PackageVersion` entry.
 - Never change a version here without changing `Directory.Packages.props` in the same commit.
-- The Docker build copies this folder; the container has no online source.
 
 What the script does beyond a plain restore:
 
