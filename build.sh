@@ -35,6 +35,8 @@ fi
 
 if [[ "$RUN_PUBLISH" == true ]]; then
   for rid in "${RIDS[@]}"; do
+    # dotnet publish overwrites files but never deletes stale ones; each publish starts from an empty folder.
+    rm -rf "${DIST_DIR:?}/$rid"
     dotnet publish "$APP_PROJECT" -c "$CONFIGURATION" -r "$rid" --self-contained -p:PublishSingleFile=true -o "$DIST_DIR/$rid"
   done
   cp "$LAUNCHER" "$DIST_DIR/linux-x64/Miller.sh"

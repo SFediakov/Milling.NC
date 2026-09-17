@@ -25,7 +25,8 @@ list that implements it is in `docs/DEVELOPMENT_GUIDE.md`.
 Project rules that constrain the design (root `CLAUDE.md`):
 
 - Buildable on Linux without code modification. Same build script on both systems.
-- No web references at build time. All packages are vendored in `third_party/nuget/`.
+- No web references at build time. All packages are vendored in `third_party/nuget/`
+  (git-ignored; `scripts/vendor-packages.sh` fills the folder once per clone).
 - No fallbacks, no dual code paths, no hidden switches.
 - Colors declared in exactly one file (`src/Miller.App/Styles/Colors.axaml`).
 - Version string `Build_Y.Z.X` incremented on every app change.
@@ -279,7 +280,7 @@ Mirrors the source tree: `Core/<Folder>/<Type>Tests.cs`,
 | `build.sh` | The only build script. Restore, build, test, publish for `win-x64` and `linux-x64`, assemble `dist/`. Runs on Linux and on Git Bash for Windows |
 | `launchers/Miller.sh` | Copied to `dist/linux-x64/Miller.sh`; `cd` to its own directory and `exec ./Miller "$@"` |
 | `scripts/vendor-packages.sh` | One-time, online: downloads every package in `Directory.Packages.props` with dependencies into `third_party/nuget/` |
-| `third_party/nuget/` | Vendored `.nupkg` files; the only NuGet source |
+| `third_party/nuget/` | Vendored `.nupkg` files; the only NuGet source. Git-ignored, filled once per clone by `scripts/vendor-packages.sh` |
 | `samples/` | Sample project file for the heart fixture |
 | `docs/` | This file and the development guide |
 
@@ -380,8 +381,9 @@ file test in `tests/Miller.Tests/Golden/`.
   path, only a consequence of G1.
 - The Linux build is the same `bash build.sh` on a Linux machine with the .NET 10
   SDK installed; packages come from `third_party/nuget` only (`NuGet.config`
-  clears all other sources), so the build needs no network. No container is
-  part of the project.
+  clears all other sources), so the build needs no network once
+  `scripts/vendor-packages.sh` has filled the folder. No container is part of
+  the project.
 - Headless verification of the Linux binary: `./Miller --version` and
   `./Miller --export samples/heart.miller.json out.nc` compared with the golden
   file.

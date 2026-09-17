@@ -56,8 +56,8 @@ fails; do not invent an alternative.
 | Tests | xunit.v3 3.2.2, Avalonia.Headless.XUnit 12.1.2, xunit.runner.visualstudio 3.1.5, Microsoft.NET.Test.Sdk 18.10.0 |
 | Math | `System.Numerics.Vector3`, `Matrix4x4` (float) |
 | Serialization | `System.Text.Json` |
-| Package source | `third_party/nuget/` only; `NuGet.config` clears every other source |
-| Linux build | `bash build.sh` on a Linux machine with the .NET 10 SDK; no container, no network (packages come from `third_party/nuget/`) |
+| Package source | `third_party/nuget/` only; `NuGet.config` clears every other source. The `.nupkg` files are git-ignored: run `bash scripts/vendor-packages.sh` once per clone (online), every later restore is offline |
+| Linux build | `bash build.sh` on a Linux machine with the .NET 10 SDK; no container, no network after the one-time vendoring (packages come from `third_party/nuget/`) |
 | Shell for scripts | bash (Git Bash on Windows). No PowerShell scripts; the one `.cmd` file is the root `Miller.cmd` start file for Explorer |
 
 No other package may be added. If a task seems to need one, the task is wrong;
@@ -77,7 +77,7 @@ Miller.sh                    root start file for Linux and Git Bash: runs dist/<
 Miller.cmd                   root start file for Windows Explorer and cmd: starts dist\win-x64\Miller.exe detached, waits only for -- commands
 launchers/Miller.sh          Linux start file (copied to dist/linux-x64/)
 scripts/vendor-packages.sh   one-time online download of packages into third_party/nuget/
-third_party/nuget/           vendored .nupkg files
+third_party/nuget/           vendored .nupkg files (git-ignored; only README.md is tracked)
 samples/heart.miller.json    sample project for the fixture STL
 Milling_Heart_V2.STL         fixture (binary STL, 4050 triangles)
 src/Miller.Solver/           route solver over flat arrays: surface polyline, costs, budget, 2-opt and Or-opt (no domain types)
@@ -104,11 +104,11 @@ bash build.sh --no-test       # restore, build, publish
 
 What `build.sh` does, in order:
 
-1. `dotnet restore Miller.sln` (sources come from `NuGet.config`, so this is offline).
+1. `dotnet restore Miller.sln` (sources come from `NuGet.config`, so this is offline; a fresh clone runs `bash scripts/vendor-packages.sh` once before).
 2. `dotnet build Miller.sln -c Release --no-restore`.
 3. `dotnet test Miller.sln -c Release --no-build` unless `--no-test`.
-4. `dotnet publish src/Miller.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o dist/win-x64`.
-5. `dotnet publish src/Miller.App -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -o dist/linux-x64`.
+4. `rm -rf dist/win-x64`, then `dotnet publish src/Miller.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o dist/win-x64`.
+5. `rm -rf dist/linux-x64`, then `dotnet publish src/Miller.App -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -o dist/linux-x64`.
 6. `cp launchers/Miller.sh dist/linux-x64/Miller.sh && chmod +x dist/linux-x64/Miller.sh dist/linux-x64/Miller`.
 
 Start files:
@@ -128,8 +128,15 @@ Start files:
 
 Linux build: the same `bash build.sh` on a Linux machine with the .NET 10 SDK
 installed. Both RIDs are produced there as well; cross-publishing `win-x64`
-from Linux is supported by the .NET SDK. No network is needed because
-`NuGet.config` restores from `third_party/nuget/` only.
+from Linux is supported by the .NET SDK. No network is needed after the one-time
+`bash scripts/vendor-packages.sh` because `NuGet.config` restores from `third_party/nuget/` only.
+
+Output size: `Release` is the only configuration (`Miller.sln` defines no `Debug`,
+`Directory.Build.props` defaults project-level commands to `Release`), so every
+`dotnet build`/`dotnet test` writes the same `bin/Release` tree. The
+`TrimPackageNativeAssets` target in `Directory.Build.props` keeps only the native
+libraries of `win-x64` and `linux-x64` and drops the native `.pdb` symbols that
+SkiaSharp and HarfBuzzSharp ship; each publish starts from an empty `dist/<rid>`.
 
 Headless verification of a Linux binary without a display:
 
