@@ -22,7 +22,7 @@ STATE_DIR="${CLAUDE_PROJECT_DIR}/.claude/state"
 INPUT=$(cat)
 
 PHASE_DONE=9
-PHASE_MODEL_VERSION=2
+PHASE_MODEL_VERSION=3
 
 # Extract .prompt from JSON input.
 PROMPT=$(printf '%s' "$INPUT" | sed -nE 's/.*"prompt"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)".*/\1/p')
@@ -75,6 +75,31 @@ PHASE_AT_ENTRY=$(cat "${STATE_DIR}/current_phase" 2>/dev/null || echo 1)
 
 if printf '%s' "$PROMPT" | grep -qE "$AUTOMATION_REGEX"; then
   log_decision automation-ignored "$PHASE_AT_ENTRY"
+  # A sub-agent stopped with TaskStop fires NO SubagentStop (observed live), so
+  # its concurrency slot would be held until the session restarts. The
+  # harness's task notification is the one signal that does arrive: its
+  # <task-id> is the agent id and its <tool-use-id> the spawning call, which
+  # are exactly the two keys the ledger holds. Settling here is idempotent: a
+  # slot already released by SubagentStop is simply not found.
+  #
+  # Run in a subshell with the library sourced there, so that an unparsable
+  # library cannot take the prompt path down with it (the reason this hook
+  # does not source it at top level).
+  if printf '%s' "$PROMPT" | grep -q '<task-notification>'; then
+    NOTIFIED_TASK=$(printf '%s' "$PROMPT" | sed -nE 's/.*<task-id>([A-Za-z0-9_.-]+)<\/task-id>.*/\1/p')
+    NOTIFIED_CALL=$(printf '%s' "$PROMPT" | sed -nE 's/.*<tool-use-id>([A-Za-z0-9_.-]+)<\/tool-use-id>.*/\1/p')
+    NOTIFIED_STATUS=$(printf '%s' "$PROMPT" | sed -nE 's/.*<status>([A-Za-z_]+)<\/status>.*/\1/p')
+    (
+      source "${CLAUDE_PROJECT_DIR}/.claude/hooks/lib/guard-common.sh" 2>/dev/null || exit 0
+      L=$(ledger_dir "$STATE_DIR")
+      if [[ -n "$NOTIFIED_TASK" ]] && ledger_release_agent "$L" "$NOTIFIED_TASK"; then
+        subagent_event_log "$STATE_DIR" "notification status=${NOTIFIED_STATUS:--} agent_id=${NOTIFIED_TASK} released running=$(slot_count "$L")"
+      elif [[ -n "$NOTIFIED_CALL" && -f "$L/res.${NOTIFIED_CALL}" ]]; then
+        ledger_release_reservation "$L" "$NOTIFIED_CALL"
+        subagent_event_log "$STATE_DIR" "notification status=${NOTIFIED_STATUS:--} tool_use_id=${NOTIFIED_CALL} reservation released running=$(slot_count "$L")"
+      fi
+    ) 2>/dev/null
+  fi
   exit 0
 fi
 
@@ -83,10 +108,8 @@ fi
 # the passphrase carries no '?' and would otherwise be read as a brand new task
 # and reset the phase to 1.
 #
-# The whole trimmed prompt must equal the passphrase, byte for byte. A substring
-# test would let the phrase arrive inside a pasted log or a quoted document,
-# which is not the user consenting to anything. Nothing else about the prompt is
-# consulted, and no other prompt can produce the grant.
+# The passphrase must appear byte for byte; see the substring note below for
+# why it need not be the whole prompt.
 #
 # This hook is the only writer of hook_edit_grant, and the file is in
 # AGENT_LOCKED_STATE_REGEX, so the agent cannot mint the token for itself
@@ -162,10 +185,11 @@ TASK_MODE="off"
 # advance is back to the start of the process.
 if [[ "$PHASE" == "$PHASE_DONE" ]]; then
   echo 1 > "${STATE_DIR}/current_phase"
-  rm -f "${STATE_DIR}/task_class" "${STATE_DIR}/spawns_this_phase"
+  rm -f "${STATE_DIR}/task_class" "${STATE_DIR}/research_files.done" "${STATE_DIR}/research_web.done"
+  rm -f "${STATE_DIR}/agents"/budget.* 2>/dev/null
   printf '%s' "$PHASE_MODEL_VERSION" > "${STATE_DIR}/phase_model"
   log_decision "reset-${PHASE_DONE}-to-1" "$PHASE"
-  emit "Phase reset ${PHASE_DONE} -> 1: the previous task was finished and this prompt carries no question tag '?', so it starts a NEW task. Task class cleared. Task mode: ${TASK_MODE}. Work through the phases in order from 1 (Task definition). Advance with: bash .claude/hooks/advance.sh - at phase 1 the exact task class ('trivial' | 'standard') is a required argument and decides whether phases 2, 3 and 4 are skipped. Phases 1-4 and 8 are read only (edits and shell writes outside .claude/ are blocked); 5-7 are free. Sub-agents are NOT allowed at any phase - every phase, files pre-research and WEB research included, is the main agent's own work. The root CLAUDE.md is never editable by Claude.${GRANT_NOTE}"
+  emit "Phase reset ${PHASE_DONE} -> 1: the previous task was finished and this prompt carries no question tag '?', so it starts a NEW task. Task class cleared. Task mode: ${TASK_MODE}. Work through the phases in order from 1 (Task definition). Advance with: bash .claude/hooks/advance.sh - at phase 1 the exact task class ('trivial' | 'standard') is a required argument and decides whether phases 2, 3 and 4 are skipped. Phase 2 is the research block: files pre-research and WEB research run at the same time and each half is marked finished with advance.sh \"files\" / advance.sh \"web\"; the second mark joins into phase 4. Phases 1-4 and 8 are read only (edits and shell writes outside .claude/ are blocked); 5-7 are free. Sub-agents: only model 'opus' may be spawned (explicit model field required); at most 8 run at the same time; in phase 2 the description must start with 'files:' or 'web:' (budget 5 / 3 per block). The root CLAUDE.md is never editable by Claude.${GRANT_NOTE}"
 fi
 
 if ! printf '%s' "$PROMPT" | grep -iqE "$TRIGGER_REGEX"; then
@@ -184,4 +208,4 @@ if [[ "$PHASE" =~ ^[2-8]$ ]]; then
   NOTE="${NOTE} NOTE: an implementation prompt arrived while the phase is ${PHASE} (mid-task). If it continues the current task, carry on. If it starts a NEW task, ask the user to reset .claude/state/current_phase to 1 - Claude cannot reset it."
 fi
 
-emit "Implementation intent detected.${NOTE} Task mode: ${TASK_MODE}. Current phase: ${PHASE}. Task class: ${CLASS:-not yet evaluated}. Follow the phases 1-9 in order. If task mode is off, ask the user to run: touch .claude/state/TASK_MODE. Phase content lives in chat (no marker files). Advance with: bash .claude/hooks/advance.sh - at phase 1 the exact task class ('trivial' | 'standard') is a required argument and decides whether phases 2, 3 and 4 are skipped. Phases 1-4 and 8 are read only (edits and shell writes outside .claude/ are blocked); 5-7 are free. Sub-agents are NOT allowed at any phase - every phase, files pre-research and WEB research included, is the main agent's own work. The root CLAUDE.md is never editable by Claude.${GRANT_NOTE}"
+emit "Implementation intent detected.${NOTE} Task mode: ${TASK_MODE}. Current phase: ${PHASE}. Task class: ${CLASS:-not yet evaluated}. Follow the phases 1-9 in order. If task mode is off, ask the user to run: touch .claude/state/TASK_MODE. Phase content lives in chat (no marker files). Advance with: bash .claude/hooks/advance.sh - at phase 1 the exact task class ('trivial' | 'standard') is a required argument and decides whether phases 2, 3 and 4 are skipped. Phase 2 is the research block: files pre-research and WEB research run at the same time and each half is marked finished with advance.sh \"files\" / advance.sh \"web\"; the second mark joins into phase 4. Phases 1-4 and 8 are read only (edits and shell writes outside .claude/ are blocked); 5-7 are free. Sub-agents: only model 'opus' may be spawned (explicit model field required); at most 8 run at the same time; in phase 2 the description must start with 'files:' or 'web:' (budget 5 / 3 per block). The root CLAUDE.md is never editable by Claude.${GRANT_NOTE}"

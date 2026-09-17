@@ -31,16 +31,6 @@ EXPLICIT_REGEX='(write_file|create_file|new_file|save_file|put_file|delete_file|
 NOUN_REGEX='(file|asset|attachment|document)'
 VERB_REGEX='(create|write|upload|download|save|new|delete|remove|overwrite)'
 
-# CLAUDE.md forbids sub-agents outright. gate-subagent.sh only sees the built-in
-# Agent tool, so an MCP server that starts an agent, a task or a background
-# session would otherwise walk straight past the prohibition. Matched on the
-# tool name, which is all this hook has.
-SPAWN_REGEX='(spawn|subagent|sub_agent|delegate|dispatch)|((create|start|run|launch|new)_(agent|task|session|job|worker))|(agent|task|session)_(create|start|run|launch|spawn)'
-
-if printf '%s' "$TOOL_LC" | grep -qE "$SPAWN_REGEX"; then
-  deny "MCP tool '${TOOL}' appears to start an agent, task or background session. CLAUDE.md forbids sub-agents outright, and this surface is not covered by gate-subagent.sh, so it is refused here. Do the work in the main agent."
-fi
-
 if printf '%s' "$TOOL_LC" | grep -qE "$EXPLICIT_REGEX"; then
   deny "MCP tool '${TOOL}' writes files, which bypasses the protected-path and phase guards bound to Edit/Write/NotebookEdit. Use the Write tool instead."
 fi

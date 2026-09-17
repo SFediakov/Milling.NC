@@ -1,40 +1,46 @@
 #!/usr/bin/env bash
-# SubagentStop: decrement the active-subagent counter (floor at 0).
-# Never blocks - a subagent must always be allowed to finish.
+# SubagentStop: release the concurrency slot of the agent that just finished.
+# Never blocks - a sub-agent must always be allowed to finish (a "block" here
+# would keep it running, not cancel it), so this hook exits 0 on every path.
 #
-# A failed decrement cannot be resolved here, so it is recorded LOUDLY in
-# hook_errors.log; advance.sh and gate-stop.sh surface that file. The previous
-# version skipped the update silently after a ~19s spin, which produced a
-# counter that blocked every later phase change with no explanation.
+# The slot is found through the link track-agent-result.sh wrote from the Agent
+# tool's response (agent.<agent_id>). An agent with no link was not admitted by
+# gate-subagent.sh - a Workflow or Skill spawn, a resumed run, or a foreground
+# run whose PostToolUse releases the slot itself - and is only logged.
+#
+# A failed release cannot be repaired here, so it is recorded LOUDLY in
+# hook_errors.log, which gate-stop.sh surfaces; the slot is then held until the
+# next session start clears the ledger.
+#
+# jq-free: sed for JSON parsing.
+set -uo pipefail
 
-STATE_DIR="${CLAUDE_PROJECT_DIR}/.claude/state"
-LIB="${CLAUDE_PROJECT_DIR}/.claude/hooks/lib/guard-common.sh"
-mkdir -p "${STATE_DIR}" 2>/dev/null
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-}"
+[[ -z "$PROJECT_DIR" ]] && exit 0
+STATE_DIR="${PROJECT_DIR}/.claude/state"
+LIB="${PROJECT_DIR}/.claude/hooks/lib/guard-common.sh"
+mkdir -p "$STATE_DIR" 2>/dev/null
 
-# Drain stdin (Claude Code sends hook JSON); we do not need the fields.
-cat > /dev/null 2>&1 || true
+INPUT=$(cat 2>/dev/null || true)
 
 if ! source "$LIB" 2>/dev/null; then
-  printf '%s track-subagent-stop: guard library missing (%s)\n' \
+  printf '%s track-subagent-stop: guard library missing (%s); a sub-agent slot was NOT released\n' \
     "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$LIB" >> "${STATE_DIR}/hook_errors.log"
   exit 0
 fi
 
-COUNTER="${STATE_DIR}/subagent_count"
-LOCK="${STATE_DIR}/.subagent_count.lock"
+LEDGER=$(ledger_dir "$STATE_DIR")
+AGENT_ID=$(hook_json_string "$INPUT" agent_id)
+AGENT_TYPE=$(hook_json_string "$INPUT" agent_type)
 
-if ! lock_acquire "$LOCK"; then
-  hook_error "$STATE_DIR" "track-subagent-stop: could not acquire ${LOCK}; subagent_count was NOT decremented and is now too high. Reset with: echo 0 > .claude/state/subagent_count"
+if [[ -z "$AGENT_ID" ]]; then
+  hook_error "$STATE_DIR" "track-subagent-stop: payload without agent_id; no slot released"
   exit 0
 fi
-trap 'lock_release "$LOCK"' EXIT
 
-current=$(cat "$COUNTER" 2>/dev/null || echo 0)
-[[ "$current" =~ ^[0-9]+$ ]] || current=0
-if (( current > 0 )); then
-  echo $((current - 1)) > "$COUNTER"
+if ledger_release_agent "$LEDGER" "$AGENT_ID"; then
+  subagent_event_log "$STATE_DIR" "stop agent_id=${AGENT_ID} type=${AGENT_TYPE:--} released running=$(slot_count "$LEDGER")"
 else
-  echo 0 > "$COUNTER"
+  subagent_event_log "$STATE_DIR" "stop agent_id=${AGENT_ID} type=${AGENT_TYPE:--} untracked (not admitted by the gate) running=$(slot_count "$LEDGER")"
 fi
-
 exit 0

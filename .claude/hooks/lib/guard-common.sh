@@ -56,22 +56,30 @@ SCRATCHPAD_TARGET_REGEX='[/\\]temp[/\\]claude[/\\]'
 # themselves subject to the tool guards. TASK_MODE is the master switch: an agent
 # that can delete it can switch every phase rule off.
 #
-# subagent_count is deliberately NOT in this list: it is the documented recovery
-# valve for a leaked counter (see README "Recovery"). That is a known trade-off,
-# not an oversight. phase_model is likewise omitted: it is a migration stamp, and
-# a wrong value there only ever forces a reset to the start of the process.
-AGENT_LOCKED_STATE_REGEX='(^|/)\.claude/state/(current_phase|task_class|TASK_MODE|hook_edit_grant)$'
+# research_files.done / research_web.done are the join flags of the phase-2
+# research block (written by advance.sh only), and agents/ is the sub-agent
+# ledger (slot reservations, budgets and agent links, written by the spawn gate
+# and the tracking hooks only). An agent that could delete a slot file would
+# lift the concurrency limit on itself, so the whole directory is locked.
+#
+# phase_model is omitted: it is a migration stamp, and a wrong value there only
+# ever forces a reset to the start of the process.
+AGENT_LOCKED_STATE_REGEX='(^|/)\.claude/state/(current_phase|task_class|TASK_MODE|hook_edit_grant|research_files\.done|research_web\.done|agents(/[^/]*)?)$'
 
 # --- consent to modify the enforcement layer ---------------------------------
 # The agent and the hooks share a uid, so no file permission can stop the agent
 # rewriting its own guards. What CAN be enforced is a token the agent is unable
 # to mint: hook_edit_grant is in the locked-state list above, so Edit, Write and
 # the shell are all refused on it at every phase. Only inject-phases.sh writes
-# it, and only when the user's prompt is EXACTLY the passphrase below.
+# it, and only when the user's prompt contains the passphrase below.
 #
-# Deliberately an exact whole-prompt match, not a substring. A substring test
-# would let the phrase arrive inside a pasted log, a file the agent quotes back,
-# or a document - none of which is the user consenting.
+# Substring match, by explicit owner decision, so the phrase can be written
+# inline with the request it authorises. The trade-off accepted with it: any
+# prompt containing the phrase grants, a pasted log included. Two rules follow.
+# The guards never print the phrase in a deny reason, so pasting a hook error
+# back into chat cannot grant. And the agent does not quote the phrase on its
+# own initiative - it points at README.md instead - but does quote it when the
+# user asks for it.
 #
 # The grant lasts one turn. gate-stop.sh deletes it on the path where the turn
 # is actually allowed to end, so "until Claude stops thinking" is literal: if the
@@ -100,14 +108,22 @@ HOOK_INFRA_REGEX='(^|/)\.claude/(settings(\.local)?\.json$|hooks/)'
 
 # --- phase model -------------------------------------------------------------
 # Single source of truth for the process defined in the root CLAUDE.md.
-# Phases 1-8 are that document's phases, verbatim in order. Phase 9 is not a
+# Phases 1-8 are that document's phases, in order. Phase 9 is not a
 # development phase: it is the terminal resting state that lets the Stop gate
 # distinguish "reporting still owed" from "task finished", and it is the only
 # phase the user controls directly.
 #
+# Phases 2 and 3 of the document run CONCURRENTLY as one block (owner decision,
+# 2026-09-17). The block carries the number 2; the number 3 is retired and is
+# never produced by advance.sh. Each half is marked finished separately
+# (advance.sh "files" / advance.sh "web") and the block joins into phase 4 only
+# when both marks are present.
+#
 #   1 Task definition     read only   KPI table: tasks + acceptance criteria
-#   2 Files pre-research  read only   sonnet subagents, skipped when trivial
-#   3 WEB research        read only   1 sonnet subagent, skipped when trivial
+#   2 Research block      read only   files pre-research + WEB research, at the
+#                                     same time; skipped when trivial; leaves
+#                                     only when both halves are marked
+#   3 (retired number)                never a current phase in this model
 #   4 Planning            read only   skipped when trivial; may end the turn
 #   5 Execution           free
 #   6 Testing             free        may end the turn; rolls back to 1
@@ -116,14 +132,16 @@ HOOK_INFRA_REGEX='(^|/)\.claude/(settings(\.local)?\.json$|hooks/)'
 #   9 Done                free        terminal, user-controlled
 PHASE_MIN=1
 PHASE_DONE=9
+RESEARCH_PHASE=2
 
 # Bumped whenever the meaning of a phase NUMBER changes. A number on its own is
 # ambiguous across models - 7 was "Execution" under the retired 11-phase model
-# and is "Documentation" here - and current_phase survives resume, compact and
+# and is "Documentation" here; 3 was "WEB research" under model 2 and is not a
+# phase under model 3 - and current_phase survives resume, compact and
 # hand-editing. session-start.sh refuses to PRESERVE a phase stamped with an
 # older model, and advance.sh normalises it back to PHASE_MIN rather than acting
 # on a number it cannot interpret.
-PHASE_MODEL_VERSION=2
+PHASE_MODEL_VERSION=3
 
 # The skip rule carried by CLAUDE.md phases 2, 3 and 4: "skip for trivial tasks
 # like PR creation". Two values, spelled exactly; the skip table below is keyed
@@ -132,11 +150,18 @@ PHASE_MODEL_VERSION=2
 CLASS_TRIVIAL="trivial"
 CLASS_STANDARD="standard"
 
+# The two halves of the research block, spelled exactly. They are the only
+# arguments advance.sh accepts at phase 2, the names of the join flags
+# (research_<half>.done) and the tags a sub-agent spawned during the block must
+# carry in its description ("files: ..." / "web: ...").
+RESEARCH_HALF_FILES="files"
+RESEARCH_HALF_WEB="web"
+
 phase_name() {
   case "$1" in
     1) printf 'Task definition' ;;
-    2) printf 'Files pre-research' ;;
-    3) printf 'WEB research' ;;
+    2) printf 'Research block: files pre-research + WEB research (concurrent)' ;;
+    3) printf 'retired number - WEB research is half of phase 2' ;;
     4) printf 'Planning' ;;
     5) printf 'Execution' ;;
     6) printf 'Testing' ;;
@@ -158,10 +183,20 @@ class_is_valid() {
   return 1
 }
 
+research_half_is_valid() {
+  case "$1" in
+    "$RESEARCH_HALF_FILES"|"$RESEARCH_HALF_WEB") return 0 ;;
+  esac
+  return 1
+}
+
 # The skip table. CLAUDE.md marks phases 2 (files pre-research), 3 (WEB research)
 # and 4 (planning) "skip for trivial tasks like PR creation" - all three carry
 # the identical condition, so the trivial class skips the block as a whole.
 # Expressed as forward transitions so that skipping is applied by the machine.
+#
+# 2 -> 4 is the join of the research block. advance.sh takes it only when both
+# halves are marked (research_both_done); the number 3 has no transition.
 phase_next() {
   local cur="$1" class="${2:-}"
   case "$cur" in
@@ -172,8 +207,7 @@ phase_next() {
         *) return 1 ;;
       esac
       ;;
-    2) printf 3 ;;
-    3) printf 4 ;;
+    2) printf 4 ;;
     4) printf 5 ;;
     5) printf 6 ;;
     6) printf 7 ;;
@@ -185,12 +219,13 @@ phase_next() {
 }
 
 # Reachability is checked independently of phase_next so that a hand-edited
-# current_phase cannot smuggle the agent into a phase its class forbids.
+# current_phase cannot smuggle the agent into a phase its class forbids. The
+# retired number 3 is reachable for no class at all.
 phase_reachable() {
   local phase="$1" class="${2:-}"
   case "$phase" in
     1) return 0 ;;
-    2|3|4) [[ "$class" == "$CLASS_STANDARD" ]] && return 0 ;;
+    2|4) [[ "$class" == "$CLASS_STANDARD" ]] && return 0 ;;
     5|6|7|8|9) class_is_valid "$class" && return 0 ;;
   esac
   return 1
@@ -198,7 +233,7 @@ phase_reachable() {
 
 # Read-only phases: 1-4 are the definition, research and planning phases, 8 is
 # report-only. Edits outside .claude/ are blocked here, from Edit/Write AND from
-# the shell.
+# the shell. 3 stays listed: a hand-edited 3 must not become a free phase.
 phase_is_readonly() {
   case "$1" in
     1|2|3|4|8) return 0 ;;
@@ -217,16 +252,233 @@ phase_allows_optional_stop() {
   return 1
 }
 
-# Subagent policy. CLAUDE.md, "Subagent policy (hard rule)": "sub-agents are not
-# allowed". There is no phase, model, or count that permits a spawn, so this
-# function returns non-zero unconditionally and takes no argument into account.
+# --- research block join flags -----------------------------------------------
+# One existence flag per half, written by advance.sh only, locked against the
+# agent (AGENT_LOCKED_STATE_REGEX). Two files rather than one so that the two
+# marks never share a write target and need no lock; a repeated mark is refused
+# by advance.sh, so the flag is 1-bounded and the join is order independent.
+# The join requires CONTENT (-s), not mere existence: an empty file created by
+# hand is not a mark.
+research_flag_path() {
+  printf '%s/research_%s.done' "$1" "$2"
+}
+
+research_half_done() {
+  [[ -s "$(research_flag_path "$1" "$2")" ]]
+}
+
+research_both_done() {
+  research_half_done "$1" "$RESEARCH_HALF_FILES" && research_half_done "$1" "$RESEARCH_HALF_WEB"
+}
+
+research_flags_clear() {
+  rm -f "$(research_flag_path "$1" "$RESEARCH_HALF_FILES")" "$(research_flag_path "$1" "$RESEARCH_HALF_WEB")" 2>/dev/null
+  return 0
+}
+
+# --- subagent policy ---------------------------------------------------------
+# Root CLAUDE.md: "only opus sub-agents are allowed"; the model is the first
+# thing gate-subagent.sh checks. Two limits sit on top of it (owner decision,
+# 2026-09-17):
 #
-# Written as a function rather than deleted so that every caller keeps a single
-# place to ask, and so the prohibition is stated once. Earlier revisions keyed a
-# model and a budget off the phase (phase 2 sonnet, phase 3 sonnet); those
-# phases now say the main agent does the work itself, and nothing spawns.
-phase_subagent_policy() {
+#   SUBAGENT_MAX_CONCURRENT  - at most this many sub-agents running at the same
+#                              time, at every phase, task mode or not.
+#   RESEARCH_FILES_MAX /     - during the phase-2 research block (task mode
+#   RESEARCH_WEB_MAX           only) every spawn must carry the half it works
+#                              for as a description prefix ("files: ..." or
+#                              "web: ..."), and each half has a spawn budget for
+#                              the whole block: 5 for files pre-research, 3 for
+#                              WEB research (CLAUDE.md phase 3: "max quantity of
+#                              agents for this phase is 3").
+#
+# A running sub-agent still never blocks advance.sh, rollback.sh or the end of a
+# turn. Declared once and interpolated into every deny message, because the
+# allowlist retyped in several places is exactly how it drifted before.
+SUBAGENT_ALLOWED_MODEL="opus"
+SUBAGENT_MAX_CONCURRENT=8
+RESEARCH_FILES_MAX=5
+RESEARCH_WEB_MAX=3
+
+# A reservation that was never linked to a running agent (the spawn was refused
+# by the runtime, errored, or its PostToolUse hook never ran) is reclaimed after
+# this many minutes. Linked slots never expire by age: a sub-agent may run for
+# an hour, and over-admitting is the wrong direction to fail in.
+LEDGER_RESERVATION_TTL_MIN=5
+
+# --- subagent ledger ---------------------------------------------------------
+# Directory .claude/state/agents/, flat, one file per fact:
+#
+#   slot.<k>          k = 1..SUBAGENT_MAX_CONCURRENT. Exists while a sub-agent
+#                     holds slot k. Created by gate-subagent.sh with an
+#                     EXCLUSIVE create (bash noclobber -> O_EXCL), which is the
+#                     one primitive verified atomic on both NTFS/Cygwin and
+#                     Linux; a burst of parallel spawns therefore admits exactly
+#                     SUBAGENT_MAX_CONCURRENT and denies the rest. Content:
+#                     reservation id, UTC time, research half or '-'.
+#   res.<tool_use_id> Reservation index: which slot the PreToolUse call took.
+#   agent.<agent_id>  Link written by track-agent-result.sh from the Agent
+#                     tool's response (agentId): line 1 the slot, line 2 the
+#                     reservation id. SubagentStop releases through it.
+#   budget.<half>.<n> One per admitted research spawn, n = 1..max for the half.
+#                     Same exclusive create. Cleared with the block.
+#
+# Release renames the slot to a private temp name and then deletes it, so the
+# slot name is free immediately even where a delete-pending name lingers.
+# Nothing here waits: a PreToolUse hook that stalls is not a gate (a timed-out
+# hook lets the call through), so a full pool is denied at once.
+LEDGER_DIRNAME="agents"
+
+ledger_dir() {
+  printf '%s/%s' "$1" "$LEDGER_DIRNAME"
+}
+
+utc_now() {
+  date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+# Exclusive create: 0 = this call created the file, 1 = it already existed.
+# printf, not ':' - a failed redirection on the special builtin ':' terminates
+# a POSIX-mode shell. noclobber is toggled only around the attempt.
+create_excl() {
+  local had_c=0 rc
+  [[ $- == *C* ]] && had_c=1
+  set -C
+  { printf '%s\n' "$2" > "$1"; } 2>/dev/null
+  rc=$?
+  (( had_c )) || set +C
+  return $rc
+}
+
+slot_count() {
+  local f c=0
+  for f in "$1"/slot.*; do
+    [[ -f "$f" ]] && c=$((c + 1))
+  done
+  printf '%s' "$c"
+}
+
+# Takes the first free slot. Prints the slot name and returns 0; returns 1 when
+# every slot is held; 2 when the ledger directory cannot be created.
+slot_acquire() {
+  local dir="$1" rid="$2" tag="${3:--}" k
+  mkdir -p "$dir" 2>/dev/null || return 2
+  for (( k = 1; k <= SUBAGENT_MAX_CONCURRENT; k++ )); do
+    if create_excl "$dir/slot.$k" "$rid $(utc_now) $tag"; then
+      printf 'slot.%s\n' "$k" > "$dir/res.$rid"
+      printf 'slot.%s' "$k"
+      return 0
+    fi
+  done
   return 1
+}
+
+slot_free() {
+  local dir="$1" slot="$2" tmp
+  [[ -n "$slot" && -f "$dir/$slot" ]] || return 1
+  tmp="$dir/.rel.$$.$slot"
+  mv -f "$dir/$slot" "$tmp" 2>/dev/null || return 1
+  rm -f "$tmp" 2>/dev/null
+  return 0
+}
+
+# The spawn produced no running agent (denied after the reservation, refused by
+# the runtime, or finished before the tool call returned): give the slot back.
+ledger_release_reservation() {
+  local dir="$1" rid="$2" slot
+  slot=$(head -n 1 "$dir/res.$rid" 2>/dev/null)
+  rm -f "$dir/res.$rid" 2>/dev/null
+  [[ -n "$slot" ]] && slot_free "$dir" "$slot"
+  return 0
+}
+
+# Binds a reservation to the agent id the Agent tool reported. 1 = unknown
+# reservation (nothing to bind).
+ledger_link_agent() {
+  local dir="$1" rid="$2" aid="$3" slot
+  slot=$(head -n 1 "$dir/res.$rid" 2>/dev/null)
+  [[ -n "$slot" ]] || return 1
+  printf '%s\n%s\n' "$slot" "$rid" > "$dir/agent.$aid"
+}
+
+# Releases the slot held by a finished agent. 1 = the agent was never linked
+# (a spawn from a surface the gate does not see, or a resumed run).
+ledger_release_agent() {
+  local dir="$1" aid="$2" slot rid
+  [[ -f "$dir/agent.$aid" ]] || return 1
+  slot=$(sed -n 1p "$dir/agent.$aid" 2>/dev/null)
+  rid=$(sed -n 2p "$dir/agent.$aid" 2>/dev/null)
+  rm -f "$dir/agent.$aid" 2>/dev/null
+  [[ -n "$rid" ]] && rm -f "$dir/res.$rid" 2>/dev/null
+  slot_free "$dir" "$slot"
+  return 0
+}
+
+# Reclaims reservations older than LEDGER_RESERVATION_TTL_MIN that no agent
+# link names. Run by the spawn gate before it counts.
+ledger_reap() {
+  local dir="$1" f slot rid
+  [[ -d "$dir" ]] || return 0
+  for f in "$dir"/res.*; do
+    [[ -f "$f" ]] || continue
+    [[ -n "$(find "$f" -mmin +"$LEDGER_RESERVATION_TTL_MIN" 2>/dev/null)" ]] || continue
+    slot=$(head -n 1 "$f" 2>/dev/null)
+    if ! grep -qsx "$slot" "$dir"/agent.* 2>/dev/null; then
+      rid=${f##*/res.}
+      ledger_release_reservation "$dir" "$rid"
+    fi
+  done
+  return 0
+}
+
+research_half_max() {
+  case "$1" in
+    "$RESEARCH_HALF_FILES") printf '%s' "$RESEARCH_FILES_MAX" ;;
+    "$RESEARCH_HALF_WEB")   printf '%s' "$RESEARCH_WEB_MAX" ;;
+    *) printf 0 ;;
+  esac
+}
+
+budget_count() {
+  local f c=0
+  for f in "$1"/budget."$2".*; do
+    [[ -f "$f" ]] && c=$((c + 1))
+  done
+  printf '%s' "$c"
+}
+
+# Takes the next budget unit of a half. 0 = taken, 1 = budget exhausted,
+# 2 = ledger directory unavailable.
+budget_acquire() {
+  local dir="$1" half="$2" rid="$3" n max
+  max=$(research_half_max "$half")
+  mkdir -p "$dir" 2>/dev/null || return 2
+  for (( n = 1; n <= max; n++ )); do
+    create_excl "$dir/budget.$half.$n" "$rid $(utc_now)" && return 0
+  done
+  return 1
+}
+
+budget_clear() {
+  rm -f "$1"/budget.* 2>/dev/null
+  return 0
+}
+
+# Whole-ledger reset, for a process restart: every sub-agent of the previous
+# process is gone, so every slot it held is stale.
+ledger_clear() {
+  rm -rf "$1" 2>/dev/null
+  return 0
+}
+
+# Bounded audit trail of the spawn/link/stop events, next to the ledger but not
+# inside it, so a ledger reset keeps the history that explains it.
+subagent_event_log() {
+  local state_dir="$1" message="$2" log="${1}/subagent_events.log"
+  printf '%s %s\n' "$(utc_now)" "$message" >> "$log" 2>/dev/null
+  if [[ -f "$log" ]]; then
+    tail -n 200 "$log" > "${log}.tmp" 2>/dev/null && mv -f "${log}.tmp" "$log" 2>/dev/null
+  fi
+  return 0
 }
 
 # --- path normalization ------------------------------------------------------
@@ -456,42 +708,9 @@ phase_model_stamp() {
   printf '%s' "$PHASE_MODEL_VERSION" > "${1}/phase_model"
 }
 
-# --- locking -----------------------------------------------------------------
-# noclobber lockfile (atomic O_CREAT|O_EXCL) carrying the owner PID.
-# A lockfile releases more reliably than a lock directory on Windows, where AV
-# and indexer handles can keep a directory busy.
-# Stale locks are broken on either signal: owner PID gone, or lock older than
-# LOCK_STALE_MINUTES. Retry budget is ~1-2s wall, not the old ~19s spin.
-LOCK_STALE_MINUTES=1
-LOCK_MAX_TRIES=20
-
-lock_acquire() {
-  local lock="$1" tries="${2:-$LOCK_MAX_TRIES}" owner
-  while (( tries-- > 0 )); do
-    if (set -o noclobber; printf '%s' "$$" > "$lock") 2>/dev/null; then
-      return 0
-    fi
-    owner=$(cat "$lock" 2>/dev/null)
-    if [[ -n "$owner" ]] && ! kill -0 "$owner" 2>/dev/null; then
-      rm -f "$lock" 2>/dev/null
-      continue
-    fi
-    if [[ -n "$(find "$lock" -mmin +${LOCK_STALE_MINUTES} 2>/dev/null)" ]]; then
-      rm -f "$lock" 2>/dev/null
-      continue
-    fi
-    sleep 0.05
-  done
-  return 1
-}
-
-lock_release() {
-  rm -f "$1" 2>/dev/null
-}
-
-# Append a loud, timestamped entry that gate-stop.sh and advance.sh surface.
-# Silent hook failures were the actual defect: a missed counter update used to
-# exit 0 with no trace.
+# Append a loud, timestamped entry that gate-stop.sh surfaces. Silent hook
+# failures were the actual defect: a failed state update used to exit 0 with no
+# trace.
 hook_error() {
   local state_dir="$1" message="$2"
   printf '%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$message" >> "${state_dir}/hook_errors.log"

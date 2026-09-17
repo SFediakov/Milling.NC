@@ -9,7 +9,17 @@
 #   - Block git operations that destroy local history or the worktree.
 #   - Enforce CLAUDE.md rule: never `git pull --rebase`.
 #   - Permanently reject `git merge ... main`; PR review/merge happens on GitHub.
-#   - Block force-push (any target). Plain `git push` stays allowed.
+#   - Block force-push (any target).
+#   - Remote main is PR-only, at every phase, task mode or not: deny every
+#     `git push` whose target is main in any refspec spelling, every push that
+#     sweeps all branches (--all, --mirror, --branches, a glob), and every push
+#     whose target the hook cannot read from the command (no refspec, or HEAD),
+#     because git would resolve those from push.default and the upstream.
+#     `git push origin <branch>` with a named non-main branch is the one form
+#     that passes.
+#   - Deny the explicit spellings that rewrite LOCAL main other than a
+#     fast-forward sync: a fetch/pull refspec into main, branch -f/-M/-d main,
+#     update-ref on main, checkout -B / switch -C main.
 #   - In task mode, block file mutation from the shell during every read-only
 #     phase (1-4 and 8). Without this the phase gate is trivially bypassed:
 #     `sed -i` and `>` write files without ever touching the Edit/Write tools.
@@ -129,6 +139,173 @@ is_ephemeral_target() {
 
 match() { printf '%s' "$1" | grep -qiE "$2"; }
 
+# --- git argument parsing ----------------------------------------------------
+# The main-protection rules below cannot be flat regexes: a push target is the
+# text after the LAST colon of a refspec, an option can sit anywhere, and git's
+# own global options (-C <dir>, -c <k=v>, --git-dir=...) can separate `git` from
+# its verb. Tokens come from `read -ra`, never from an unquoted expansion, so a
+# glob like refs/heads/* is not expanded against the working directory. Quote
+# characters are stripped from every token: `git push origin 'refs/heads/*'`
+# must yield the same tokens as the unquoted form.
+
+# Prints the arguments of git verb $2 in segment $1, one per line, and returns
+# 0. Returns 1 (nothing printed) when the segment does not run that verb. The
+# first token that is `git` (any path prefix, .exe, a leading $(, ( or `)
+# starts the scan, so `sudo git`, `env git` and `bash -c "git ..."` are read.
+git_verb_args() {
+  local seg="$1" verb="$2" tok clean i n state=before
+  local -a toks
+  IFS=$' \t' read -ra toks <<< "$seg"
+  n=${#toks[@]}
+  for (( i = 0; i < n; i++ )); do
+    tok=${toks[$i]//[\"\']/}
+    [[ -z "$tok" ]] && continue
+    case "$state" in
+      before)
+        clean=$(lower "${tok##*/}"); clean=${clean##*\\}
+        clean=$(printf '%s' "$clean" | sed -E 's/^[$({`]+//; s/\.exe$//')
+        [[ "$clean" == "git" ]] && state=globals
+        ;;
+      globals)
+        case "$tok" in
+          -C|-c|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix)
+            (( i++ )) ;;
+          -*) ;;
+          *)
+            [[ "$(lower "$tok")" != "$verb" ]] && return 1
+            state=args ;;
+        esac
+        ;;
+      args)
+        printf '%s\n' "$tok"
+        ;;
+    esac
+  done
+  [[ "$state" == "args" ]]
+}
+
+# Fills the array ARGS with the arguments of git verb $2 in segment $1. Returns
+# 1 when the segment does not run that verb. A process substitution would hide
+# the function's status behind mapfile's, hence the intermediate string.
+ARGS=()
+git_args_into() {
+  local out
+  out=$(git_verb_args "$1" "$2") || return 1
+  ARGS=()
+  [[ -n "$out" ]] && mapfile -t ARGS <<< "$out"
+  return 0
+}
+
+# Refs that name main on either side: main, heads/main, refs/heads/main.
+is_main_ref() {
+  [[ "$(lower "$1")" =~ ^(refs/heads/|heads/)?main$ ]]
+}
+
+# Remote main is PR-only. One rule, applied to every push, at every phase:
+# the command itself must show a named non-main branch as the target. A push
+# with no refspec, or with HEAD as the source and no destination, is resolved
+# by git from push.default and the upstream - the hook cannot see that, so it
+# is denied rather than guessed. --all/--mirror/--branches and a glob sweep
+# main in with everything else.
+check_push_target() {
+  local seg="$1" tok src dst i opts_done=0 remote="" refspecs=0
+  git_args_into "$seg" push || return 0
+  local -a args=("${ARGS[@]+"${ARGS[@]}"}")
+  for (( i = 0; i < ${#args[@]}; i++ )); do
+    tok=${args[$i]}
+    if (( ! opts_done )); then
+      case "$tok" in
+        --) opts_done=1; continue ;;
+        --all|--mirror|--branches)
+          deny_pretooluse "'git push ${tok}' pushes every branch, main included. Remote main changes only through a PR the user merges. Push one named branch: git push origin <branch>." ;;
+        -o|--push-option|--receive-pack|--exec|--repo)
+          (( i++ )); continue ;;
+        -*) continue ;;
+      esac
+    fi
+    if [[ -z "$remote" ]]; then
+      remote=$tok
+      continue
+    fi
+    refspecs=$((refspecs + 1))
+    tok=${tok#+}
+    if [[ "$tok" == *:* ]]; then
+      src=${tok%:*}; dst=${tok##*:}
+      [[ -z "$dst" ]] && dst=$src
+    else
+      src=$tok; dst=$tok
+      if [[ "$(lower "$src")" =~ ^(head|@)([^a-z0-9_/-]|$) ]]; then
+        deny_pretooluse "'git push ... ${args[$i]}' lets git resolve the target branch from HEAD; the hook cannot verify it is not main. Name the branch: git push origin <branch>."
+      fi
+    fi
+    if [[ "$dst" == *'*'* ]]; then
+      deny_pretooluse "A glob refspec ('${args[$i]}') can update main. Push one named branch: git push origin <branch>."
+    fi
+    if is_main_ref "$dst"; then
+      deny_pretooluse "Pushing to remote main ('${args[$i]}') is blocked at every phase. main changes only through a PR that the user merges on GitHub. Push the feature branch and open a PR with gh pr create --base main."
+    fi
+  done
+  if (( refspecs == 0 )); then
+    deny_pretooluse "'git push' without an explicit branch is blocked: git would pick the target from push.default and the upstream, which may be main, and the hook cannot verify it. Use: git push origin <branch> (a named branch other than main)."
+  fi
+}
+
+# Local main is written only by a fast-forward sync from origin (`git pull
+# --ff-only origin main`, `git fetch origin main:main`). Every explicit
+# spelling that rewrites it to something else is denied. Flags are compared
+# case-sensitively on purpose: -b/-c create a branch and fail if it exists,
+# -B/-C replace it.
+check_local_main_rewrite() {
+  local seg="$1" tok src dst force flag_hit=0 main_hit=0
+
+  if git_args_into "$seg" fetch || git_args_into "$seg" pull; then
+    for tok in "${ARGS[@]+"${ARGS[@]}"}"; do
+      [[ "$tok" == -* || "$tok" != *:* ]] && continue
+      force=0; [[ "$tok" == +* ]] && force=1
+      tok=${tok#+}
+      src=${tok%:*}; dst=${tok##*:}
+      if is_main_ref "$dst" && { (( force )) || ! is_main_ref "$src"; }; then
+        deny_pretooluse "Refspec '${tok}' would rewrite local main from '${src}'. Local main only fast-forwards from origin main; anything else reaches main through a PR."
+      fi
+    done
+  fi
+
+  if git_args_into "$seg" branch; then
+    for tok in "${ARGS[@]+"${ARGS[@]}"}"; do
+      case "$tok" in
+        -f|--force|-M|-m|--move|-C|-d|-D|--delete|-[a-zA-Z]*[fMmCdD]*) flag_hit=1 ;;
+        -*) ;;
+        *) is_main_ref "$tok" && main_hit=1 ;;
+      esac
+    done
+    if (( flag_hit && main_hit )); then
+      deny_pretooluse "Forcing, renaming, overwriting or deleting the local main branch is blocked. Local main only fast-forwards from origin main."
+    fi
+  fi
+
+  if git_args_into "$seg" update-ref; then
+    for tok in "${ARGS[@]+"${ARGS[@]}"}"; do
+      if is_main_ref "$tok"; then
+        deny_pretooluse "'git update-ref' on main is blocked. Local main only fast-forwards from origin main."
+      fi
+    done
+  fi
+
+  flag_hit=0; main_hit=0
+  if git_args_into "$seg" checkout || git_args_into "$seg" switch; then
+    for tok in "${ARGS[@]+"${ARGS[@]}"}"; do
+      case "$tok" in
+        -B|-C|--force-create) flag_hit=1 ;;
+        -*) ;;
+        *) is_main_ref "$tok" && main_hit=1 ;;
+      esac
+    done
+    if (( flag_hit && main_hit )); then
+      deny_pretooluse "Recreating local main at another commit (checkout -B / switch -C main) is blocked. Local main only fast-forwards from origin main."
+    fi
+  fi
+}
+
 # Every path this segment would create, overwrite or delete. Empty when the
 # segment only reads.
 #
@@ -201,7 +378,7 @@ check_segment() {
       deny_pretooluse "The root CLAUDE.md is user-owned and cannot be modified by Claude under any phase. Folder-level CLAUDE.md files remain editable."
     fi
     if printf '%s' "$t" | grep -qiE "$AGENT_LOCKED_STATE_REGEX"; then
-      deny_pretooluse "Phase state is machine-owned: current_phase, task_class and TASK_MODE cannot be written from a shell. Use 'bash .claude/hooks/advance.sh' (phase 1 requires the exact task class) or 'bash .claude/hooks/rollback.sh' from phase 6. Only the user edits these files directly, outside Claude Code."
+      deny_pretooluse "Phase state is machine-owned: current_phase, task_class, TASK_MODE, the research-block marks (research_files.done, research_web.done) and the sub-agent ledger (agents/) cannot be written from a shell. Use 'bash .claude/hooks/advance.sh' (phase 1 requires the exact task class, phase 2 the finished half) or 'bash .claude/hooks/rollback.sh' from phase 6. Only the user edits these files directly, outside Claude Code."
     fi
     if printf '%s' "$t" | grep -qiE "$HOOK_INFRA_REGEX" && ! hook_edit_grant_active "$STATE_DIR"; then
       # The passphrase is deliberately not quoted here - it grants on a substring
@@ -262,6 +439,9 @@ check_segment() {
   if match "$scan" 'git[[:space:]]+push[[:space:]].*(--force([[:space:]]|$)|--force-with-lease|-f([[:space:]]|$))'; then
     deny_pretooluse "Force push blocked"
   fi
+
+  check_push_target "$scan"
+  check_local_main_rewrite "$scan"
 }
 
 # Read-only phases: no file mutation from the shell, .claude/ and the scratchpad
