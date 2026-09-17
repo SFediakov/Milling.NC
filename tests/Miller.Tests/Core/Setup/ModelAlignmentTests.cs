@@ -6,8 +6,8 @@ using Xunit;
 
 namespace Miller.Tests.Core.Setup;
 
-// Alignment of the model union to an auto-fit stock (stock rule) and of one model inside the stock
-// (offset fixed point), with the case the offset cannot solve reported instead of drifting.
+// Alignment of the model union to an auto-fit stock (stock rule) and of one model inside the
+// anchored stock (one offset step).
 public sealed class ModelAlignmentTests
 {
     private static MillingProject Project(params ModelPlacement[] placements)
@@ -93,20 +93,19 @@ public sealed class ModelAlignmentTests
     }
 
     [Fact]
-    public void AlignedOffset_ReportsWhenTheStockFollowsTheModel()
+    public void AlignedOffset_MovesALoneModelInsideTheAnchoredStock()
     {
-        // A lone model in an auto-fit stock: the stock is centred on it and hangs from its top, so no
-        // offset can move it to the stock bottom or centre it on Z.
+        // A lone model in an auto-fit stock: the stock is anchored to the model at zero offset (centred,
+        // hanging from its top), so an offset of -25 on Z puts the bottom on the stock bottom and -12.5
+        // centres it; the offset is only computed, not applied.
         var mesh = TestMeshes.Box(10, 10, 5);
         var project = Project(new ModelPlacement { StlPath = "a.stl" });
         var bounds = new[] { mesh.Bounds };
-        var ex = Assert.Throws<InvalidOperationException>(() => ModelLayout.AlignedOffset(project, bounds, 0, 2, StockAlignment.Min));
-        Assert.Contains("Z", ex.Message);
-        Assert.Throws<InvalidOperationException>(() => ModelLayout.CenteredOffset(project, bounds, 0, 2));
+        Assert.Equal(-25f, ModelLayout.AlignedOffset(project, bounds, 0, 2, StockAlignment.Min).Z, 3);
+        Assert.Equal(-12.5f, ModelLayout.CenteredOffset(project, bounds, 0, 2).Z, 3);
         Assert.Equal(Vector3.Zero, project.Models[0].Offset);
-        // Centred in X already: the fixed point is the current offset.
+        // Centred in X already and top aligned already: the current offset stays.
         Assert.Equal(Vector3.Zero, ModelLayout.CenteredOffset(project, bounds, 0, 0));
-        // Top aligned already: Max on Z holds.
         Assert.Equal(Vector3.Zero, ModelLayout.AlignedOffset(project, bounds, 0, 2, StockAlignment.Max));
     }
 

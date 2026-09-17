@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Numerics;
 using Miller.Core.Geometry;
+using Miller.Core.HeightMaps;
 using Miller.Core.Setup;
 
 namespace Miller.Application.Validation;
@@ -71,6 +72,11 @@ public static class ProjectValidator
         Positive(errors, "Parameters.RapidRate", p.RapidRate);
         Positive(errors, "Parameters.SpindleRpm", p.SpindleRpm);
         NonNegative(errors, "Strategy.MinIslandVolume", project.MinIslandVolume);
+        if (!(project.ReachPercent > ReachMap.MinPercent && project.ReachPercent <= ReachMap.MaxPercent))
+        {
+            errors.Add(new ValidationMessage("Strategy.ReachPercent",
+                $"Reach percent {F(project.ReachPercent)} must be above {F(ReachMap.MinPercent)} and at most {F(ReachMap.MaxPercent)}."));
+        }
 
         if (stock.Shape == StockShape.Box)
         {
@@ -89,7 +95,7 @@ public static class ProjectValidator
             errors.Add(new ValidationMessage("Stock.Margin", $"Margin {F(stock.Margin)} must not be negative."));
         }
 
-        if (modelBoundsMachine is { IsEmpty: false } model && !StockContains(stock, model))
+        if (modelBoundsMachine is { IsEmpty: false } model && !StockContains(project, model))
         {
             warnings.Add(new ValidationMessage("Stock.Placement",
                 $"Model bounds {model.Min} to {model.Max} are not inside the stock."));
@@ -98,11 +104,11 @@ public static class ProjectValidator
         return new ValidationResult(errors, warnings);
     }
 
-    private static bool StockContains(StockDefinition stock, BoundingBox model)
+    // Model bounds in machine space against the stock box in machine space (ModelLayout.StockBoundsMachine).
+    private static bool StockContains(MillingProject project, BoundingBox model)
     {
-        var corner = AxisSetup.StockCorner(model, stock);
-        var size = AxisSetup.StockBoundingSize(stock);
-        var box = new BoundingBox(corner, corner + size);
+        var stock = project.Stock;
+        var box = ModelLayout.StockBoundsMachine(project);
         if (!box.Contains(model))
         {
             return false;
@@ -113,6 +119,8 @@ public static class ProjectValidator
             return true;
         }
 
+        var corner = box.Min;
+        var size = box.Size;
         var center = new Vector2(corner.X + size.X / 2, corner.Y + size.Y / 2);
         var radius = stock.Diameter / 2;
         foreach (var x in new[] { model.Min.X, model.Max.X })

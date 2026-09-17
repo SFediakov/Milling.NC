@@ -107,12 +107,12 @@ public sealed class SettingsViewModelsTests : IDisposable
     [Fact]
     public void Strategy_ListsTheRegistriesAndWritesIds()
     {
-        Assert.Equal(new[] { "z-layer-by-layer", "three-axis-precise" }, StrategySelectionViewModel.Strategies.Select(s => s.Id));
+        Assert.Equal(new[] { "z-layer-by-layer", "three-axis-freedom" }, StrategySelectionViewModel.Strategies.Select(s => s.Id));
         Assert.Equal(new[] { "grbl" }, _vm.Strategy.PostProcessors.Select(p => p.Id));
         Assert.Equal("z-layer-by-layer", _vm.Strategy.Strategy!.Id);
 
-        _vm.Strategy.Strategy = StrategyRegistry.GetById("three-axis-precise");
-        Assert.Equal("three-axis-precise", _vm.Project.Current.RoutingStrategyId);
+        _vm.Strategy.Strategy = StrategyRegistry.GetById("three-axis-freedom");
+        Assert.Equal("three-axis-freedom", _vm.Project.Current.RoutingStrategyId);
         Assert.True(_vm.Project.IsDirty);
         Assert.Equal(StrategySelectionViewModel.NoToolpathText, _vm.Strategy.StatisticsText);
         Assert.Same(_vm.GenerateCommand, _vm.Strategy.GenerateCommand);

@@ -22,8 +22,8 @@ public enum AlignTarget
 
 // The models on the table: list, add and remove, the auto-fit alignment of the stock around all
 // models per axis, and the placement (offset, rotation about Z) of the selected one, including
-// aligning it to the stock minimum, middle or maximum on one axis at a time. Selection is shared
-// with the viewport through SelectedIndex.
+// aligning it to the stock minimum, middle or maximum on one axis at a time and moving it by a
+// viewport drag. Selection is shared with the viewport through SelectedIndex.
 public sealed partial class ModelsViewModel : SettingsViewModelBase
 {
     public const string FieldPrefixModels = "Models";
@@ -43,10 +43,6 @@ public sealed partial class ModelsViewModel : SettingsViewModelBase
 
     [ObservableProperty]
     private int _selectedIndex = -1;
-
-    // Why the last alignment could not be applied; empty after a successful one.
-    [ObservableProperty]
-    private string? _alignmentMessage;
 
     public ModelsViewModel(ProjectService project, MeshImportService meshImport, IAsyncRelayCommand addCommand)
         : base(project, FieldPrefixModels)
@@ -129,25 +125,29 @@ public sealed partial class ModelsViewModel : SettingsViewModelBase
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void CenterZ() => Align(AlignTarget.ZCenter);
 
-    // Moves the selected model by its offset; when the stock follows the model on that axis the
-    // layout reports it and the message points to the stock alignment above.
+    // Moves the selected model by its offset to the stock minimum, middle or maximum on one axis.
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void Align(AlignTarget target)
     {
         var index = SelectedIndex;
         var axis = (int)target / 3;
         var alignment = (StockAlignment)((int)target % 3);
-        try
+        var offset = ModelLayout.AlignedOffset(Current, _meshImport.Bounds, index, axis, alignment);
+        Edit(p => p.Models[index].Offset = offset, nameof(OffsetX));
+        RaisePlacement();
+    }
+
+    // A viewport drag: the selected model moves by the machine-space XY delta, which equals the
+    // offset delta because machine zero does not follow the offsets.
+    public void MoveSelected(Vector2 delta)
+    {
+        if (!HasSelection || delta == Vector2.Zero)
         {
-            var offset = ModelLayout.AlignedOffset(Current, _meshImport.Bounds, index, axis, alignment);
-            AlignmentMessage = null;
-            Edit(p => p.Models[index].Offset = offset, nameof(OffsetX));
-            RaisePlacement();
+            return;
         }
-        catch (InvalidOperationException ex)
-        {
-            AlignmentMessage = ex.Message;
-        }
+
+        EditOffset(o => new Vector3(o.X + delta.X, o.Y + delta.Y, o.Z), nameof(OffsetX));
+        OnPropertyChanged(nameof(OffsetY));
     }
 
     protected override void OnReload()
@@ -169,7 +169,6 @@ public sealed partial class ModelsViewModel : SettingsViewModelBase
 
     partial void OnSelectedIndexChanged(int value)
     {
-        AlignmentMessage = null;
         RaisePlacement();
         SelectionChanged?.Invoke(this, EventArgs.Empty);
     }

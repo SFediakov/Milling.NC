@@ -22,7 +22,7 @@ public sealed class MainWindowHeadlessTests
         "PlayItem", "PauseItem", "StopItem", "RunToEndItem", "AboutItem",
     };
 
-    private static readonly string[] Tabs = { "ModelsTab", "ToolTab", "StockTab", "AxesTab", "CuttingTab", "StrategyTab", "SimulationTab", "AnalysisTab" };
+    private static readonly string[] Tabs = { "PresetsTab", "ModelsTab", "ToolTab", "StockTab", "AxesTab", "CuttingTab", "StrategyTab", "SimulationTab", "AnalysisTab" };
 
     [AvaloniaFact]
     public void MainWindow_ShowsEveryMenuItemAndTab()

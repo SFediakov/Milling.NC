@@ -10,7 +10,7 @@ public static class StrategyRegistry
         new IToolpathStrategy[]
         {
             new ZLayerByLayerStrategy(),
-            new ThreeAxisPreciseStrategy(),
+            new ThreeAxisFreedomStrategy(),
         },
         s => s.Id,
         s => s.DisplayName,

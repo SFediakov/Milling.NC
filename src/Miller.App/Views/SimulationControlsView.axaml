@@ -23,7 +23,7 @@
       <Slider Name="SpeedSlider" Minimum="0" Maximum="1" Value="{Binding SpeedFactor, Converter={StaticResource LogSlider}}" TickFrequency="0.25" IsSnapToTickEnabled="False" />
       <StackPanel Orientation="Horizontal" Spacing="8">
         <TextBox Name="SpeedBox" Classes="numeric" Text="{Binding SpeedText}" />
-        <TextBlock Text="x real time" VerticalAlignment="Center" />
+        <TextBlock Classes="label" Text="x real time" />
       </StackPanel>
       <TextBlock Classes="validation" Text="{Binding SpeedError}" IsVisible="{Binding SpeedError, Converter={x:Static ObjectConverters.IsNotNull}}" TextWrapping="Wrap" />
 
@@ -34,7 +34,6 @@
       <TextBlock Classes="label" Text="Collision events" />
       <TextBlock Name="CollisionText" Text="{Binding CollisionCount}" />
       <TextBlock Classes="warning" Name="LastEventText" Text="{Binding LastEventText}" TextWrapping="Wrap" />
-      <TextBlock Text="A press on the progress bar moves the simulation to that point. Space in the viewport toggles play and pause." TextWrapping="Wrap" Margin="0,8,0,0" />
     </StackPanel>
   </ScrollViewer>
 </UserControl>

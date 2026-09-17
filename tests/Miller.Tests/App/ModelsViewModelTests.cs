@@ -120,35 +120,31 @@ public sealed class ModelsViewModelTests : IDisposable
         Assert.Empty(_errors.Shown);
     }
     [Fact]
-    public async Task Align_MovesTheSelectedModelToTheStockSide_AndReportsWhenTheStockFollowsIt()
+    public async Task Align_MovesTheSelectedModelToTheStockSide_AlsoForALoneModel()
     {
         var vm = await WithTwoCubesAsync();
         vm.Models.SelectedIndex = 1;
         vm.Models.OffsetX = 20f;
         Assert.True(vm.Models.AlignCommand.CanExecute(AlignTarget.XMax));
 
-        // Auto-fit stock centred on the union: the second cube reaches the stock's +X side and its
-        // bottom while the first cube anchors the union.
+        // Auto-fit stock anchored to the cubes at zero offset: the second cube reaches the stock's +X
+        // side and its bottom.
         vm.Models.AlignCommand.Execute(AlignTarget.XMax);
-        Assert.Null(vm.Models.AlignmentMessage);
         var stock = vm.Project.Current.Stock;
         var machine = ModelLayout.MachineBounds(vm.Project.Current, vm.MeshImport.Bounds);
         Assert.Equal(machine.Max.X, vm.Viewport.Meshes[1].Bounds.Max.X, 2);
         Assert.Equal(stock.SizeX, machine.Max.X, 2);
         vm.Models.AlignCommand.Execute(AlignTarget.ZMin);
-        Assert.Null(vm.Models.AlignmentMessage);
         Assert.Equal(0f, vm.Viewport.Meshes[1].Bounds.Min.Z, 2);
 
-        // A lone cube: the stock hangs from its top, so Z Min has no fixed point and says so; the
-        // message clears when the selection changes.
+        // A lone cube: the stock does not follow its offset, so Z Min lands its bottom on the stock
+        // bottom as well.
         vm.Models.RemoveCommand.Execute(null);
         vm.Models.SelectedIndex = 0;
         vm.Models.AlignCommand.Execute(AlignTarget.ZMin);
-        Assert.NotNull(vm.Models.AlignmentMessage);
-        Assert.Contains("Z", vm.Models.AlignmentMessage);
-        Assert.Equal(Vector3.Zero, vm.Project.Current.Models[0].Offset);
+        Assert.Equal(0f, vm.Viewport.Meshes[0].Bounds.Min.Z, 2);
+        Assert.Equal(-(stock.SizeZ - 1f), vm.Project.Current.Models[0].Offset.Z, 2);
         vm.Models.SelectedIndex = -1;
-        Assert.Null(vm.Models.AlignmentMessage);
         Assert.False(vm.Models.AlignCommand.CanExecute(AlignTarget.XMin));
     }
 

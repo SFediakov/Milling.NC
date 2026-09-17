@@ -175,6 +175,8 @@ public sealed class ProjectValidatorTests
     [Fact]
     public void ModelOutsideStock_IsAWarningOnPlacement()
     {
+        // The stock box in machine space is 0..100 x 0..100 x 0..30 whatever the model: the explicit
+        // origin moves machine zero, not the box.
         var project = MillingProject.Default();
         project.Stock.Placement = StockPlacement.Explicit;
         project.Stock.ExplicitOrigin = new Vector3(-10, -10, -20);
@@ -183,7 +185,7 @@ public sealed class ProjectValidatorTests
         Assert.True(inside.IsValid);
         Assert.Empty(inside.Warnings);
 
-        var outside = ProjectValidator.Validate(project, new BoundingBox(Vector3.Zero, new Vector3(100, 10, 10)));
+        var outside = ProjectValidator.Validate(project, new BoundingBox(Vector3.Zero, new Vector3(110, 10, 10)));
         Assert.True(outside.IsValid);
         var warning = Assert.Single(outside.Warnings);
         Assert.Equal("Stock.Placement", warning.Field);
@@ -210,12 +212,13 @@ public sealed class ProjectValidatorTests
         project.Stock.Diameter = 100;
         project.Stock.Height = 30;
 
-        // 80 x 80 fits the 100 x 100 bounding box but its corners lie 56.6 mm from the center.
-        var corners = ProjectValidator.Validate(project, new BoundingBox(Vector3.Zero, new Vector3(80, 80, 10)));
+        // The cylinder is centred at (50, 50) in machine space. 80 x 80 around that centre fits the
+        // 100 x 100 bounding box but its corners lie 56.6 mm from the centre.
+        var corners = ProjectValidator.Validate(project, new BoundingBox(new Vector3(10, 10, 0), new Vector3(90, 90, 10)));
         Assert.Equal("Stock.Placement", Assert.Single(corners.Warnings).Field);
 
-        // 60 x 60 has corners 42.4 mm from the center, inside the 50 mm radius.
-        var fits = ProjectValidator.Validate(project, new BoundingBox(Vector3.Zero, new Vector3(60, 60, 10)));
+        // 60 x 60 around the centre has corners 42.4 mm from it, inside the 50 mm radius.
+        var fits = ProjectValidator.Validate(project, new BoundingBox(new Vector3(20, 20, 0), new Vector3(80, 80, 10)));
         Assert.Empty(fits.Warnings);
     }
 

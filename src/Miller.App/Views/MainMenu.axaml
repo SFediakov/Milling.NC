@@ -21,10 +21,12 @@
     <MenuItem Header="_View" Name="ViewMenu">
       <MenuItem Header="_Reset Camera" Name="ResetCameraItem" Command="{Binding ResetCameraCommand}" InputGesture="Ctrl+D0" />
       <Separator />
-      <MenuItem Header="Show _Model" Name="ShowModelItem" Command="{Binding ToggleModelCommand}" InputGesture="Ctrl+D1" />
-      <MenuItem Header="Show _Stock" Name="ShowStockItem" Command="{Binding ToggleStockCommand}" InputGesture="Ctrl+D2" />
-      <MenuItem Header="Show _Toolpath" Name="ShowToolpathItem" Command="{Binding ToggleToolpathCommand}" InputGesture="Ctrl+D3" />
-      <MenuItem Header="Show Too_l" Name="ShowToolItem" Command="{Binding ToggleToolCommand}" InputGesture="Ctrl+D4" />
+      <!-- A click on a check item toggles IsChecked itself before the click is raised, so these
+           items carry no command; the window key bindings hold the toggle commands. -->
+      <MenuItem Header="Show _Model" Name="ShowModelItem" ToggleType="CheckBox" IsChecked="{Binding Viewport.ShowModel, Mode=TwoWay}" InputGesture="Ctrl+D1" />
+      <MenuItem Header="Show _Stock" Name="ShowStockItem" ToggleType="CheckBox" IsChecked="{Binding Viewport.ShowStock, Mode=TwoWay}" InputGesture="Ctrl+D2" />
+      <MenuItem Header="Show _Toolpath" Name="ShowToolpathItem" ToggleType="CheckBox" IsChecked="{Binding Viewport.ShowToolpath, Mode=TwoWay}" InputGesture="Ctrl+D3" />
+      <MenuItem Header="Show Too_l" Name="ShowToolItem" ToggleType="CheckBox" IsChecked="{Binding Viewport.ShowTool, Mode=TwoWay}" InputGesture="Ctrl+D4" />
     </MenuItem>
     <MenuItem Header="_Simulation" Name="SimulationMenu">
       <MenuItem Header="_Play" Name="PlayItem" Command="{Binding SimulationPanel.PlayCommand}" />

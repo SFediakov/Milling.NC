@@ -58,7 +58,7 @@ public sealed class ProjectSerializerTests
             CellSize = 0.1f,
             Tolerance = 0.02f,
         },
-        RoutingStrategyId = "three-axis-precise",
+        RoutingStrategyId = "three-axis-freedom",
         PostProcessorId = "grbl",
         CutScope = CutScope.Separation,
         MinIslandVolume = 120.5f,
@@ -178,7 +178,7 @@ public sealed class ProjectSerializerTests
         Assert.Contains("\"Placement\": \"Explicit\"", json);
         Assert.Contains("\"MapX\": \"Y\"", json);
         Assert.Contains("\"OriginMode\": \"Custom\"", json);
-        Assert.Contains("\"RoutingStrategyId\": \"three-axis-precise\"", json);
+        Assert.Contains("\"RoutingStrategyId\": \"three-axis-freedom\"", json);
         Assert.Contains("\"SchemaVersion\": 3", json);
         Assert.Contains("\n", json);
         Assert.DoesNotContain("\"TipType\": 1", json);

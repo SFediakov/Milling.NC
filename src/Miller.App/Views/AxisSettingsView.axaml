@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:Miller.App.ViewModels"
+             xmlns:c="using:Miller.App.Controls"
              x:Class="Miller.App.Views.AxisSettingsView"
              x:DataType="vm:AxisSettingsViewModel">
   <ScrollViewer>
@@ -24,9 +25,9 @@
 
       <TextBlock Classes="label" Text="Rotation about X / Y / Z (degrees)" />
       <StackPanel Orientation="Horizontal" Spacing="4">
-        <TextBox Name="RotationXBox" Classes="numeric" Text="{Binding RotationX}" />
-        <TextBox Name="RotationYBox" Classes="numeric" Text="{Binding RotationY}" />
-        <TextBox Name="RotationZBox" Classes="numeric" Text="{Binding RotationZ}" />
+        <c:NumericBox Name="RotationXBox" Classes="numeric" Value="{Binding RotationX}" />
+        <c:NumericBox Name="RotationYBox" Classes="numeric" Value="{Binding RotationY}" />
+        <c:NumericBox Name="RotationZBox" Classes="numeric" Value="{Binding RotationZ}" />
       </StackPanel>
 
       <TextBlock Classes="label" Text="Machine zero" />
@@ -35,9 +36,9 @@
       <StackPanel Name="CustomFields" IsVisible="{Binding IsCustom}" Spacing="4">
         <TextBlock Classes="label" Text="Custom zero relative to the stock corner (mm)" />
         <StackPanel Orientation="Horizontal" Spacing="4">
-          <TextBox Name="OffsetXBox" Classes="numeric" Text="{Binding OffsetX}" />
-          <TextBox Name="OffsetYBox" Classes="numeric" Text="{Binding OffsetY}" />
-          <TextBox Name="OffsetZBox" Classes="numeric" Text="{Binding OffsetZ}" />
+          <c:NumericBox Name="OffsetXBox" Classes="numeric" Value="{Binding OffsetX}" />
+          <c:NumericBox Name="OffsetYBox" Classes="numeric" Value="{Binding OffsetY}" />
+          <c:NumericBox Name="OffsetZBox" Classes="numeric" Value="{Binding OffsetZ}" />
         </StackPanel>
       </StackPanel>
 
