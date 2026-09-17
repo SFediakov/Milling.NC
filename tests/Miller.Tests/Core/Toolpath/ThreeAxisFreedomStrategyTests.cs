@@ -8,11 +8,11 @@ using Xunit;
 
 namespace Miller.Tests.Core.Toolpaths;
 
-// One route over the surface: Z follows the effective tip continuously, no move dips under it,
-// every coverage cell ends at its floor, and the result is deterministic.
-public sealed class ThreeAxisPreciseStrategyTests
+// Free routes over the surface, one per level: Z follows the effective tip where a cell is finished, no
+// move dips under it, every coverage cell ends at its floor, and the result is deterministic.
+public sealed class ThreeAxisFreedomStrategyTests
 {
-    private static readonly ThreeAxisPreciseStrategy Strategy = new();
+    private static readonly ThreeAxisFreedomStrategy Strategy = new();
 
     private static HeightMap Simulate(ToolpathContext context, Toolpath path)
     {
@@ -59,9 +59,9 @@ public sealed class ThreeAxisPreciseStrategyTests
         var context = TestContexts.BoxInStock();
         var map = context.EffectiveTip;
         var (wi, wj) = map.CellOf(4.75f, 10f);
-        Assert.True(ThreeAxisPreciseStrategy.IsStep(map, wi, wj, context.Parameters.Tolerance));
+        Assert.True(ThreeAxisFreedomStrategy.IsStep(map, wi, wj, context.Parameters.Tolerance));
         var (fi, fj) = map.CellOf(1f, 1f);
-        Assert.False(ThreeAxisPreciseStrategy.IsStep(map, fi, fj, context.Parameters.Tolerance));
+        Assert.False(ThreeAxisFreedomStrategy.IsStep(map, fi, fj, context.Parameters.Tolerance));
         var path = Strategy.Generate(context, null, TestContext.Current.CancellationToken);
         var center = map.CellCenter(wi, wj);
         Assert.Contains(path.Segments, s => s.Kind != MoveKind.Rapid && MathF.Abs(s.End.X - center.X) < 1e-3f && MathF.Abs(s.End.Y - center.Y) < 1e-3f && MathF.Abs(s.End.Z - map[wi, wj]) < 1e-3f);

@@ -45,6 +45,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         SimulationService simulation,
         AnalysisService analysis,
         SettingsService settings,
+        PresetService presets,
         IFileDialogService dialogs,
         IErrorDialogService errors,
         IConfirmDialogService confirm,
@@ -59,6 +60,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Simulation = simulation ?? throw new ArgumentNullException(nameof(simulation));
         AnalysisRunner = analysis ?? throw new ArgumentNullException(nameof(analysis));
         Settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        PresetStore = presets ?? throw new ArgumentNullException(nameof(presets));
         Dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         ErrorDialog = errors ?? throw new ArgumentNullException(nameof(errors));
         Confirm = confirm ?? throw new ArgumentNullException(nameof(confirm));
@@ -77,6 +79,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Cutting = new CuttingParametersViewModel(Project);
         Strategy = new StrategySelectionViewModel(Project, GenerateCommand, CancelGenerateCommand);
         Models = new ModelsViewModel(Project, MeshImport, OpenStlCommand);
+        Presets = new PresetsViewModel(Project, PresetStore, ErrorDialog);
         Viewport = new ViewportViewModel();
         SimulationPanel = new SimulationViewModel(Simulation, Settings, Viewport);
         SimulationPanel.StatusChanged += (_, status) => StatusText = status;
@@ -92,6 +95,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         SimulationPanel.PlaybackStarted += (_, _) => Analysis.ShowFinalModel = false;
         Models.SelectionChanged += (_, _) => Viewport.Select(Models.SelectedIndex);
         Viewport.SelectionChanged += (_, _) => Models.SelectedIndex = Viewport.SelectedModelIndex;
+        Viewport.ModelDragged += (_, delta) => Models.MoveSelected(delta);
         Viewport.GlError += (_, message) =>
         {
             Log.Error(message, null);
@@ -120,6 +124,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public SettingsService Settings { get; }
 
+    public PresetService PresetStore { get; }
+
     public IFileDialogService Dialogs { get; }
 
     public IErrorDialogService ErrorDialog { get; }
@@ -141,6 +147,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     public StrategySelectionViewModel Strategy { get; }
 
     public ModelsViewModel Models { get; }
+
+    public PresetsViewModel Presets { get; }
 
     public SimulationViewModel SimulationPanel { get; }
 
@@ -193,6 +201,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             LastResult = result;
             Strategy.ShowResult(result);
             Viewport.SetToolpath(result.Toolpath);
+            // The simulation stock is the object to watch now; the imported models come back when
+            // the result is cleared (View > Show Model brings them back earlier).
+            Viewport.ShowModel = false;
             Simulation.Load(result);
             SimulationPanel.OnLoadedChanged();
             Analysis.SetPipeline(result);
@@ -316,6 +327,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Analysis.SetPipeline(null);
         Viewport.SetToolpath(null);
         Viewport.SetStockMap(null, 0f);
+        Viewport.ShowModel = true;
         SimulationPanel.OnLoadedChanged();
     }
 
@@ -346,9 +358,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             Viewport.SetMeshes(meshes.Select((mesh, k) => mesh.Transform(matrices[k])).ToList());
         }
 
-        var corner = AxisSetup.StockCorner(Viewport.MeshBounds, stock);
-        var bounds = new BoundingBox(corner, corner + AxisSetup.StockBoundingSize(stock));
-        Viewport.SetStock(bounds, stock);
+        Viewport.SetStock(ModelLayout.StockBoundsMachine(Project.Current), stock);
     }
 
     private bool SameScene(IReadOnlyList<Mesh> meshes, IReadOnlyList<Matrix4x4> matrices)

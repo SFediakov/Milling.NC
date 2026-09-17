@@ -88,18 +88,95 @@ public sealed partial class ViewportViewModel : ViewModelBase
 
     public int SelectedModelIndex { get; private set; } = -1;
 
+    // A ray closer to horizontal than this cannot place a point on the drag plane.
+    public const float MinDragRayZ = 1e-4f;
+
+    private int _dragIndex = -1;
+    private float _dragPlaneZ;
+    private Vector2 _dragLast;
+
     public event EventHandler? SelectionChanged;
+
+    // Machine-space XY movement of the selected model during a viewport drag.
+    public event EventHandler<Vector2>? ModelDragged;
 
     // Space in the viewport; the simulation panel decides between play and pause.
     public event EventHandler? PlayPauseRequested;
 
     public void RequestPlayPause() => PlayPauseRequested?.Invoke(this, EventArgs.Empty);
 
+    public bool IsDragging => _dragIndex >= 0;
+
     // Picks the model whose bounds the ray hits first; a miss clears the selection.
-    public void Pick(Vector3 origin, Vector3 direction)
+    public void Pick(Vector3 origin, Vector3 direction) => Select(Hit(origin, direction).Index);
+
+    // A left press: picks like Pick and, on a hit, starts a drag on the horizontal plane through
+    // the hit point, so the model follows the pointer in machine X and Y.
+    public bool BeginDrag(Vector3 origin, Vector3 direction)
+    {
+        var (index, distance) = Hit(origin, direction);
+        Select(index);
+        if (index < 0)
+        {
+            return false;
+        }
+
+        var hit = origin + direction * distance;
+        _dragIndex = index;
+        _dragPlaneZ = hit.Z;
+        _dragLast = new Vector2(hit.X, hit.Y);
+        return true;
+    }
+
+    public void DragTo(Vector3 origin, Vector3 direction)
+    {
+        if (_dragIndex < 0 || _dragIndex != SelectedModelIndex || !PlanePoint(origin, direction, _dragPlaneZ, out var point))
+        {
+            return;
+        }
+
+        var delta = point - _dragLast;
+        if (delta == Vector2.Zero)
+        {
+            return;
+        }
+
+        _dragLast = point;
+        ModelDragged?.Invoke(this, delta);
+    }
+
+    public void EndDrag() => _dragIndex = -1;
+
+    // Where the ray crosses the horizontal plane at z; false for a ray that is parallel to it or
+    // crosses it behind the origin.
+    public static bool PlanePoint(Vector3 origin, Vector3 direction, float z, out Vector2 point)
+    {
+        point = default;
+        if (MathF.Abs(direction.Z) < MinDragRayZ)
+        {
+            return false;
+        }
+
+        var t = (z - origin.Z) / direction.Z;
+        if (t < 0)
+        {
+            return false;
+        }
+
+        point = new Vector2(origin.X + direction.X * t, origin.Y + direction.Y * t);
+        return true;
+    }
+
+    // Nearest model whose bounds the ray hits; hidden models are not hit.
+    private (int Index, float Distance) Hit(Vector3 origin, Vector3 direction)
     {
         var best = -1;
         var bestDistance = float.MaxValue;
+        if (!ShowModel)
+        {
+            return (best, bestDistance);
+        }
+
         for (var k = 0; k < ModelBounds.Count; k++)
         {
             var hit = ModelBounds[k].IntersectRay(origin, direction);
@@ -110,7 +187,7 @@ public sealed partial class ViewportViewModel : ViewModelBase
             }
         }
 
-        Select(best);
+        return (best, bestDistance);
     }
 
     public void Select(int index)

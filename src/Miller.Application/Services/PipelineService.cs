@@ -88,7 +88,9 @@ public sealed class PipelineService
 
         reporter.Begin(2);
         var p = project.Parameters;
-        var stock = StockModel.Create(project.Stock, machineMesh.Bounds, p.CellSize);
+        // The stock is aligned to the models before their offsets, not to the merged mesh, so an
+        // offset model sits where the viewport shows it and may hang outside the stock.
+        var stock = StockModel.Create(project.Stock, ModelLayout.AnchorBoundsMachine(project, meshes.Select(m => m.Bounds).ToList()), p.CellSize);
         cancellation.ThrowIfCancellationRequested();
 
         reporter.Begin(3);
@@ -99,7 +101,7 @@ public sealed class PipelineService
 
         reporter.Begin(4);
         var profile = ToolProfile.Create(project.Tool, p.CellSize);
-        var tip = ReachMap.Compute(model, stock.Map, profile, floor);
+        var tip = ReachMap.Compute(model, stock.Map, profile, floor, project.ReachPercent);
         cancellation.ThrowIfCancellationRequested();
 
         reporter.Begin(5);

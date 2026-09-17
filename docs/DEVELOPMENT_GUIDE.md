@@ -16,7 +16,7 @@ Contents:
 7. Coding rules and definition of done
 8. Known pitfalls
 9. Milestones
-10. Task list (T-001 to T-102)
+10. Task list (T-001 to T-130)
 
 ---
 
@@ -257,14 +257,16 @@ drop[i,j] = max over footprint of ( model[i+dx, j+dy] - dz(dx,dy) )
 Reach map (`ReachMap`), the tip map the pipeline uses. At a level z every
 footprint cell that holds stock is "unintended" when the model stands above the
 tool bottom there (`model - dz > z`) and "intended" otherwise; the position is
-reachable at z when the intended cells are at least as many as the unintended
-ones (a tie counts as reachable). Lowering z only turns intended cells into
-unintended ones, so reachability is monotone and one height per position
-describes it:
+reachable at z when the intended cells are at least `ReachPercent` percent of
+the footprint cells (`MillingProject.ReachPercent`, Strategy tab; 50 is the
+majority rule where a tie counts as reachable, 100 never cuts the model). Lowering
+z only turns intended cells into unintended ones, so reachability is monotone
+and one height per position describes it:
 
 ```
 values = { model[i+dx, j+dy] - dz(dx,dy) : footprint cell holds stock }, n = count
-tip[i,j] = max( the (n / 2 + 1)-th largest of values, floor )
+rank = ceil(n * ReachPercent / 100) - 1            (ascending; 50 gives n - (n / 2 + 1))
+tip[i,j] = max( values sorted ascending [rank], floor )
 ```
 
 Consequences to keep in mind: the tool axis reaches a straight wall up to the
@@ -311,9 +313,10 @@ Uncuttable classification (`UncuttableRegions`):
 ### 6.4 Slicing and routing parameters
 
 - One routing strategy (`MillingProject.RoutingStrategyId`) produces the whole
-  program: `z-layer-by-layer` (default) or `three-axis-precise`.
-- `Stepdown`: Z distance between the levels of "Z layer by layer", and nothing
-  else. Levels: `z_k = stockTop - k * Stepdown` for k = 1.. until
+  program: `z-layer-by-layer` (default) or `three-axis-freedom` (files naming
+  the former id `three-axis-precise` load as `three-axis-freedom`).
+- `Stepdown`: Z distance between the levels of both strategies; no pass cuts
+  deeper than one Stepdown. Levels: `z_k = stockTop - k * Stepdown` for k = 1.. until
   `z_k <= min(effectiveTip)`; the last level is clamped to `min(effectiveTip)`.
 - Level mask at level z: cells where `effectiveTip[i,j] <= z + LevelTolerance`
   and the stock still has material above z. The masks are nested, so their
@@ -323,7 +326,7 @@ Uncuttable classification (`UncuttableRegions`):
   a trench next to that level's obstacles, widened by
   `HeadRadius - CutterRadius + margin` around every tool position of the deepest
   level whose head (CutterLength above it) enters the slab, and everything cut
-  at the level below. The coverage of "3 axis precise" is the model region and
+  at the level below. The coverage of "3 axis freedom" is the model region and
   the innermost trench; the standing stock is part of the tip map the strategies
   stay above.
 - Material islands (`MillingProject.MinIslandVolume`, separation only): standing
@@ -335,12 +338,12 @@ Uncuttable classification (`UncuttableRegions`):
   pendant's loop encloses 51 mm3.
 - Nodes (`NodeLattice`): the tool positions a route visits are the region's
   cells on a square lattice spaced by the stepover (`Stepover` for the levels,
-  `FinishingStepover` for "3 axis precise"; the first and last grid line always
+  `FinishingStepover` for "3 axis freedom"; the first and last grid line always
   count) plus the region's outline cells, so walls are cut at the outline. Discs
   of radius r at a lattice spacing of at most r x sqrt(2) cover the region
   whatever the visiting order; a wider stepover relies on the straight strips
-  between consecutive nodes. "3 axis precise" adds every cell where the tip
-  steps by more than `Tolerance` to a neighbour.
+  between consecutive nodes. "3 axis freedom" adds every cell where the level
+  map `max(tip, level)` steps by more than `Tolerance` to a neighbour.
 - Route (`Miller.Solver`): the cost of a move is `XY / 3 + Z` (XY moves three
   times faster than Z), the Z part being the vertical travel of the surface
   polyline between the two nodes (`SurfacePath`: every cell-edge crossing lifted
@@ -358,9 +361,14 @@ Uncuttable classification (`UncuttableRegions`):
   solved over the material as it stands at that moment (the cave's cells at the
   level, everything else at what the previous routes left), so a move that
   leaves the cave climbs the standing material instead of slotting through it.
-- "3 axis precise": one route over all coverage nodes at their tip height, moves
-  follow the surface polyline; `Stepdown` plays no part, a wall is cut at full
-  depth. The program starts with a plunge from safe Z at the first node.
+- "3 axis freedom": one free route per level of the plan. At level L the nodes
+  are the coverage cells whose tip lies below the previous level (the stock top
+  for the first), each at `max(tip, L)`, and the moves follow the surface
+  polyline over the level map `max(tip, L)`, so the tool cuts at most one
+  `Stepdown` into the material the previous level left and a wall is descended
+  level by level. A cell whose tip lies between two levels is visited last at its
+  tip, so the surface is followed without level quantization. The program starts
+  with a plunge from safe Z at the first node.
 - Segments (`RouteWriter`): level, rising and gently descending parts of the
   polyline are feeds; a descent steeper than `MaxRampSlope` (2, about 63
   degrees) is a feed over the lower point and a plunge. A travel between two
@@ -434,8 +442,10 @@ M30
 | `0.01 <= CellSize <= 5` | Parameters.CellSize |
 | `FeedRate, PlungeRate, RapidRate > 0` | Parameters.* |
 | `SpindleRpm > 0` | Parameters.SpindleRpm |
+| `0 < ReachPercent <= 100` | Strategy.ReachPercent |
+| `MinIslandVolume >= 0` | Strategy.MinIslandVolume |
 | Stock dimensions > 0 | Stock.* |
-| Model bounds inside stock after `AxisSetup` (warning, not error) | Stock.Placement |
+| Model bounds inside the stock box in machine space (`ModelLayout.StockBoundsMachine`; warning, not error) | Stock.Placement |
 | Grid size `Width * Height <= 4_000_000` cells | Parameters.CellSize |
 
 ## 7. Coding rules and definition of done
@@ -1491,7 +1501,7 @@ check that decides done.
 - Acceptance: two caves give the level sequence 3, 1, 0, 3, 1, 0 with one rise; a split cave finishes one subtree before the other and crosses at the split level; every reachable cell ends at its floor and nothing below it; the user's heart (1.2 mm cutter, 0.1 mm cells, separation): 3,194 retracts to 1, estimated 208 min to 14.3 min, zero gouge violations and zero events
 - Status: done
 
-#### T-120 3 axis precise
+#### T-120 3 axis precise (superseded by T-127)
 - Depends on: T-117, T-118
 - Files: `src/Miller.Core/Toolpath/Strategies/ThreeAxisPreciseStrategy.cs`, `src/Miller.Solver/SurfacePath.cs`, tests
 - Input: user request (free 3-axis movement over the map, fastest route)
@@ -1505,6 +1515,78 @@ check that decides done.
 - Input: user request (a volume in mm3; islands of standing stock smaller than it are milled out even in separation)
 - Output: `MinIslandVolume` on the project (default 0, validated non-negative as `Strategy.MinIslandVolume`), `MaterialIslands.Find` and `RemoveBelow` applied at the end of `SeparationRegion.Build`, `ScopedPlan.MilledIslands`, a field under Cut scope enabled for Separation
 - Acceptance: synthetic ring: one island of core plus terrace with the exact volume, the frame excluded, a gap or a no-stock cell turns the island into frame; a square ring model keeps its hole island at 0 and mills it out above its volume (hole floor at the stock bottom, corners standing, zero events); threshold 0 leaves every fixture unchanged; the user's heart loop (51 mm3) is milled out at 100
+- Status: done
+
+#### T-122 Anchored stock and model offsets
+- Depends on: T-114
+- Files: `src/Miller.Core/Setup/ModelLayout.cs`, `src/Miller.Application/Services/PipelineService.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.App/ViewModels/MainWindowViewModel.cs`, `src/Miller.App/ViewModels/ModelsViewModel.cs`, tests
+- Input: user request (moving a model by its offset did nothing: the stock followed the union of the placed models, so a lone model never moved relative to it)
+- Output: the stock is anchored to the union of the models before their offsets (`ModelLayout.AnchorBounds`, `AnchorBoundsMachine`, `StockBoundsMachine`); pipeline, viewport outline and validator use the anchor; `AlignedOffset` is one step and the "stock follows this model" message is gone
+- Acceptance: a lone model's offset moves its machine bounds by the offset while the stock box stays; zero offsets reproduce the heart golden; two models keep their relative placement; the validator warns for a model pushed out of the stock
+- Status: done
+
+#### T-123 Model drag in the viewport
+- Depends on: T-122, T-109
+- Files: `src/Miller.App/ViewModels/ViewportViewModel.cs`, `src/Miller.App/Views/Viewport3DControl.cs`, `src/Miller.App/ViewModels/ModelsViewModel.cs`, tests
+- Input: user request (press on a model and move it in X and Y with the mouse)
+- Output: a left press picks and starts a drag on the horizontal plane through the hit point (`BeginDrag`); every move reports the plane delta (`ModelDragged`), which the main view model turns into an offset edit; hidden models are not hit
+- Acceptance: headless press, move, release changes the offset by the plane delta of the two pick rays and marks the project dirty; a press on empty space changes nothing
+- Status: done
+
+#### T-124 View menu state and hidden models after generation
+- Depends on: T-084
+- Files: `src/Miller.App/Views/MainMenu.axaml`, `src/Miller.App/ViewModels/MainWindowViewModel.cs`, tests
+- Input: user requests (show which components are visible; after a toolpath is generated show only the simulation stock)
+- Output: the four Show items are check items bound two-way to the viewport flags (no command on the item; the key bindings keep the toggle commands); a successful Generate sets `ShowModel` false, a cleared result sets it true
+- Acceptance: a click flips the flag once; Ctrl+1 flips it and the mark; after Generate the models are hidden and the stock visible; adding a model or a new project shows them again
+- Status: done
+
+#### T-125 Reach rule parameter
+- Depends on: T-117
+- Files: `src/Miller.Core/HeightMap/ReachMap.cs`, `src/Miller.Core/Setup/MillingProject.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.Application/Services/PipelineService.cs`, `src/Miller.App/ViewModels/StrategySelectionViewModel.cs`, `src/Miller.App/Views/StrategySelectionView.axaml`, tests
+- Input: user request (the 50/50 decision rule of the reach map is to be a strategy setting)
+- Output: `MillingProject.ReachPercent` (default 50, validated in (0, 100] as `Strategy.ReachPercent`), `ReachMap.Rank`, the Strategy tab field
+- Acceptance: 50 reproduces the previous map bit for bit for every footprint size, 100 equals the drop cutter, a lower percent never raises the floor, old files load with 50
+- Status: done
+
+#### T-126 Description texts removed
+- Depends on: T-074
+- Files: `src/Miller.App/Views/*.axaml`, `tests/Miller.Tests/App/UiRuleTests.cs`
+- Input: user request (no description texts longer than two words in the windows)
+- Output: the help paragraphs of the Models, Strategy and Simulation tabs are gone, the Analysis legend shows category names, and a rule test keeps static texts to labels, headers or two words (the About window is the help and is exempt)
+- Acceptance: rule test green; every tab still renders in the headless capture
+- Status: done
+
+#### T-127 3 axis freedom
+- Depends on: T-120
+- Files: `src/Miller.Core/Toolpath/Strategies/ThreeAxisFreedomStrategy.cs`, `src/Miller.Core/Toolpath/StrategyRegistry.cs`, `src/Miller.Core/Setup/ProjectSerializer.cs`, `src/Miller.App/Views/CuttingParametersView.axaml`, tests
+- Input: user request (rename "3 axis precise" to "3 axis freedom" and never cut more than one stepdown layer at a time)
+- Output: id `three-axis-freedom`, one free route per level over `max(tip, level)` (section 6.4), legacy id mapped on load
+- Acceptance: no sweep of any segment removes more than Stepdown + Tolerance from a cell on the box and bump fixtures; zero gouges; every coverage cell ends at its floor; a part within one Stepdown is one route at the tip
+- Status: done
+
+#### T-128 Numeric entry keeps the typed text
+- Depends on: T-069
+- Files: `src/Miller.App/Controls/NumericBox.cs`, `src/Miller.App/Views/*.axaml`, tests
+- Input: user request (an invalid value must not reset the entered text, "0.00" must not become "0", the field must keep the focus)
+- Output: `NumericBox` (`TextBox` with a float `Value`) in every numeric field; the text is rewritten only when the value changes from outside
+- Acceptance: headless typing of "0.00", "abc", "", "-1" keeps the text and the focus, valid values reach the project per keystroke, a project reload rewrites the text; rule test: no plain TextBox on a numeric view-model property
+- Status: done
+
+#### T-129 Presets
+- Depends on: T-060, T-125
+- Files: `src/Miller.Core/Setup/MillingPreset.cs`, `src/Miller.Application/Services/PresetService.cs`, `src/Miller.App/ViewModels/PresetsViewModel.cs`, `src/Miller.App/Views/PresetsView.axaml`, `src/Miller.App/Views/MainWindow.axaml`, `src/Miller.App/App.axaml.cs`, tests
+- Input: user request (a Presets tab saving and loading the Tool, Axes, Cutting and Strategy settings in one file in the app root)
+- Output: `presets.json` next to the executable with named presets; the first tab lists them with Save, Load, Delete; Load is one dirty project edit
+- Acceptance: round trip through the file; same name replaces; Load reaches every panel and leaves Stock and Models alone; a corrupt file is reported in the error dialog at start
+- Status: done
+
+#### T-130 Negative coordinates typed character by character
+- Depends on: T-128, T-108
+- Files: `src/Miller.App/ViewModels/ModelsViewModel.cs`, `src/Miller.App/Controls/NumericBox.cs`, `tests/Miller.Tests/App/CoordinateEntryTests.cs`, tests
+- Input: user request (negative values must be allowed everywhere coordinates are typed); reproduced: a valid keystroke in a Models offset field republished the model name list, the list box reset its selection, the field was disabled for an instant and lost the keyboard focus, so "-12.5" ended as -1; a lone "-" was flagged as an error
+- Output: `ModelsViewModel.Names` is cached and republished only when the names differ; `NumericBox.IsIncomplete` treats a sign or decimal-point prefix as input in progress (no error, no value); headless tests type "-12.5" one character at a time into the Models offsets, the Axes custom zero and the Stock explicit origin
+- Acceptance: every character reaches the project, the field keeps the focus, `SelectedIndex` and the viewport selection do not change during a value edit; "" and "abc" remain errors; suite green
 - Status: done
 
 ### M8 Packaging and release

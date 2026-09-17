@@ -28,6 +28,7 @@ public partial class App : Avalonia.Application
 
             var settings = new SettingsService(SettingsService.DefaultDirectory());
             settings.Load();
+            var presets = new PresetService(PresetService.DefaultDirectory());
             var project = new ProjectService();
             var meshImport = new MeshImportService();
             var pipeline = new PipelineService();
@@ -37,7 +38,7 @@ public partial class App : Avalonia.Application
             var dialogs = new FileDialogService(() => desktop.MainWindow);
             var errors = new ErrorDialogService(log, () => desktop.MainWindow);
             var confirm = new ConfirmDialogService(() => desktop.MainWindow);
-            var viewModel = new MainWindowViewModel(project, meshImport, pipeline, export, simulation, analysis, settings, dialogs, errors, confirm,
+            var viewModel = new MainWindowViewModel(project, meshImport, pipeline, export, simulation, analysis, settings, presets, dialogs, errors, confirm,
                 handler => new Progress<Miller.Application.Progress.ProgressReport>(handler), log, Program.AppVersion);
             desktop.MainWindow = new MainWindow
             {
@@ -52,12 +53,17 @@ public partial class App : Avalonia.Application
             log.Info($"started {Program.AppVersion}");
             RegisterGpuPreference(log);
 
-            // An STL path on the command line opens that file once the window is up.
+            // The presets file is read once the window is up, so a corrupt file is reported in the
+            // error dialog instead of ending the start. An STL path on the command line opens then too.
             var startupStl = desktop.Args?.FirstOrDefault(a => a.EndsWith(".stl", StringComparison.OrdinalIgnoreCase));
-            if (startupStl is not null)
+            desktop.MainWindow.Opened += async (_, _) =>
             {
-                desktop.MainWindow.Opened += async (_, _) => await viewModel.OpenStlFileAsync(startupStl);
-            }
+                await viewModel.Presets.ReloadAsync();
+                if (startupStl is not null)
+                {
+                    await viewModel.OpenStlFileAsync(startupStl);
+                }
+            };
         }
 
         base.OnFrameworkInitializationCompleted();

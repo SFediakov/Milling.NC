@@ -183,9 +183,11 @@
   are updated one after the other; every consumer checks MeshImportService.Matches(project) and
   treats a mismatch as "no scene" instead of throwing inside a change event. Add the placement
   before importing (drop it when the import fails), remove the placement before the mesh.
-- The stock always follows the union of the placed models (auto-fit and explicit placement both
-  start from the union corner), so centering a model on one axis is a fixed-point iteration in
-  ModelLayout.CenteredOffset; a single model in an auto-fit stock is centered by definition.
+- The stock is anchored to the union of the models before their offsets (ModelLayout.AnchorBounds);
+  it used to follow the union of the placed models, which made every offset of a lone model a
+  no-op (the stock moved along) and turned alignment into a fixed-point iteration. Every consumer
+  of the stock box (pipeline, viewport outline, validator) must read it from ModelLayout
+  (AnchorBoundsMachine, StockBoundsMachine), never recompute it from model bounds.
 - Legacy project files: a nullable StlPath is read for migration and ignored when null on write, so
   the serializer's unknown-member rule still holds; the schema version is rewritten to 2 on load.
 - The end-to-end golden is read from the test output folder, which is refreshed by a build of the
@@ -254,10 +256,9 @@
 - Git with core.autocrlf=true rewrites a stashed and restored file with CRLF; a `python -c` patch
   that searches for LF text then finds nothing. Normalise the file back to LF before patching, or
   read it with newline='' and match on the ending it has.
-- With two models the second one can always reach a stock side by its offset (the first anchors
-  the union); only a lone model, or the one that defines the extreme the stock hangs on, has no
-  fixed point. The alignment loop halves the shift per round in the anchored case, so 16 rounds
-  ended 1e-4 short from a 7 mm start; 32 rounds plus a residual check decide convergence.
+- Two-model alignment tests written for the union-following stock (35 mm start of the first box,
+  fixed-point centres) are not wrong values of the anchored rule: the anchor puts both boxes at
+  0..10 before their offsets, so the stock middle is 50 whatever the offsets are.
 - Seeking backward is Stop plus a replay: the engine only covers forward, the service swaps in a
   fresh stock clone first, so the view model re-uploads the stock map after every seek exactly as
   it does after Stop. The clock is paused before the background sweep and gets the engine's
@@ -308,3 +309,29 @@
 - `git filter-branch -- --all` rewrites `refs/stash` as well and the rewritten entry can no
   longer be popped ("not a stash-like commit"); the untouched entry is still `stash@{1}` and
   `git stash apply` restores it. Rewrite `-- main` or pop the stash before the rewrite.
+- A MenuItem with ToggleType CheckBox toggles IsChecked in DefaultMenuInteractionHandler.Click before
+  the click reaches its Command, so a toggle command on the same item flips the flag twice. Bind
+  IsChecked two-way and keep the toggle commands on the window key bindings only.
+- A TextBox bound to a float rewrites the typed text on every keystroke: the view model raises
+  PropertyChanged after the edit and the binding writes the formatted value back ("0.00" became
+  "0"). NumericBox binds a float Value instead; the property system drops an equal float, so the
+  echo never reaches the text, and invalid text only sets a data validation error.
+- ReachMap's rank ceil(n * percent / 100) - 1 needs a small slack before the ceiling: 4 * 50 / 100
+  is exact, but a product such as 3 * 33.3 / 100 can land one ulp above an integer.
+- A strategy that visits cells level by level must skip a cell whose tip lies within
+  Slicer.LevelTolerance below the previous level, or float noise gives it a second visit for a
+  1e-4 mm cut; the first level compares against StockTop, so cells at the stock top are never nodes.
+- Under Git Bash a pipe (`Miller.exe --export ... | tail`) waits for the GUI-subsystem binary; the
+  export finished before the next command, unlike PowerShell's `&`.
+- A list box must not get a new ItemsSource instance on every project edit. ModelsViewModel published
+  `Names` as a fresh list from every reload; Avalonia's ListBox resets its SelectionModel on an
+  ItemsSource swap, the two-way SelectedIndex binding wrote -1 into the view model, the placement
+  fields bound to HasSelection were disabled for an instant, and Avalonia moves the keyboard focus
+  away from a focused control that becomes disabled. Typing "-12.5" therefore stopped at "-1" (the
+  first valid keystroke). Collections shown in a list are cached and republished only when their
+  content differs (SequenceEqual); a value edit must never reach `OnPropertyChanged(nameof(Names))`.
+  Focus loss of this kind is invisible to a test that types the whole text in one KeyTextInput;
+  CoordinateEntryTests types one character per call and asserts IsFocused after each.
+- NumericBox distinguishes incomplete from invalid text: a sign or decimal-point prefix ("-", "+",
+  ".", "-.", "+.") clears the error and leaves Value alone, so the first keystroke of a negative
+  number is not shown as a mistake; "" and "abc" stay errors as T-128 requires.

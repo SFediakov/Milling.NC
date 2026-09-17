@@ -65,10 +65,10 @@ public sealed class CutScopeTests
     }
 
     [Fact]
-    public void Separation_WithThreeAxisPrecise_LeavesTheCornersAndHasNoEvents()
+    public void Separation_WithThreeAxisFreedom_LeavesTheCornersAndHasNoEvents()
     {
         var project = BoxProject(CutScope.Separation);
-        project.RoutingStrategyId = "three-axis-precise";
+        project.RoutingStrategyId = "three-axis-freedom";
         var result = Run(project);
         Assert.Empty(GougeChecker.Verify(result.Toolpath, result.EffectiveTip, result.Tolerance));
         var simulation = new SimulationService();

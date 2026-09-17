@@ -43,6 +43,9 @@
     </Border>
 
     <TabControl DockPanel.Dock="Left" Name="SettingsTabs" Width="360">
+      <TabItem Header="Presets" Name="PresetsTab">
+        <views:PresetsView DataContext="{Binding Presets}" />
+      </TabItem>
       <TabItem Header="Models" Name="ModelsTab">
         <views:ModelsView DataContext="{Binding Models}" />
       </TabItem>

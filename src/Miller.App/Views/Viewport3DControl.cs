@@ -1,3 +1,4 @@
+using System.Numerics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -20,15 +21,11 @@ public sealed class Viewport3DControl : OpenGlControlBase
     public static readonly StyledProperty<ViewportViewModel?> ViewModelProperty =
         AvaloniaProperty.Register<Viewport3DControl, ViewportViewModel?>(nameof(ViewModel));
 
-    // A left press that moves less than this (pixels) before release is a pick, not a drag.
-    public const double ClickSlopPixels = 4;
-
     private SceneRenderer? _scene;
     private Point _lastPointer;
-    private Point _pressPointer;
     private bool _orbiting;
     private bool _panning;
-    private bool _picking;
+    private bool _dragging;
 
     public Viewport3DControl()
     {
@@ -121,24 +118,35 @@ public sealed class Viewport3DControl : OpenGlControlBase
             return;
         }
 
-        // Right button rotates, the wheel button moves, the left button picks a model.
+        // Right button rotates, the wheel button moves, the left button picks a model and drags
+        // it in X and Y while held.
         _orbiting = point.Properties.IsRightButtonPressed;
         _panning = point.Properties.IsMiddleButtonPressed;
-        _picking = point.Properties.IsLeftButtonPressed;
+        _dragging = point.Properties.IsLeftButtonPressed && ViewModel is { } viewModel && Ray(point.Position) is { } ray
+            && viewModel.BeginDrag(ray.Origin, ray.Direction);
         _lastPointer = point.Position;
-        _pressPointer = point.Position;
         e.Pointer.Capture(this);
     }
 
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
+        var position = e.GetPosition(this);
+        if (_dragging)
+        {
+            if (ViewModel is { } viewModel && Ray(position) is { } ray)
+            {
+                viewModel.DragTo(ray.Origin, ray.Direction);
+            }
+
+            return;
+        }
+
         if (!_orbiting && !_panning)
         {
             return;
         }
 
-        var position = e.GetPosition(this);
         var dx = (float)(position.X - _lastPointer.X);
         var dy = (float)(position.Y - _lastPointer.Y);
         _lastPointer = position;
@@ -158,20 +166,23 @@ public sealed class Viewport3DControl : OpenGlControlBase
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
-        var position = e.GetPosition(this);
-        if (_picking && ViewModel is { } viewModel
-            && Math.Abs(position.X - _pressPointer.X) <= ClickSlopPixels && Math.Abs(position.Y - _pressPointer.Y) <= ClickSlopPixels
-            && Bounds.Width > 0 && Bounds.Height > 0)
-        {
-            Camera.Aspect = (float)(Bounds.Width / Bounds.Height);
-            var (origin, direction) = Camera.PickRay((float)position.X, (float)position.Y, (float)Bounds.Width, (float)Bounds.Height);
-            viewModel.Pick(origin, direction);
-        }
-
+        ViewModel?.EndDrag();
         _orbiting = false;
         _panning = false;
-        _picking = false;
+        _dragging = false;
         e.Pointer.Capture(null);
+    }
+
+    // World ray through a viewport pixel for the current camera; null before the control has a size.
+    private (Vector3 Origin, Vector3 Direction)? Ray(Point position)
+    {
+        if (!(Bounds.Width > 0) || !(Bounds.Height > 0))
+        {
+            return null;
+        }
+
+        Camera.Aspect = (float)(Bounds.Width / Bounds.Height);
+        return Camera.PickRay((float)position.X, (float)position.Y, (float)Bounds.Width, (float)Bounds.Height);
     }
 
     protected override void OnKeyDown(KeyEventArgs e)

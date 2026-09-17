@@ -9,8 +9,8 @@ using Miller.Core.Toolpaths;
 
 namespace Miller.App.ViewModels;
 
-// Routing strategy and post-processor choice from the registries, the cut scope, the generate and
-// cancel commands of the main view model, and the statistics of the last run.
+// Routing strategy and post-processor choice from the registries, the cut scope, the reach rule,
+// the generate and cancel commands of the main view model, and the statistics of the last run.
 public sealed class StrategySelectionViewModel : SettingsViewModelBase
 {
     public const string NoToolpathText = "No toolpath yet.";
@@ -72,6 +72,10 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
 
     public string? MinIslandVolumeError => ErrorFor("Strategy.MinIslandVolume");
 
+    public float ReachPercent { get => Current.ReachPercent; set => Edit(p => p.ReachPercent = value); }
+
+    public string? ReachPercentError => ErrorFor("Strategy.ReachPercent");
+
     public ToolpathStatistics? Statistics { get; private set; }
 
     public SlicePlan? Plan { get; private set; }
@@ -117,12 +121,15 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         OnPropertyChanged(nameof(IsSeparation));
         OnPropertyChanged(nameof(MinIslandVolume));
         OnPropertyChanged(nameof(MinIslandVolumeError));
+        OnPropertyChanged(nameof(ReachPercent));
+        OnPropertyChanged(nameof(ReachPercentError));
     }
 
     protected override void OnErrorsChanged()
     {
         base.OnErrorsChanged();
         OnPropertyChanged(nameof(MinIslandVolumeError));
+        OnPropertyChanged(nameof(ReachPercentError));
     }
 
     private void RaiseStatistics()
