@@ -64,7 +64,7 @@ if is_root_claude_md "$NORMALIZED"; then
 fi
 
 if printf '%s' "$NORMALIZED" | grep -qiE "$AGENT_LOCKED_STATE_REGEX"; then
-  deny_pretooluse "Phase state is machine-owned: current_phase, task_class and TASK_MODE cannot be written by Claude. Move forward with 'bash .claude/hooks/advance.sh' (phase 1 requires the exact task class) or back with 'bash .claude/hooks/rollback.sh' from phase 6. Only the user edits these files directly, outside Claude Code."
+  deny_pretooluse "Phase state is machine-owned: current_phase, task_class, TASK_MODE, the research-block marks (research_files.done, research_web.done) and the sub-agent ledger (agents/) cannot be written by Claude. Move forward with 'bash .claude/hooks/advance.sh' (phase 1 requires the exact task class, phase 2 the finished half) or back with 'bash .claude/hooks/rollback.sh' from phase 6. Only the user edits these files directly, outside Claude Code."
 fi
 
 # The enforcement layer itself. Maintainable, but only with per-turn consent.

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Stop: in task mode, require current_phase >= 9 (the terminal state reached by
-# advancing past Reporting), no active subagents, and no pending CalcEngine
-# rebuild before allowing the stop. Respects stop_hook_active to avoid infinite
-# loops.
+# advancing past Reporting) and no pending CalcEngine rebuild before allowing
+# the stop. A running subagent never blocks the turn end, by owner decision.
+# Respects stop_hook_active to avoid infinite loops.
 #
 # Two phases may end the turn early, because their CLAUDE.md text explicitly
 # involves asking the user something:
@@ -15,8 +15,8 @@
 # Neither is a routine pause: stopping there is for a question the user must
 # answer before the work can continue.
 #
-# Also surfaces .claude/state/hook_errors.log. Hook failures used to be silent;
-# a leaked counter would then block every phase change with no stated cause.
+# Also surfaces .claude/state/hook_errors.log. Hook failures used to be silent,
+# and a silent failure blocked later phase changes with no stated cause.
 # When the turn is otherwise allowed to end, the errors are reported through
 # additionalContext instead of blocking.
 #
@@ -74,16 +74,10 @@ if [[ ! -f "${STATE_DIR}/TASK_MODE" ]]; then
 fi
 
 PHASE=$(read_phase "$STATE_DIR")
-BUSY=$(cat "${STATE_DIR}/subagent_count" 2>/dev/null || echo 0)
-[[ "$BUSY" =~ ^[0-9]+$ ]] || BUSY=0
 MISSING=()
 
-if (( BUSY > 0 )); then
-  MISSING+=("${BUSY} subagent(s) still active - wait for SubagentStop before ending the turn.")
-fi
-
 if (( PHASE < PHASE_DONE )) && ! phase_allows_optional_stop "$PHASE"; then
-  MISSING+=("current phase is ${PHASE} ($(phase_name "$PHASE")), must reach ${PHASE_DONE}. Only phase 4 (a blocking planning question) and phase 6 (test-modification approval) may end the turn early. Complete each phase's work in chat and run: bash .claude/hooks/advance.sh after each phase - at phase 1 with the exact task class as the argument.")
+  MISSING+=("current phase is ${PHASE} ($(phase_name "$PHASE")), must reach ${PHASE_DONE}. Only phase 4 (a blocking planning question) and phase 6 (test-modification approval) may end the turn early. Complete each phase's work in chat and run: bash .claude/hooks/advance.sh after each phase - at phase 1 with the exact task class as the argument, at phase 2 once per finished half ('${RESEARCH_HALF_FILES}' | '${RESEARCH_HALF_WEB}').")
 fi
 
 # CalcEngine native edits require confirmed rebuild.

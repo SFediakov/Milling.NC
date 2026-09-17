@@ -9,7 +9,8 @@
 # This is the ONLY backward transition in the state machine, and it is only legal
 # from phase 6. The recorded task class is cleared: phase 1 is the class gate, so
 # the class must be re-evaluated for the new task definition rather than
-# inherited from the run that just failed.
+# inherited from the run that just failed. The research-block marks and spawn
+# budgets are cleared with it: the next pass through phase 2 is a fresh block.
 set -uo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -28,21 +29,17 @@ fi
 ROLLBACK_FROM=6
 ROLLBACK_TO=1
 
+LEDGER=$(ledger_dir "$STATE_DIR")
 CURRENT=$(read_phase "$STATE_DIR")
-
-ACTIVE=$(cat "${STATE_DIR}/subagent_count" 2>/dev/null || echo 0)
-[[ "$ACTIVE" =~ ^[0-9]+$ ]] || ACTIVE=0
-if (( ACTIVE > 0 )); then
-  echo "rollback: blocked - ${ACTIVE} subagent(s) still active. The phase cannot change while a subagent runs." >&2
-  exit 1
-fi
 
 # Same migration rule as advance.sh: a phase number written under a different
 # model is not a number this script may act on.
 if ! phase_model_is_current "$STATE_DIR"; then
   RECORDED=$(phase_model_recorded "$STATE_DIR")
   echo "$PHASE_MIN" > "${STATE_DIR}/current_phase"
-  rm -f "${STATE_DIR}/task_class" "${STATE_DIR}/spawns_this_phase"
+  rm -f "${STATE_DIR}/task_class"
+  research_flags_clear "$STATE_DIR"
+  budget_clear "$LEDGER"
   phase_model_stamp "$STATE_DIR"
   printf '%s migrate phase_model=%s -> %s, phase reset to %s\n' \
     "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "${RECORDED:-none}" "$PHASE_MODEL_VERSION" "$PHASE_MIN" \
@@ -61,7 +58,9 @@ fi
 REASON="${*:-}"
 
 echo "$ROLLBACK_TO" > "${STATE_DIR}/current_phase"
-rm -f "${STATE_DIR}/task_class" "${STATE_DIR}/spawns_this_phase"
+rm -f "${STATE_DIR}/task_class"
+research_flags_clear "$STATE_DIR"
+budget_clear "$LEDGER"
 phase_model_stamp "$STATE_DIR"
 
 printf '%s rollback %s -> %s (task class cleared)%s\n' \

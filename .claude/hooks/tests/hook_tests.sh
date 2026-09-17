@@ -40,11 +40,18 @@ set_class()      { printf '%s' "$1" > "$STATE/task_class"; }
 clear_class()    { rm -f "$STATE/task_class"; }
 task_mode_on()   { : > "$STATE/TASK_MODE"; }
 task_mode_off()  { rm -f "$STATE/TASK_MODE"; }
-clear_spawns()   { rm -f "$STATE/spawns_this_phase"; echo 0 > "$STATE/subagent_count"; }
 
 json_cmd()   { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$1"; }
+json_ps()    { printf '{"tool_name":"PowerShell","tool_input":{"command":"%s"}}' "$1"; }
 json_write() { printf '{"tool_name":"Write","tool_input":{"file_path":"%s","content":"x"}}' "$1"; }
-json_agent() { printf '{"tool_name":"Agent","tool_input":{"model":"%s","prompt":"p"}}' "$1"; }
+# Every real Agent payload carries a tool_use_id (verified live); the ledger
+# keys its slot reservation on it, so the helper mints a fresh one per call.
+# Nanoseconds plus a zero-padded random suffix: unique, and numerically ordered
+# in time, which is what last_res_id (below) relies on. A counter would not do:
+# the helper runs inside $(...), where an increment is lost with the subshell.
+json_agent() { printf '{"tool_name":"Agent","tool_use_id":"toolu_%s%05d","tool_input":{"description":"%s","model":"%s","prompt":"p"}}' "$(date +%s%N)" "$RANDOM" "${2:-probe}" "$1"; }
+ledger_reset() { rm -rf "$STATE/agents"; }
+slots_held()   { local f c=0; for f in "$STATE/agents"/slot.*; do [[ -f "$f" ]] && c=$((c + 1)); done; printf '%s' "$c"; }
 json_mcp()   { printf '{"tool_name":"%s","tool_input":{}}' "$1"; }
 
 report() {
@@ -76,11 +83,11 @@ rollback() { bash "$HOOKS/rollback.sh" "$@" >/dev/null 2>&1; }
 phase_is() { [[ "$(cat "$STATE/current_phase")" == "$1" ]]; }
 
 # Baseline: execution phase, standard class (nothing skipped).
-task_mode_on; set_phase 5; set_class "standard"; clear_spawns
+task_mode_on; set_phase 5; set_class "standard"
 
 echo "== phase model is the single source of truth =="
 [[ "$LIB_PHASE_DONE" == "9" ]] && report 1 "library PHASE_DONE is 9" || report 0 "library PHASE_DONE" "(got $LIB_PHASE_DONE)"
-[[ "$MODEL_VERSION" == "2" ]] && report 1 "library PHASE_MODEL_VERSION is 2" || report 0 "library PHASE_MODEL_VERSION" "(got $MODEL_VERSION)"
+[[ "$MODEL_VERSION" == "3" ]] && report 1 "library PHASE_MODEL_VERSION is 3" || report 0 "library PHASE_MODEL_VERSION" "(got $MODEL_VERSION)"
 ( source "$HOOKS/lib/guard-common.sh"
   names="1:Task definition 2:Files pre-research 3:WEB research 4:Planning 5:Execution 6:Testing 7:Documentation 8:Reporting"
   ok=1
@@ -88,8 +95,8 @@ echo "== phase model is the single source of truth =="
   for n in 1 2 3 4 5 6 7 8; do
     case "$n" in
       1) want="Task definition" ;;
-      2) want="Files pre-research" ;;
-      3) want="WEB research" ;;
+      2) want="Research block: files pre-research + WEB research (concurrent)" ;;
+      3) want="retired number - WEB research is half of phase 2" ;;
       4) want="Planning" ;;
       5) want="Execution" ;;
       6) want="Testing" ;;
@@ -186,6 +193,116 @@ echo x > Server/notes.txt
 cp Server/a.cs Server/b.cs
 CASES
 
+echo "== remote main is PR-only: every push route to main is denied =="
+while IFS= read -r c; do
+  [[ -z "$c" ]] && continue
+  expect_deny gate-bash.sh "$(json_cmd "$c")" "block push: $c"
+done <<'CASES'
+git push origin main
+git push origin Main
+git push origin +main
+git push origin refs/heads/main
+git push origin feature:main
+git push origin HEAD:main
+git push origin HEAD:refs/heads/main
+git push origin claude/x main
+git push
+git push origin
+git push -u origin HEAD
+git push origin HEAD
+git push origin @
+git push origin --tags
+git -c push.default=current push
+git push --all origin
+git push --mirror origin
+git push --branches origin
+git push origin refs/heads/*:refs/heads/*
+git push origin 'refs/heads/*'
+git -C /tmp/x push origin main
+sudo git push origin main
+bash -c 'git push origin main'
+git checkout main && git push origin main
+git push origin claude/x; git push origin main
+CASES
+
+echo "== remote main is PR-only: named feature pushes stay allowed =="
+while IFS= read -r c; do
+  [[ -z "$c" ]] && continue
+  expect_allow gate-bash.sh "$(json_cmd "$c")" "allow push: $c"
+done <<'CASES'
+git push -u origin claude/x
+git push origin claude/x:refs/heads/claude/x
+git push origin claude/x:claude/x
+git push origin main:claude/backup
+git push origin v1.2.3
+git push --dry-run origin claude/x
+git -C /tmp/x push origin claude/y
+git push origin claude/x 2>&1
+git commit -m 'git push origin main'
+grep -rn 'git push origin main' .claude/hooks/tests
+CASES
+
+echo "== local main only fast-forwards from origin =="
+while IFS= read -r c; do
+  [[ -z "$c" ]] && continue
+  expect_deny gate-bash.sh "$(json_cmd "$c")" "block local main rewrite: $c"
+done <<'CASES'
+git fetch origin feature:main
+git fetch origin feature:refs/heads/main
+git fetch origin +main:main
+git pull origin feature:main
+git branch -f main x
+git branch --force main x
+git branch -M x main
+git branch -m x main
+git branch -C x main
+git branch -d main
+git update-ref refs/heads/main abc
+git update-ref -d refs/heads/main
+git checkout -B main
+git checkout -B main origin/main
+git switch -C main
+git switch --force-create main
+CASES
+while IFS= read -r c; do
+  [[ -z "$c" ]] && continue
+  expect_allow gate-bash.sh "$(json_cmd "$c")" "allow main sync/read: $c"
+done <<'CASES'
+git fetch origin
+git fetch origin main
+git fetch origin main:main
+git pull --ff-only origin main
+git pull origin main
+git pull
+git checkout main
+git switch main
+git checkout -b main
+git switch -c main
+git checkout -B claude/x
+git switch -C claude/x
+git branch -f claude/x origin/claude/x
+git branch -u origin/main main
+git branch --list main
+git merge origin/claude/other
+git log --oneline -5 main
+git diff main..HEAD
+git rev-parse main origin/main
+CASES
+
+echo "== the main rules are always-on: any phase, task mode off, PowerShell =="
+task_mode_off
+expect_deny gate-bash.sh "$(json_cmd "git push origin main")"        "block push main with task mode off"
+expect_deny gate-bash.sh "$(json_cmd "git push")"                    "block bare push with task mode off"
+expect_deny gate-bash.sh "$(json_ps  "git push origin main")"        "block push main from PowerShell, task mode off"
+expect_deny gate-bash.sh "$(json_cmd "git branch -f main x")"        "block local main rewrite with task mode off"
+task_mode_on
+for p in 1 4 8 9; do
+  set_phase "$p"
+  expect_deny gate-bash.sh "$(json_cmd "git push origin main")"      "block push main at phase $p"
+  expect_deny gate-bash.sh "$(json_ps  "git push origin feature:main")" "block PowerShell push to main at phase $p"
+done
+set_phase 5
+
 echo "== the root CLAUDE.md is never writable =="
 expect_deny gate-edit.sh     "$(json_write "$SANDBOX/CLAUDE.md")"          "gate-edit blocks root CLAUDE.md"
 expect_deny gate-claude-md.sh "$(json_write "$SANDBOX/CLAUDE.md")"         "gate-claude-md blocks root CLAUDE.md"
@@ -214,7 +331,7 @@ expect_deny gate-bash.sh "$(json_cmd "rm .claude/state/TASK_MODE")"             
 # did not lock the whole of .claude/, so it now uses a path that is still meant
 # to be freely writable.
 expect_allow gate-edit.sh "$(json_write "$SANDBOX/.claude/state/edits.log")"    "other .claude writes still allowed"
-expect_allow gate-bash.sh "$(json_cmd "echo 0 > .claude/state/subagent_count")" "counter reset stays available"
+expect_allow gate-bash.sh "$(json_cmd "echo x > .claude/state/edits.log")"      "other .claude shell writes still allowed"
 
 echo "== R2: protected paths blocked for Edit/Write =="
 expect_deny  gate-edit.sh "$(json_write "C:/repo/Server/.env")"                  "block write: .env"
@@ -291,7 +408,6 @@ expect_allow gate-mcp-write.sh "$(json_mcp "mcp__browser__form_input")"      "al
 expect_allow gate-mcp-write.sh "$(json_mcp "mcp__browser__read_page")"       "allow mcp read_page"
 
 echo "== advance state machine - phase 1 task-class gate =="
-clear_spawns
 set_phase 1; clear_class
 adv                            && report 0 "phase 1 refuses a bare advance" "(accepted)" || report 1 "phase 1 refuses a bare advance"
 phase_is 1                     && report 1 "phase unchanged after refusal"  || report 0 "phase unchanged after refusal"
@@ -319,30 +435,74 @@ for p in 2 3 4; do
   adv && report 0 "phase $p unreachable for trivial" "(advanced)" || report 1 "phase $p unreachable for trivial"
 done
 set_phase 2; set_class "standard"
-adv; phase_is 3 && report 1 "phase 2 reachable for standard" || report 0 "phase 2 reachable for standard"
+adv "files"; adv "web"; phase_is 4 && report 1 "phase 2 reachable for standard (joins into 4)" || report 0 "phase 2 reachable for standard" "(phase=$(cat "$STATE/current_phase"))"
+# The number 3 is retired: reachable for no class, and never produced.
+set_phase 3; set_class "standard"
+adv && report 0 "phase 3 unreachable for standard (retired number)" "(advanced)" || report 1 "phase 3 unreachable for standard (retired number)"
+phase_is 3 && report 1 "retired 3 is left alone for the user to fix" || report 0 "retired 3 was moved" "(phase=$(cat "$STATE/current_phase"))"
+
+echo "== the research block: fork at 2, join into 4 =="
+rflags() { printf 'files=%s web=%s' "$([[ -s "$STATE/research_files.done" ]] && printf yes || printf no)" "$([[ -s "$STATE/research_web.done" ]] && printf yes || printf no)"; }
+set_phase 1; clear_class; rm -f "$STATE"/research_*.done
+adv "standard"; phase_is 2 && report 1 "standard: 1 -> 2 enters the block" || report 0 "standard enters the block" "(phase=$(cat "$STATE/current_phase"))"
+adv           && report 0 "bare advance refused at phase 2" "(advanced)" || report 1 "bare advance refused at phase 2"
+adv "trivial" && report 0 "class string refused at phase 2" "(accepted)"  || report 1 "class string refused at phase 2"
+adv "Files"   && report 0 "wrong-case half refused" "(accepted)"          || report 1 "wrong-case half refused"
+adv "files web" && report 0 "two halves in one call refused" "(accepted)" || report 1 "two halves in one call refused"
+phase_is 2 && [[ "$(rflags)" == "files=no web=no" ]] && report 1 "refusals leave the block untouched" || report 0 "refusals touched the block" "($(rflags))"
+adv "files" && report 1 "first half accepted" || report 0 "first half accepted"
+phase_is 2 && [[ "$(rflags)" == "files=yes web=no" ]] && report 1 "one mark keeps the phase at 2" || report 0 "one mark moved the phase" "(phase=$(cat "$STATE/current_phase") $(rflags))"
+grep -q "finished" "$STATE/research_files.done" && report 1 "mark file carries content, not just existence" || report 0 "mark file is empty"
+adv "files" && report 0 "repeated half refused" "(accepted)" || report 1 "repeated half refused"
+phase_is 2 && report 1 "repeated mark does not join" || report 0 "repeated mark joined" "(phase=$(cat "$STATE/current_phase"))"
+adv "web" && phase_is 4 && report 1 "second mark joins 2 -> 4" || report 0 "second mark joins" "(phase=$(cat "$STATE/current_phase"))"
+[[ "$(rflags)" == "files=no web=no" ]] && report 1 "join clears both marks" || report 0 "join left marks behind" "($(rflags))"
+# Order independence: web first, then files.
+set_phase 1; clear_class
+adv "standard"; adv "web"; phase_is 2 && report 1 "web-first mark keeps the phase at 2" || report 0 "web-first" "(phase=$(cat "$STATE/current_phase"))"
+adv "files"; phase_is 4 && report 1 "files-second mark joins 2 -> 4" || report 0 "files-second join" "(phase=$(cat "$STATE/current_phase"))"
+# An empty (hand-touched) flag is not a mark.
+set_phase 2; set_class "standard"; rm -f "$STATE"/research_*.done; : > "$STATE/research_web.done"
+adv "files"; phase_is 2 && report 1 "empty web flag does not count as a mark" || report 0 "empty flag counted" "(phase=$(cat "$STATE/current_phase"))"
+adv "web"; phase_is 4 && report 1 "real web mark then joins" || report 0 "real web mark join" "(phase=$(cat "$STATE/current_phase"))"
+# A half argument is refused everywhere else.
+for p in 1 4 5 6 7 8; do
+  set_phase "$p"; set_class "standard"
+  adv "files" && report 0 "half argument refused at phase $p" "(accepted)" || report 1 "half argument refused at phase $p"
+done
+# Marks never survive a return to phase 1, whichever path takes it there.
+set_phase 6; set_class "standard"; printf 'files finished x\n' > "$STATE/research_files.done"
+rollback; [[ ! -f "$STATE/research_files.done" ]] && report 1 "rollback clears the marks" || report 0 "rollback left a mark"
+set_phase 1; clear_class; printf 'files finished x\n' > "$STATE/research_files.done"
+adv "standard"; [[ ! -f "$STATE/research_files.done" ]] && report 1 "entering the block starts it fresh" || report 0 "stale mark survived into the block"
+set_phase 5; set_class "standard"; set_model 1; printf 'files finished x\n' > "$STATE/research_files.done"
+adv; [[ ! -f "$STATE/research_files.done" ]] && report 1 "model migration clears the marks" || report 0 "migration left a mark"
+set_phase 5; set_class "standard"
 
 echo "== a missing class blocks everything past phase 1 =="
 set_phase 5; clear_class
 adv && report 0 "no class recorded blocks advance" "(advanced)" || report 1 "no class recorded blocks advance"
 
 echo "== the full walks =="
-set_phase 1; clear_class; clear_spawns
+set_phase 1; clear_class
 adv "standard"                          # 1 -> 2
-for _ in 1 2 3 4 5 6 7; do adv; done    # 2 -> 9
+adv "files"; adv "web"                  # 2 -> 4 (join)
+for _ in 1 2 3 4 5; do adv; done        # 4 -> 9
 phase_is 9 && report 1 "standard walk reaches 9" || report 0 "standard walk" "(phase=$(cat "$STATE/current_phase"))"
 adv && report 0 "advance refuses at the terminal phase" "(advanced)" || report 1 "advance refuses at the terminal phase"
 
-set_phase 1; clear_class; clear_spawns
+set_phase 1; clear_class
 adv "trivial"                           # 1 -> 5
 for _ in 1 2 3 4; do adv; done          # 5 -> 9
 phase_is 9 && report 1 "trivial walk reaches 9" || report 0 "trivial walk" "(phase=$(cat "$STATE/current_phase"))"
 
-echo "== subagent-busy gate blocks phase change =="
+echo "== a running subagent never blocks a phase change (owner decision) =="
+# A leftover subagent_count from the retired busy-counter model must be inert.
 set_phase 5; set_class "standard"; echo 1 > "$STATE/subagent_count"
-adv && report 0 "advance blocked while a subagent runs" "(advanced)" || report 1 "advance blocked while a subagent runs"
+adv && report 1 "advance proceeds with a stale busy counter" || report 0 "advance proceeds with a stale busy counter" "(blocked)"
 set_phase 6
-rollback && report 0 "rollback blocked while a subagent runs" "(rolled back)" || report 1 "rollback blocked while a subagent runs"
-clear_spawns
+rollback && report 1 "rollback proceeds with a stale busy counter" || report 0 "rollback proceeds with a stale busy counter" "(blocked)"
+rm -f "$STATE/subagent_count"
 
 echo "== rollback 6 -> 1 =="
 set_phase 6; set_class "standard"
@@ -353,67 +513,86 @@ for p in 1 2 3 4 5 7 8 9; do
   rollback && report 0 "rollback refused at phase $p" "(rolled back)" || report 1 "rollback refused at phase $p"
 done
 
-echo "== sub-agents are not allowed, at any phase, in any form =="
-# CLAUDE.md: "sub-agents are not allowed". The gate takes no phase, model or
-# payload shape into account, so there is no input that produces an allow.
+echo "== sub-agents: the model is the first rule =="
+# Root CLAUDE.md: "only opus sub-agents are allowed". Exactly one "model":"opus"
+# passes at every phase and everything else is denied. Phase 2 additionally
+# needs the research half in the description (covered on its own below), so the
+# allow probe there is tagged. The ledger is reset per phase so that the slots
+# these allowed spawns take do not run into the concurrency limit here.
 set_class "standard"
 for p in 1 2 3 4 5 6 7 8 9; do
-  set_phase "$p"; clear_spawns
-  expect_deny gate-subagent.sh "$(json_agent sonnet)" "phase $p denies a sonnet spawn"
-  expect_deny gate-subagent.sh "$(json_agent haiku)"  "phase $p denies a haiku spawn"
+  set_phase "$p"; ledger_reset
+  expect_allow gate-subagent.sh "$(json_agent opus "files: read")" "phase $p allows an opus spawn"
+  expect_deny  gate-subagent.sh "$(json_agent sonnet)" "phase $p denies a sonnet spawn"
+  expect_deny  gate-subagent.sh "$(json_agent haiku)"  "phase $p denies a haiku spawn"
 done
-set_phase 2; clear_spawns
-expect_deny gate-subagent.sh "$(json_agent opus)"                                "opus denied"
+ledger_reset
+# No class recorded and no phase file: the gate must not care.
+set_phase 5; clear_class
+expect_allow gate-subagent.sh "$(json_agent opus)"                                "opus allowed with no task class"
+rm -f "$STATE/current_phase"
+expect_allow gate-subagent.sh "$(json_agent opus)"                                "opus allowed with no phase file"
+set_phase 5; set_class "standard"
+task_mode_off
+expect_allow gate-subagent.sh "$(json_agent opus)"                                "opus allowed with task mode off"
+expect_deny  gate-subagent.sh "$(json_agent sonnet)"                              "sonnet denied with task mode off"
+task_mode_on
+expect_deny gate-subagent.sh "$(json_agent fable)"                                "fable denied"
+expect_deny gate-subagent.sh "$(json_agent Opus)"                                 "wrong-case Opus denied"
+expect_deny gate-subagent.sh "$(json_agent "opus ")"                              "padded 'opus ' denied"
+expect_deny gate-subagent.sh "$(json_agent "")"                                   "empty model denied"
+expect_deny gate-subagent.sh "$(json_agent claude-opus-5)"                        "full model id denied (only the alias is allowed)"
 expect_deny gate-subagent.sh '{"tool_name":"Agent","tool_input":{"prompt":"p"}}'  "spawn with no model denied"
-expect_deny gate-subagent.sh '{"tool_name":"Agent","tool_input":{"model":"sonnet","options":{"model":"sonnet"}}}' "duplicate model keys denied"
+expect_deny gate-subagent.sh '{"tool_name":"Agent","tool_input":{"model":"opus","options":{"model":"opus"}}}' "duplicate model keys denied even when both are opus"
+expect_deny gate-subagent.sh '{"tool_name":"Agent","tool_input":{"model":"opus","options":{"model":"sonnet"}}}' "decoy opus ahead of sonnet denied"
+expect_deny gate-subagent.sh '{"tool_name":"Agent","tool_input":{"model":"sonnet","options":{"model":"opus"}}}' "decoy opus behind sonnet denied"
 expect_deny gate-subagent.sh '{"tool_name":"Agent","tool_input":{}}'              "empty tool_input denied"
 expect_deny gate-subagent.sh '{}'                                                 "malformed payload denied"
-# The library must agree: no argument yields a policy.
+# An escaped decoy inside the prompt text is data, not a second model field.
+expect_allow gate-subagent.sh '{"tool_name":"Agent","tool_use_id":"toolu_x1","tool_input":{"model":"opus","prompt":"say \"model\":\"sonnet\" back"}}' "escaped decoy in the prompt is ignored"
+# Whitespace around the colon is still one field.
+expect_allow gate-subagent.sh '{"tool_name":"Agent","tool_use_id":"toolu_x2","tool_input":{"model" : "opus","prompt":"p"}}' "spaced model field allowed"
+# The library declares the allowed model once.
 ( source "$HOOKS/lib/guard-common.sh"
-  ok=1
-  for n in 1 2 3 4 5 6 7 8 9 10 99 ""; do
-    phase_subagent_policy "$n" >/dev/null 2>&1 && { printf 'SP_FAIL [%s]\n' "$n"; ok=0; }
-  done
-  [[ "$ok" == "1" ]] && printf 'SP_OK\n'
-) > "$SANDBOX/sp.out" 2>&1
-grep -q SP_OK "$SANDBOX/sp.out" && report 1 "phase_subagent_policy never returns a policy" || report 0 "phase_subagent_policy" "($(tr '\n' ' ' < "$SANDBOX/sp.out"))"
+  [[ "$SUBAGENT_ALLOWED_MODEL" == "opus" ]] && printf 'SM_OK\n' || printf 'SM_FAIL [%s]\n' "$SUBAGENT_ALLOWED_MODEL"
+) > "$SANDBOX/sm.out" 2>&1
+grep -q SM_OK "$SANDBOX/sm.out" && report 1 "SUBAGENT_ALLOWED_MODEL is opus" || report 0 "SUBAGENT_ALLOWED_MODEL" "($(tr '\n' ' ' < "$SANDBOX/sm.out"))"
 
-echo "== a refused spawn is never counted =="
-clear_spawns
-printf '%s' "$(json_agent sonnet)" | bash "$HOOKS/gate-subagent.sh" >/dev/null 2>&1
-c=$(cat "$STATE/subagent_count")
-[[ "$c" == "0" ]] && report 1 "refused spawn does not increment the counter" || report 0 "refused spawn incremented" "(count=$c)"
-[[ ! -f "$STATE/spawns_this_phase" ]] && report 1 "refused spawn writes no budget record" || report 0 "refused spawn wrote a budget record"
+echo "== a spawn leaves no state behind =="
+rm -f "$STATE/subagent_count" "$STATE/spawns_this_phase"
+printf '%s' "$(json_agent opus)" | bash "$HOOKS/gate-subagent.sh" >/dev/null 2>&1
+[[ ! -f "$STATE/subagent_count" ]] && report 1 "allowed spawn writes no counter" || report 0 "allowed spawn wrote a counter"
+[[ ! -f "$STATE/spawns_this_phase" ]] && report 1 "allowed spawn writes no budget record" || report 0 "allowed spawn wrote a budget record"
 
-echo "== MCP tools that spawn agents are refused too =="
+echo "== MCP tools that spawn agents are not gated; file writers still are =="
 for t in mcp__x__spawn_task mcp__x__create_agent mcp__x__start_session mcp__x__run_task mcp__x__agent_create mcp__x__delegate_work mcp__x__launch_worker mcp__x__dispatch_job; do
-  expect_deny gate-mcp-write.sh "$(json_mcp "$t")" "mcp spawn denied: $t"
+  expect_allow gate-mcp-write.sh "$(json_mcp "$t")" "mcp spawn allowed: $t"
 done
 for t in mcp__browser__read_page mcp__browser__form_input mcp__x__list_sessions mcp__x__get_task_status; do
   expect_allow gate-mcp-write.sh "$(json_mcp "$t")" "mcp non-spawn allowed: $t"
 done
+for t in mcp__x__write_file mcp__x__create_file mcp__x__upload_asset mcp__x__download_file mcp__x__save_document mcp__x__delete_attachment; do
+  expect_deny gate-mcp-write.sh "$(json_mcp "$t")" "mcp file writer denied: $t"
+done
 
-echo "== the busy gate survives as defence in depth =="
-# Nothing should increment the counter any more, but an agent can still start
-# through a surface the Agent matcher never sees (the Skill tool, for one). If
-# that happens the phase machine must still refuse to move.
-set_phase 5; set_class "standard"
-echo 1 > "$STATE/subagent_count"
-adv && report 0 "advance blocked while the counter is above zero" "(advanced)" || report 1 "advance blocked while the counter is above zero"
-out=$(printf '{"stop_hook_active":false}' | bash "$HOOKS/gate-stop.sh" 2>/dev/null)
-printf '%s' "$out" | grep -q '"decision":"block"' && report 1 "Stop blocked while the counter is above zero" || report 0 "Stop blocked while busy"
-printf '{}' | bash "$HOOKS/track-subagent-stop.sh" >/dev/null 2>&1
-[[ "$(cat "$STATE/subagent_count")" == "0" ]] && report 1 "SubagentStop still decrements" || report 0 "SubagentStop decrement"
-printf '{}' | bash "$HOOKS/track-subagent-stop.sh" >/dev/null 2>&1
-[[ "$(cat "$STATE/subagent_count")" == "0" ]] && report 1 "counter floors at zero" || report 0 "counter floors at zero"
-clear_spawns
+echo "== the ledger hooks are wired; the retired integer counter is not =="
+for h in track-subagent-start.sh track-subagent-stop.sh track-agent-result.sh; do
+  [[ -f "$HOOKS/$h" ]] && report 1 "$h present" || report 0 "$h missing"
+done
+for ev in SubagentStart SubagentStop PostToolUseFailure; do
+  grep -q "\"$ev\"" "$REPO_ROOT/.claude/settings.json" && report 1 "settings.json wires $ev" || report 0 "settings.json lacks $ev"
+done
+grep -q 'track-agent-result.sh' "$REPO_ROOT/.claude/settings.json" && report 1 "settings.json wires track-agent-result.sh" || report 0 "settings.json lacks track-agent-result.sh"
+grep -q '"CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": *"8"' "$REPO_ROOT/.claude/settings.json" && report 1 "settings.json caps native concurrency at 8" || report 0 "settings.json lacks the native cap"
+grep -q '"CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS": *"8"' "$REPO_ROOT/.claude/settings.json" && report 1 "settings.json caps workflow concurrency at 8" || report 0 "settings.json lacks the workflow cap"
+grep -q "subagent_count" "$HOOKS/advance.sh" "$HOOKS/rollback.sh" "$HOOKS/gate-stop.sh" && report 0 "a phase script still reads subagent_count" || report 1 "no phase script reads subagent_count"
 
 echo "== fail-closed when the guard library is missing =="
 mv "$HOOKS/lib/guard-common.sh" "$HOOKS/lib/guard-common.sh.bak"
 set_phase 5
 expect_deny gate-bash.sh "$(json_cmd "ls")"                          "gate-bash denies without its library"
 expect_deny gate-edit.sh "$(json_write "$SANDBOX/Server/Program.cs")" "gate-edit denies without its library"
-expect_deny gate-subagent.sh "$(json_agent sonnet)"                   "gate-subagent denies without its library"
+expect_deny gate-subagent.sh "$(json_agent opus)"                     "gate-subagent denies without its library"
 out=$(printf '{"stop_hook_active":false}' | bash "$HOOKS/gate-stop.sh" 2>/dev/null)
 printf '%s' "$out" | grep -q '"decision":"block"' && report 1 "gate-stop blocks without its library" || report 0 "gate-stop blocks without its library"
 mv "$HOOKS/lib/guard-common.sh.bak" "$HOOKS/lib/guard-common.sh"
@@ -440,7 +619,7 @@ expect_deny gate-bash.sh "$(json_cmd "rm -rf Server/server_logs")"              
 expect_allow gate-bash.sh "$(json_cmd "grep -rn error server_logs/")"            "reading server_logs stays allowed"
 
 echo "== phase 8 (reporting) shell whitelist =="
-set_phase 8; set_class "standard"; clear_spawns
+set_phase 8; set_class "standard"
 expect_deny  gate-bash.sh "$(json_cmd "dotnet build")"                          "block bash at phase 8"
 expect_deny  gate-bash.sh "$(json_cmd "cat Server/Program.cs")"                 "block even reads at phase 8"
 expect_allow gate-bash.sh "$(json_cmd "bash .claude/hooks/advance.sh")"         "allow advance.sh at phase 8"
@@ -539,12 +718,11 @@ CASES
 # implementation keyword, which is the case a keyword-only test lets through.
 while IFS= read -r q; do
   [[ -z "$q" ]] && continue
-  set_phase 9; set_class "standard"; printf '1:1' > "$STATE/spawns_this_phase"
+  set_phase 9; set_class "standard"
   out=$(printf '%s' "$(prompt_json "$q")" | bash "$HOOKS/inject-phases.sh" 2>/dev/null)
   p=$(cat "$STATE/current_phase")
   [[ "$p" == "1" ]] && report 1 "resets 9 -> 1: $q" || report 0 "resets 9 -> 1: $q" "(phase=$p)"
   [[ ! -f "$STATE/task_class" ]] && report 1 "class cleared for: $q" || report 0 "class cleared for: $q"
-  [[ ! -f "$STATE/spawns_this_phase" ]] && report 1 "spawn budget cleared for: $q" || report 0 "spawn budget cleared for: $q"
   printf '%s' "$out" | grep -q "Phase reset" && report 1 "reset announced for: $q" || report 0 "reset announced for: $q"
 done <<'CASES'
 make the login page faster
@@ -559,8 +737,8 @@ printf '%s' "$(prompt_json "thanks, looks good")" | bash "$HOOKS/inject-phases.s
 p=$(cat "$STATE/current_phase")
 [[ "$p" == "5" ]] && report 1 "phase 5 is untouched by the terminal-phase rule" || report 0 "phase 5 untouched" "(phase=$p)"
 
-echo "== SessionStart preserves state on compact/resume and while busy =="
-set_phase 5; echo 0 > "$STATE/subagent_count"
+echo "== SessionStart preserves state on compact/resume =="
+set_phase 5
 printf '{"session_id":"s1","source":"compact"}' | bash "$HOOKS/session-start.sh" >/dev/null 2>&1
 p=$(cat "$STATE/current_phase")
 [[ "$p" == "5" ]] && report 1 "compact does not reset the phase" || report 0 "compact does not reset" "(phase=$p)"
@@ -570,35 +748,32 @@ printf '{"session_id":"s1","source":"resume"}' | bash "$HOOKS/session-start.sh" 
 p=$(cat "$STATE/current_phase")
 [[ "$p" == "5" ]] && report 1 "resume does not reset the phase" || report 0 "resume does not reset" "(phase=$p)"
 
-set_phase 5; echo 2 > "$STATE/subagent_count"
-printf '{"session_id":"s1","source":"startup"}' | bash "$HOOKS/session-start.sh" >/dev/null 2>&1
-p=$(cat "$STATE/current_phase")
-[[ "$p" == "5" ]] && report 1 "startup while subagents active does not reset" || report 0 "busy startup does not reset" "(phase=$p)"
-
 # The case actually observed: a SessionStart arriving mid-task reporting
-# source=startup, busy=0, new id.
-set_phase 7; echo 0 > "$STATE/subagent_count"; rm -f "$STATE/last_session_id"
+# source=startup with a new id.
+set_phase 7; rm -f "$STATE/last_session_id"
 printf '{"session_id":"s7","source":"startup"}' | bash "$HOOKS/session-start.sh" >/dev/null 2>&1
 p=$(cat "$STATE/current_phase")
 [[ "$p" == "7" ]] && report 1 "mid-task startup does not reset a working phase" || report 0 "mid-task startup preserved" "(phase=$p)"
 
-set_phase 8; echo 0 > "$STATE/subagent_count"; rm -f "$STATE/last_session_id"
+set_phase 8; rm -f "$STATE/last_session_id"
 printf '{"session_id":"s8","source":"startup"}' | bash "$HOOKS/session-start.sh" >/dev/null 2>&1
 p=$(cat "$STATE/current_phase")
 [[ "$p" == "8" ]] && report 1 "phase 8 counts as a working phase" || report 0 "phase 8 preserved" "(phase=$p)"
 
-set_phase 5; echo 0 > "$STATE/subagent_count"
+set_phase 5
 printf '%s' "s1" > "$STATE/last_session_id"
 printf '{"session_id":"s1","source":"startup"}' | bash "$HOOKS/session-start.sh" >/dev/null 2>&1
 p=$(cat "$STATE/current_phase")
 [[ "$p" == "5" ]] && report 1 "same session id re-fire does not reset" || report 0 "same id preserved" "(phase=$p)"
 
 # Resting phases stay resettable, including after the 30-minute window.
-set_phase 9; set_class "standard"; echo 0 > "$STATE/subagent_count"; rm -f "$STATE/last_session_id"
+set_phase 9; set_class "standard"; rm -f "$STATE/last_session_id"
+echo 3 > "$STATE/subagent_count"; printf '5:2' > "$STATE/spawns_this_phase"
 printf '{"session_id":"s2","source":"startup"}' | bash "$HOOKS/session-start.sh" >/dev/null 2>&1
 p=$(cat "$STATE/current_phase")
 [[ "$p" == "1" ]] && report 1 "genuine startup at a resting phase resets to 1" || report 0 "startup resets" "(phase=$p)"
 [[ ! -f "$STATE/task_class" ]] && report 1 "session reset clears the task class" || report 0 "session reset clears the class"
+[[ ! -f "$STATE/subagent_count" && ! -f "$STATE/spawns_this_phase" ]] && report 1 "session reset removes retired counter files" || report 0 "retired counter files survived the reset"
 
 set_phase 5; touch -d '2 hours ago' "$STATE/current_phase" 2>/dev/null
 rm -f "$STATE/last_session_id"
@@ -611,7 +786,7 @@ p=$(cat "$STATE/current_phase")
 echo "== phase model migration: a number from a retired model is never trusted =="
 # A stale stamp must override EVERY preserve signal. Phase 5 with a fresh mtime
 # and source=compact is the strongest preserve case there is.
-set_phase 5; set_class "standard"; echo 0 > "$STATE/subagent_count"
+set_phase 5; set_class "standard"
 set_model 1
 printf '%s' "s1" > "$STATE/last_session_id"
 out=$(printf '{"session_id":"s1","source":"compact"}' | bash "$HOOKS/session-start.sh" 2>/dev/null)
@@ -622,25 +797,25 @@ p=$(cat "$STATE/current_phase")
 printf '%s' "$out" | grep -q "retired model\|different model" && report 1 "migration is announced, not silent" || report 0 "migration announced"
 
 # advance.sh and rollback.sh normalise rather than act on an uninterpretable number.
-set_phase 5; set_class "standard"; set_model 1; clear_spawns
+set_phase 5; set_class "standard"; set_model 1
 adv && report 0 "advance refuses under a stale model" "(advanced)" || report 1 "advance refuses under a stale model"
 p=$(cat "$STATE/current_phase")
 [[ "$p" == "1" ]] && report 1 "advance normalises the phase to 1" || report 0 "advance normalises" "(phase=$p)"
 [[ "$(cat "$STATE/phase_model")" == "$MODEL_VERSION" ]] && report 1 "advance restamps the model version" || report 0 "advance restamps"
 
-set_phase 6; set_class "standard"; set_model 1; clear_spawns
+set_phase 6; set_class "standard"; set_model 1
 rollback && report 0 "rollback refuses under a stale model" "(rolled back)" || report 1 "rollback refuses under a stale model"
 p=$(cat "$STATE/current_phase")
 [[ "$p" == "1" ]] && report 1 "rollback normalises the phase to 1" || report 0 "rollback normalises" "(phase=$p)"
 
 # An unstamped state directory is treated the same way as a stale one.
-set_phase 5; set_class "standard"; rm -f "$STATE/phase_model"; clear_spawns
+set_phase 5; set_class "standard"; rm -f "$STATE/phase_model"
 adv && report 0 "advance refuses with no model stamp" "(advanced)" || report 1 "advance refuses with no model stamp"
 [[ "$(cat "$STATE/current_phase")" == "1" ]] && report 1 "unstamped state normalises to phase 1" || report 0 "unstamped normalises"
 set_phase 5; set_class "standard"
 
 echo "== Stop gate =="
-task_mode_on; set_class "standard"; echo 0 > "$STATE/subagent_count"
+task_mode_on; set_class "standard"
 : > "$STATE/rebuild_pending.log"; : > "$STATE/hook_errors.log"
 for p in 1 2 3 5 7 8; do
   set_phase "$p"
@@ -655,8 +830,8 @@ done
 
 set_phase 9; echo 1 > "$STATE/subagent_count"
 out=$(printf '{"stop_hook_active":false}' | bash "$HOOKS/gate-stop.sh" 2>/dev/null)
-printf '%s' "$out" | grep -q '"decision":"block"' && report 1 "Stop blocked while a subagent is active" || report 0 "Stop blocked while busy"
-echo 0 > "$STATE/subagent_count"
+printf '%s' "$out" | grep -q '"decision":"block"' && report 0 "Stop ignores a stale busy counter" "(blocked)" || report 1 "Stop ignores a stale busy counter"
+rm -f "$STATE/subagent_count"
 
 set_phase 9; printf 'x\n' > "$STATE/rebuild_pending.log"
 out=$(printf '{"stop_hook_active":false}' | bash "$HOOKS/gate-stop.sh" 2>/dev/null)
@@ -698,7 +873,7 @@ echo "== the phase-command whitelist is per-segment, all segments must pass =="
 # It used to substring-match the whole raw command, so appending the path in a
 # comment, or joining it with &&, skipped the read-only and phase-8 checks for
 # the entire line.
-set_phase 8; set_class "standard"; clear_spawns
+set_phase 8; set_class "standard"
 expect_allow gate-bash.sh "$(json_cmd "bash .claude/hooks/advance.sh")"                        "phase 8 allows a bare advance.sh"
 expect_allow gate-bash.sh "$(json_cmd "cd C:/x && bash .claude/hooks/advance.sh")"             "phase 8 allows cd then advance.sh"
 expect_allow gate-bash.sh "$(json_cmd "bash .claude/hooks/rollback.sh")"                       "phase 8 allows rollback.sh"
@@ -753,7 +928,7 @@ expect_deny gate-edit.sh "$(json_write "$SANDBOX/.claude/hooks/lib/guard-common.
 expect_deny  gate-bash.sh "$(json_cmd "echo {} > .claude/settings.json")"             "shell write onto settings.json denied"
 expect_deny  gate-bash.sh "$(json_cmd "echo x > .claude/hooks/gate-bash.sh")"         "shell write onto a hook script denied"
 expect_deny  gate-bash.sh "$(json_cmd "rm .claude/hooks/gate-stop.sh")"               "shell delete of a hook script denied"
-expect_allow gate-edit.sh "$(json_write "$SANDBOX/.claude/state/subagent_count")"     "the documented recovery valve stays writable"
+expect_allow gate-edit.sh "$(json_write "$SANDBOX/.claude/state/edits.log")"          "unlocked .claude/state files stay writable"
 
 echo "== an inline interpreter payload is scanned for redirects =="
 set_phase 2
@@ -859,9 +1034,21 @@ printf '%s' "$out" | grep -qF "$PASSPHRASE" && report 0 "gate-edit leaks the pas
 out=$(printf '%s' "$(json_cmd "echo x > .claude/hooks/gate-bash.sh")" | bash "$HOOKS/gate-bash.sh" 2>/dev/null)
 printf '%s' "$out" | grep -qF "$PASSPHRASE" && report 0 "gate-bash leaks the passphrase in its deny reason" || report 1 "gate-bash does not leak the passphrase"
 
+echo "== the injected rules carry the sharing guidance =="
+out=$(printf '{"session_id":"g0","source":"startup"}' | bash "$HOOKS/session-start.sh" 2>/dev/null)
+printf '%s' "$out" | grep -q "Do not quote the passphrase on your own initiative" && report 1 "rules say: not on own initiative" || report 0 "rules lack the own-initiative wording"
+printf '%s' "$out" | grep -q "When the user asks for the phrase, quote" && report 1 "rules say: quote on request" || report 0 "rules lack the on-request wording"
+printf '%s' "$out" | grep -qF "$PASSPHRASE" && report 0 "session-start leaks the passphrase into the rules" || report 1 "session-start does not leak the passphrase"
+printf '%s' "$out" | grep -q "only model 'opus'\|equal to 'opus'" && report 1 "rules state the opus-only subagent policy" || report 0 "rules lack the opus-only policy"
+printf '%s' "$out" | grep -qi "SUB-AGENTS ARE NOT ALLOWED" && report 0 "rules still forbid subagents" || report 1 "rules no longer forbid subagents"
+set_phase 5; set_class "standard"
+out=$(printf '%s' "$(prompt_json "please update the gate")" | bash "$HOOKS/inject-phases.sh" 2>/dev/null)
+printf '%s' "$out" | grep -q "only model 'opus' may be spawned" && report 1 "prompt reminder states the opus-only policy" || report 0 "prompt reminder lacks the opus-only policy"
+printf '%s' "$out" | grep -q "NOT allowed at any phase" && report 0 "prompt reminder still forbids subagents" || report 1 "prompt reminder no longer forbids subagents"
+
 echo "== the grant expires when the turn ends =="
 set_phase 9; set_class "standard"; grant_on
-: > "$STATE/rebuild_pending.log"; echo 0 > "$STATE/subagent_count"
+: > "$STATE/rebuild_pending.log"
 printf '{"stop_hook_active":false}' | bash "$HOOKS/gate-stop.sh" >/dev/null 2>&1
 [[ ! -f "$STATE/hook_edit_grant" ]] && report 1 "Stop revokes the grant when the turn ends" || report 0 "Stop revokes the grant"
 
@@ -883,6 +1070,226 @@ grant_on
 printf '{"session_id":"g2","source":"startup"}' | bash "$HOOKS/session-start.sh" >/dev/null 2>&1
 [[ ! -f "$STATE/hook_edit_grant" ]] && report 1 "SessionStart clears a stale grant on startup" || report 0 "stale grant survived startup"
 set_phase 5; set_class "standard"; grant_off
+
+echo "== sub-agent concurrency: 8 slots, the 9th spawn is denied =="
+# The ledger is a set of slot files taken with an exclusive create. Eight
+# allowed spawns fill it; the ninth is denied at once (no waiting), and the
+# deny reason names the limit. Helpers feed the tracking hooks the same shapes
+# the runtime was observed to send (tool_use_id, agentId, status, agent_id).
+json_post()  { printf '{"hook_event_name":"PostToolUse","tool_name":"Agent","tool_use_id":"%s","tool_input":{"model":"opus","prompt":"p"},"tool_response":{"status":"%s","agentId":"%s"}}' "$1" "$2" "$3"; }
+json_fail()  { printf '{"hook_event_name":"PostToolUseFailure","tool_name":"Agent","tool_use_id":"%s","tool_input":{"model":"opus","prompt":"p"},"error":"boom"}' "$1"; }
+json_start() { printf '{"hook_event_name":"SubagentStart","agent_id":"%s","agent_type":"general-purpose"}' "$1"; }
+json_stop()  { printf '{"hook_event_name":"SubagentStop","stop_hook_active":false,"agent_id":"%s","agent_type":"general-purpose","agent_transcript_path":"x"}' "$1"; }
+last_res_id() { ls "$STATE/agents"/res.* 2>/dev/null | sed 's/.*res\.toolu_//' | sort -n | tail -n 1 | sed 's/^/toolu_/'; }
+set_phase 5; set_class "standard"; task_mode_on; ledger_reset
+for i in 1 2 3 4 5 6 7 8; do
+  expect_allow gate-subagent.sh "$(json_agent opus)" "spawn $i of 8 allowed"
+done
+[[ "$(slots_held)" == "8" ]] && report 1 "eight slots held" || report 0 "eight slots held" "(held=$(slots_held))"
+expect_deny gate-subagent.sh "$(json_agent opus)" "9th spawn denied"
+out=$(printf '%s' "$(json_agent opus)" | bash "$HOOKS/gate-subagent.sh" 2>/dev/null)
+printf '%s' "$out" | grep -q "8 sub-agents are already running" && report 1 "deny reason names the limit" || report 0 "deny reason names the limit" "($out)"
+[[ "$(slots_held)" == "8" ]] && report 1 "a denied spawn takes no slot" || report 0 "denied spawn took a slot" "(held=$(slots_held))"
+# The limit holds at every phase, task mode on or off.
+task_mode_off
+expect_deny gate-subagent.sh "$(json_agent opus)" "9th spawn denied with task mode off"
+task_mode_on
+for p in 1 4 9; do set_phase "$p"; expect_deny gate-subagent.sh "$(json_agent opus "files: x")" "9th spawn denied at phase $p"; done
+set_phase 5
+
+echo "== a slot is released when its agent stops, through the link =="
+# Background spawn: PostToolUse reports status async_launched + agentId, which
+# binds the reservation to the agent; SubagentStop for that agent frees it.
+ledger_reset
+printf '%s' "$(json_agent opus)" | bash "$HOOKS/gate-subagent.sh" >/dev/null 2>&1
+RID=$(last_res_id)
+[[ -n "$RID" && "$(slots_held)" == "1" ]] && report 1 "reservation recorded under the tool_use_id" || report 0 "reservation recorded" "(rid=$RID held=$(slots_held))"
+printf '%s' "$(json_post "$RID" async_launched agentA)" | bash "$HOOKS/track-agent-result.sh" >/dev/null 2>&1
+[[ -f "$STATE/agents/agent.agentA" ]] && report 1 "async_launched links the slot to the agent id" || report 0 "link missing"
+printf '%s' "$(json_start agentA)" | bash "$HOOKS/track-subagent-start.sh" >/dev/null 2>&1
+[[ "$(slots_held)" == "1" ]] && report 1 "SubagentStart takes no second slot" || report 0 "SubagentStart double-counted" "(held=$(slots_held))"
+printf '%s' "$(json_stop agentZ)" | bash "$HOOKS/track-subagent-stop.sh" >/dev/null 2>&1
+[[ "$(slots_held)" == "1" ]] && report 1 "SubagentStop of an unknown agent releases nothing" || report 0 "unknown agent released a slot" "(held=$(slots_held))"
+out=$(printf '%s' "$(json_stop agentA)" | bash "$HOOKS/track-subagent-stop.sh" 2>/dev/null); rc=$?
+[[ "$rc" == "0" ]] && ! printf '%s' "$out" | grep -q '"decision"' && report 1 "SubagentStop never blocks" || report 0 "SubagentStop blocked" "(rc=$rc out=$out)"
+[[ "$(slots_held)" == "0" && ! -f "$STATE/agents/agent.agentA" && ! -f "$STATE/agents/res.$RID" ]] && report 1 "SubagentStop releases slot, link and reservation" || report 0 "release incomplete" "($(ls "$STATE/agents"))"
+printf '%s' "$(json_stop agentA)" | bash "$HOOKS/track-subagent-stop.sh" >/dev/null 2>&1
+[[ "$(slots_held)" == "0" ]] && report 1 "a repeated SubagentStop is idempotent" || report 0 "repeated stop broke the ledger"
+# Foreground spawn: the tool returns after the agent finished (status
+# completed), so PostToolUse releases directly - SubagentStop already ran.
+printf '%s' "$(json_agent opus)" | bash "$HOOKS/gate-subagent.sh" >/dev/null 2>&1
+RID=$(last_res_id)
+printf '%s' "$(json_stop agentB)" | bash "$HOOKS/track-subagent-stop.sh" >/dev/null 2>&1
+printf '%s' "$(json_post "$RID" completed agentB)" | bash "$HOOKS/track-agent-result.sh" >/dev/null 2>&1
+[[ "$(slots_held)" == "0" ]] && report 1 "completed status releases the slot at PostToolUse" || report 0 "completed status left a slot" "(held=$(slots_held))"
+# A spawn that failed never produced an agent: PostToolUseFailure releases.
+printf '%s' "$(json_agent opus)" | bash "$HOOKS/gate-subagent.sh" >/dev/null 2>&1
+RID=$(last_res_id)
+printf '%s' "$(json_fail "$RID")" | bash "$HOOKS/track-agent-result.sh" >/dev/null 2>&1
+[[ "$(slots_held)" == "0" ]] && report 1 "PostToolUseFailure releases the reservation" || report 0 "failure left a slot" "(held=$(slots_held))"
+# After a release the pool admits again.
+for i in 1 2 3 4 5 6 7 8; do printf '%s' "$(json_agent opus)" | bash "$HOOKS/gate-subagent.sh" >/dev/null 2>&1; done
+RID=$(last_res_id)
+expect_deny gate-subagent.sh "$(json_agent opus)" "full pool denies"
+printf '%s' "$(json_post "$RID" async_launched agentC)" | bash "$HOOKS/track-agent-result.sh" >/dev/null 2>&1
+printf '%s' "$(json_stop agentC)" | bash "$HOOKS/track-subagent-stop.sh" >/dev/null 2>&1
+expect_allow gate-subagent.sh "$(json_agent opus)" "one release admits one more spawn"
+expect_deny  gate-subagent.sh "$(json_agent opus)" "and the pool is full again"
+ledger_reset
+
+echo "== a spawn the runtime never confirmed is reclaimed by age =="
+ledger_reset
+printf '%s' "$(json_agent opus)" | bash "$HOOKS/gate-subagent.sh" >/dev/null 2>&1
+RID=$(last_res_id)
+touch -d '10 minutes ago' "$STATE/agents/res.$RID" 2>/dev/null
+for i in 1 2 3 4 5 6 7; do printf '%s' "$(json_agent opus)" | bash "$HOOKS/gate-subagent.sh" >/dev/null 2>&1; done
+expect_allow gate-subagent.sh "$(json_agent opus)" "an unlinked reservation older than the TTL is reaped, freeing its slot"
+# A linked slot never ages out, however old.
+ledger_reset
+printf '%s' "$(json_agent opus)" | bash "$HOOKS/gate-subagent.sh" >/dev/null 2>&1
+RID=$(last_res_id)
+printf '%s' "$(json_post "$RID" async_launched agentOld)" | bash "$HOOKS/track-agent-result.sh" >/dev/null 2>&1
+touch -d '3 hours ago' "$STATE/agents/res.$RID" "$STATE/agents/slot.1" 2>/dev/null
+for i in 1 2 3 4 5 6 7; do printf '%s' "$(json_agent opus)" | bash "$HOOKS/gate-subagent.sh" >/dev/null 2>&1; done
+expect_deny gate-subagent.sh "$(json_agent opus)" "a linked slot is never reaped by age"
+ledger_reset
+
+echo "== a killed sub-agent fires no SubagentStop: the task notification releases it =="
+# Observed live: TaskStop emits no SubagentStop, only a task-notification whose
+# <task-id> is the agent id. inject-phases.sh settles the ledger from it.
+ledger_reset; set_phase 5; set_class "standard"
+printf '%s' "$(json_agent opus)" | bash "$HOOKS/gate-subagent.sh" >/dev/null 2>&1
+RID=$(last_res_id)
+printf '%s' "$(json_post "$RID" async_launched agentK)" | bash "$HOOKS/track-agent-result.sh" >/dev/null 2>&1
+printf '%s' "$(prompt_json "<task-notification>\\n<task-id>agentK</task-id>\\n<tool-use-id>${RID}</tool-use-id>\\n<status>killed</status>\\n</task-notification>")" | bash "$HOOKS/inject-phases.sh" >/dev/null 2>&1
+[[ "$(slots_held)" == "0" ]] && report 1 "kill notification releases the linked slot" || report 0 "kill notification left the slot" "(held=$(slots_held))"
+[[ "$(cat "$STATE/current_phase")" == "5" ]] && report 1 "kill notification still moves no phase" || report 0 "kill notification moved the phase"
+# Not yet linked (PostToolUse never ran): the tool-use-id releases the reservation.
+printf '%s' "$(json_agent opus)" | bash "$HOOKS/gate-subagent.sh" >/dev/null 2>&1
+RID=$(last_res_id)
+printf '%s' "$(prompt_json "<task-notification>\\n<task-id>agentQ</task-id>\\n<tool-use-id>${RID}</tool-use-id>\\n<status>killed</status>\\n</task-notification>")" | bash "$HOOKS/inject-phases.sh" >/dev/null 2>&1
+[[ "$(slots_held)" == "0" ]] && report 1 "kill notification releases an unlinked reservation by tool-use-id" || report 0 "unlinked reservation survived the kill notification" "(held=$(slots_held))"
+# A notification for a plain background shell touches nothing.
+printf '%s' "$(json_agent opus)" | bash "$HOOKS/gate-subagent.sh" >/dev/null 2>&1
+printf '%s' "$(prompt_json "<task-notification>\\n<task-id>b03s4nyee</task-id>\\n<status>completed</status>\\n</task-notification>")" | bash "$HOOKS/inject-phases.sh" >/dev/null 2>&1
+[[ "$(slots_held)" == "1" ]] && report 1 "an unrelated task notification releases nothing" || report 0 "unrelated notification touched the ledger" "(held=$(slots_held))"
+ledger_reset
+
+echo "== a burst of parallel spawns admits exactly 8 =="
+# Claude Code runs the hooks of parallel tool calls concurrently. Twelve gate
+# processes started at once on an empty ledger must end with eight slots held
+# and four denies - the exclusive create is what makes that exact.
+ledger_reset
+for i in $(seq 1 12); do
+  ( printf '%s' "$(json_agent opus)" | bash "$HOOKS/gate-subagent.sh" 2>/dev/null | grep -q '"deny"' && echo deny || echo allow ) > "$SANDBOX/burst.$i" &
+done
+wait
+ALLOWS=$(cat "$SANDBOX"/burst.* | grep -c allow); DENIES=$(cat "$SANDBOX"/burst.* | grep -c deny)
+[[ "$ALLOWS" == "8" && "$DENIES" == "4" && "$(slots_held)" == "8" ]] && report 1 "burst of 12: 8 allowed, 4 denied, 8 slots held" || report 0 "burst admission" "(allow=$ALLOWS deny=$DENIES held=$(slots_held))"
+rm -f "$SANDBOX"/burst.*; ledger_reset
+
+echo "== a payload the ledger cannot track is denied =="
+expect_deny gate-subagent.sh '{"tool_name":"Agent","tool_input":{"model":"opus","prompt":"p"}}' "spawn without tool_use_id denied"
+expect_deny gate-subagent.sh '{"tool_name":"Agent","tool_use_id":"../x","tool_input":{"model":"opus","prompt":"p"}}' "spawn with a path-shaped tool_use_id denied"
+[[ "$(slots_held)" == "0" ]] && report 1 "untrackable spawns take no slot" || report 0 "untrackable spawn took a slot"
+
+echo "== research block: every spawn names its half, each half has a budget =="
+set_phase 2; set_class "standard"; task_mode_on; ledger_reset; rm -f "$STATE"/research_*.done
+expect_deny  gate-subagent.sh "$(json_agent opus "read the hooks")"      "phase 2 denies an untagged spawn"
+expect_deny  gate-subagent.sh "$(json_agent opus "Files: read")"         "phase 2 denies a wrong-case tag"
+expect_deny  gate-subagent.sh "$(json_agent opus "files read")"          "phase 2 denies a tag without the colon"
+expect_deny  gate-subagent.sh "$(json_agent opus " files: read")"        "phase 2 denies a tag not at the start"
+[[ "$(slots_held)" == "0" ]] && report 1 "tag denials take no slot" || report 0 "tag denial took a slot"
+for i in 1 2 3 4 5; do expect_allow gate-subagent.sh "$(json_agent opus "files: reader $i")" "files spawn $i of 5 allowed"; done
+expect_deny gate-subagent.sh "$(json_agent opus "files: reader 6")" "6th files spawn denied (budget 5)"
+[[ "$(slots_held)" == "5" ]] && report 1 "a budget denial gives its slot back" || report 0 "budget denial kept a slot" "(held=$(slots_held))"
+for i in 1 2 3; do expect_allow gate-subagent.sh "$(json_agent opus "web: searcher $i")" "web spawn $i of 3 allowed"; done
+expect_deny gate-subagent.sh "$(json_agent opus "web: searcher 4")" "4th web spawn denied (budget 3)"
+[[ "$(slots_held)" == "8" ]] && report 1 "5 + 3 research spawns fill the 8 slots exactly" || report 0 "research spawns vs slots" "(held=$(slots_held))"
+# The budget is per block: finished agents free slots, not budget.
+for f in "$STATE/agents"/res.*; do rid=${f##*/res.}; printf '%s' "$(json_post "$rid" async_launched "ag$rid")" | bash "$HOOKS/track-agent-result.sh" >/dev/null 2>&1; printf '%s' "$(json_stop "ag$rid")" | bash "$HOOKS/track-subagent-stop.sh" >/dev/null 2>&1; done
+[[ "$(slots_held)" == "0" ]] && report 1 "all research agents released their slots" || report 0 "research slots not released" "(held=$(slots_held))"
+expect_deny gate-subagent.sh "$(json_agent opus "files: reader 6")" "files budget stays spent after the agents finished"
+expect_deny gate-subagent.sh "$(json_agent opus "web: searcher 4")"  "web budget stays spent after the agents finished"
+# Leaving the block clears the budget; entering it again starts fresh.
+adv "files"; adv "web"
+phase_is 4 && report 1 "block joined into 4 with budgets spent" || report 0 "join with budgets" "(phase=$(cat "$STATE/current_phase"))"
+[[ -z "$(ls "$STATE/agents" 2>/dev/null | grep '^budget\.')" ]] && report 1 "join clears the budgets" || report 0 "join left budget files"
+set_phase 1; clear_class; adv "standard"
+expect_allow gate-subagent.sh "$(json_agent opus "files: fresh")" "a fresh block has a fresh budget"
+# Rollback and the terminal-phase reset clear budgets too.
+set_phase 6; set_class "standard"; rollback
+[[ -z "$(ls "$STATE/agents" 2>/dev/null | grep '^budget\.')" ]] && report 1 "rollback clears the budgets" || report 0 "rollback left budget files"
+set_phase 2; set_class "standard"; printf '%s' "$(json_agent opus "web: w")" | bash "$HOOKS/gate-subagent.sh" >/dev/null 2>&1
+set_phase 9
+printf '%s' "$(prompt_json "next task please")" | bash "$HOOKS/inject-phases.sh" >/dev/null 2>&1
+[[ -z "$(ls "$STATE/agents" 2>/dev/null | grep '^budget\.')" ]] && report 1 "the 9 -> 1 reset clears the budgets" || report 0 "reset left budget files"
+[[ ! -f "$STATE/research_files.done" && ! -f "$STATE/research_web.done" ]] && report 1 "the 9 -> 1 reset clears the marks" || report 0 "reset left marks"
+ledger_reset
+# Outside the block, and with task mode off, no tag is needed.
+set_phase 5; set_class "standard"
+expect_allow gate-subagent.sh "$(json_agent opus "read the hooks")" "phase 5 needs no tag"
+task_mode_off; set_phase 2
+expect_allow gate-subagent.sh "$(json_agent opus "read the hooks")" "task mode off: phase 2 needs no tag"
+task_mode_on; set_phase 5; ledger_reset
+
+echo "== the marks and the ledger are machine-owned =="
+set_phase 5; set_class "standard"
+expect_deny gate-edit.sh "$(json_write "$SANDBOX/.claude/state/research_files.done")"  "Write onto research_files.done denied"
+expect_deny gate-edit.sh "$(json_write "$SANDBOX/.claude/state/research_web.done")"    "Write onto research_web.done denied"
+expect_deny gate-edit.sh "$(json_write "$SANDBOX/.claude/state/agents/slot.1")"        "Write onto a slot file denied"
+expect_deny gate-edit.sh "$(json_write "$SANDBOX/.claude/state/agents/budget.web.3")"  "Write onto a budget file denied"
+expect_deny gate-edit.sh "$(json_write "$SANDBOX/.claude/state/AGENTS/Slot.1")"        "wrong-case ledger path denied"
+expect_deny gate-bash.sh "$(json_cmd "touch .claude/state/research_web.done")"          "touch research_web.done denied"
+expect_deny gate-bash.sh "$(json_cmd "echo x > .claude/state/research_files.done")"     "redirect onto research_files.done denied"
+expect_deny gate-bash.sh "$(json_cmd "rm .claude/state/agents/slot.1")"                 "deleting a slot file denied"
+expect_deny gate-bash.sh "$(json_cmd "rm -rf .claude/state/agents")"                    "deleting the ledger denied"
+expect_deny gate-bash.sh "$(json_cmd "rm -f .claude/state/agents/budget.files.5")"      "deleting a budget file denied"
+expect_deny gate-bash.sh "$(json_cmd "mv .claude/state/agents .claude/state/old")"      "moving the ledger denied"
+expect_deny gate-bash.sh "$(json_cmd "echo x > .claude/state/../state/agents/slot.2")"  "traversal onto the ledger denied"
+task_mode_on; set_phase 5
+# The grant covers the enforcement layer only, never the ledger.
+: > "$STATE/hook_edit_grant"
+expect_deny gate-edit.sh "$(json_write "$SANDBOX/.claude/state/agents/slot.1")"        "grant does NOT unlock the ledger"
+rm -f "$STATE/hook_edit_grant"
+expect_allow gate-edit.sh "$(json_write "$SANDBOX/.claude/state/subagent_events.log")"   "the event log stays writable"
+
+echo "== SessionStart clears the ledger on a process restart, keeps it on compact =="
+set_phase 5; set_class "standard"
+mkdir -p "$STATE/agents"; printf 'x\n' > "$STATE/agents/slot.1"
+printf '{"session_id":"L1","source":"compact"}' | bash "$HOOKS/session-start.sh" >/dev/null 2>&1
+[[ -f "$STATE/agents/slot.1" ]] && report 1 "compact keeps the ledger" || report 0 "compact cleared the ledger"
+printf '%s' "L1" > "$STATE/last_session_id"
+printf '{"session_id":"L1","source":"startup"}' | bash "$HOOKS/session-start.sh" >/dev/null 2>&1
+[[ -f "$STATE/agents/slot.1" ]] && report 1 "same-session re-fire keeps the ledger" || report 0 "same-session re-fire cleared the ledger"
+printf '{"session_id":"L2","source":"resume"}' | bash "$HOOKS/session-start.sh" >/dev/null 2>&1
+[[ ! -d "$STATE/agents" ]] && report 1 "resume clears the ledger" || report 0 "resume kept the ledger"
+mkdir -p "$STATE/agents"; printf 'x\n' > "$STATE/agents/slot.1"
+printf '{"session_id":"L3","source":"startup"}' | bash "$HOOKS/session-start.sh" >/dev/null 2>&1
+[[ ! -d "$STATE/agents" ]] && report 1 "startup clears the ledger" || report 0 "startup kept the ledger"
+mkdir -p "$STATE/agents"; printf 'x\n' > "$STATE/agents/slot.1"
+printf '{"session_id":"L4","source":"clear"}' | bash "$HOOKS/session-start.sh" >/dev/null 2>&1
+[[ ! -d "$STATE/agents" ]] && report 1 "clear clears the ledger" || report 0 "clear kept the ledger"
+set_phase 9; set_class "standard"; rm -f "$STATE/last_session_id"; printf 'files finished x\n' > "$STATE/research_files.done"
+printf '{"session_id":"L5","source":"startup"}' | bash "$HOOKS/session-start.sh" >/dev/null 2>&1
+[[ ! -f "$STATE/research_files.done" ]] && report 1 "session reset clears the marks" || report 0 "session reset left a mark"
+set_phase 5; set_class "standard"
+
+echo "== the injected rules describe the block and the limits =="
+out=$(printf '{"session_id":"r0","source":"startup"}' | bash "$HOOKS/session-start.sh" 2>/dev/null)
+printf '%s' "$out" | grep -q "PHASE 2 IS A FORK/JOIN" && report 1 "rules describe the fork/join" || report 0 "rules lack the fork/join"
+printf '%s' "$out" | grep -q 'advance.sh \\"files\\"' && report 1 "rules give the files mark" || report 0 "rules lack the files mark"
+printf '%s' "$out" | grep -q 'advance.sh \\"web\\"' && report 1 "rules give the web mark" || report 0 "rules lack the web mark"
+printf '%s' "$out" | grep -q "at most 8 sub-agents running at the same time" && report 1 "rules state the concurrency limit" || report 0 "rules lack the concurrency limit"
+printf '%s' "$out" | grep -q "5 files agents, 3 web agents" && report 1 "rules state the block budgets" || report 0 "rules lack the block budgets"
+printf '%s' "$out" | grep -q "PHASE MODEL VERSION 3" && report 1 "rules state model version 3" || report 0 "rules lack model version 3"
+set_phase 5; set_class "standard"
+out=$(printf '%s' "$(prompt_json "please update the gate")" | bash "$HOOKS/inject-phases.sh" 2>/dev/null)
+printf '%s' "$out" | grep -q "at most 8 run at the same time" && report 1 "prompt reminder states the concurrency limit" || report 0 "prompt reminder lacks the concurrency limit"
+printf '%s' "$out" | grep -q "research block" && report 1 "prompt reminder describes the block" || report 0 "prompt reminder lacks the block"
+out=$(printf '{"stop_hook_active":false}' | bash "$HOOKS/gate-stop.sh" 2>/dev/null)
+printf '%s' "$out" | grep -q "once per finished half" && report 1 "Stop reason explains the phase-2 marks" || report 0 "Stop reason lacks the marks"
+ledger_reset; set_phase 5; set_class "standard"
 
 echo
 printf 'passed: %d   failed: %d\n' "$PASS" "$FAIL"
