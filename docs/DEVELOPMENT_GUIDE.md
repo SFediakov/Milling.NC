@@ -16,7 +16,7 @@ Contents:
 7. Coding rules and definition of done
 8. Known pitfalls
 9. Milestones
-10. Task list (T-001 to T-129)
+10. Task list (T-001 to T-130)
 
 ---
 
@@ -1579,6 +1579,14 @@ check that decides done.
 - Input: user request (a Presets tab saving and loading the Tool, Axes, Cutting and Strategy settings in one file in the app root)
 - Output: `presets.json` next to the executable with named presets; the first tab lists them with Save, Load, Delete; Load is one dirty project edit
 - Acceptance: round trip through the file; same name replaces; Load reaches every panel and leaves Stock and Models alone; a corrupt file is reported in the error dialog at start
+- Status: done
+
+#### T-130 Negative coordinates typed character by character
+- Depends on: T-128, T-108
+- Files: `src/Miller.App/ViewModels/ModelsViewModel.cs`, `src/Miller.App/Controls/NumericBox.cs`, `tests/Miller.Tests/App/CoordinateEntryTests.cs`, tests
+- Input: user request (negative values must be allowed everywhere coordinates are typed); reproduced: a valid keystroke in a Models offset field republished the model name list, the list box reset its selection, the field was disabled for an instant and lost the keyboard focus, so "-12.5" ended as -1; a lone "-" was flagged as an error
+- Output: `ModelsViewModel.Names` is cached and republished only when the names differ; `NumericBox.IsIncomplete` treats a sign or decimal-point prefix as input in progress (no error, no value); headless tests type "-12.5" one character at a time into the Models offsets, the Axes custom zero and the Stock explicit origin
+- Acceptance: every character reaches the project, the field keeps the focus, `SelectedIndex` and the viewport selection do not change during a value edit; "" and "abc" remain errors; suite green
 - Status: done
 
 ### M8 Packaging and release

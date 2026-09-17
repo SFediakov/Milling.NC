@@ -323,3 +323,15 @@
   1e-4 mm cut; the first level compares against StockTop, so cells at the stock top are never nodes.
 - Under Git Bash a pipe (`Miller.exe --export ... | tail`) waits for the GUI-subsystem binary; the
   export finished before the next command, unlike PowerShell's `&`.
+- A list box must not get a new ItemsSource instance on every project edit. ModelsViewModel published
+  `Names` as a fresh list from every reload; Avalonia's ListBox resets its SelectionModel on an
+  ItemsSource swap, the two-way SelectedIndex binding wrote -1 into the view model, the placement
+  fields bound to HasSelection were disabled for an instant, and Avalonia moves the keyboard focus
+  away from a focused control that becomes disabled. Typing "-12.5" therefore stopped at "-1" (the
+  first valid keystroke). Collections shown in a list are cached and republished only when their
+  content differs (SequenceEqual); a value edit must never reach `OnPropertyChanged(nameof(Names))`.
+  Focus loss of this kind is invisible to a test that types the whole text in one KeyTextInput;
+  CoordinateEntryTests types one character per call and asserts IsFocused after each.
+- NumericBox distinguishes incomplete from invalid text: a sign or decimal-point prefix ("-", "+",
+  ".", "-.", "+.") clears the error and leaves Value alone, so the first keystroke of a negative
+  number is not shown as a mistake; "" and "abc" stay errors as T-128 requires.
