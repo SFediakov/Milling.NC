@@ -20,7 +20,7 @@ list that implements it is in `docs/DEVELOPMENT_GUIDE.md`.
 | G9 | Axis positioning, direction and rotation | `src/Miller.Core/Setup/AxisSetup.cs`, `src/Miller.App/Views/AxisSettingsView.axaml` |
 | G10 | Simulation preview of head movement and material removal, speed 0.1x to 1000x | `src/Miller.Core/Simulation/SimulationEngine.cs`, `src/Miller.Core/Simulation/MaterialRemover.cs`, `src/Miller.Core/Simulation/SimulationClock.cs`, `src/Miller.App/Rendering/HeightMapRenderer.cs`, `src/Miller.App/Rendering/ToolRenderer.cs`, `src/Miller.App/Views/SimulationControlsView.axaml` |
 | G11 | Preview of the final cut model including inaccuracy and uncuttable areas | `src/Miller.Core/Analysis/FinalModelAnalyzer.cs`, `src/Miller.Core/Analysis/UncuttableRegions.cs`, `src/Miller.App/Views/AnalysisView.axaml` |
-| G12 | Modular, exchangeable routing algorithms | `src/Miller.Core/Toolpath/IToolpathStrategy.cs`, `src/Miller.Core/Toolpath/StrategyRegistry.cs`, `src/Miller.Core/Toolpath/Strategies/ZLayerByLayerStrategy.cs`, `src/Miller.Core/Toolpath/Strategies/ThreeAxisPreciseStrategy.cs` |
+| G12 | Modular, exchangeable routing algorithms | `src/Miller.Core/Toolpath/IToolpathStrategy.cs`, `src/Miller.Core/Toolpath/StrategyRegistry.cs`, `src/Miller.Core/Toolpath/Strategies/ZLayerByLayerStrategy.cs`, `src/Miller.Core/Toolpath/Strategies/ThreeAxisFreedomStrategy.cs` |
 
 Project rules that constrain the design (root `CLAUDE.md`):
 
@@ -152,14 +152,15 @@ placeholder; the task that implements it is written in the placeholder header.
 | Setup | `StockDefinition.cs` | `Shape` (Box, Cylinder); Box: `SizeX`, `SizeY`, `SizeZ`; Cylinder: `Diameter`, `Height`; `Placement` (AutoFitWithMargin, Explicit) and `Margin`; auto-fit alignment of the model union per axis `AlignX`, `AlignY`, `AlignZ` (`StockAlignment` Min, Center, Max; defaults Center, Center, Max) |
 | Setup | `AxisSetup.cs` | Mapping of model axes to machine X, Y, Z; direction sign per axis; rotation angles (degrees) about X, Y, Z; `OriginMode` (StockCornerMinXYMinZ, StockCornerMinXYTopZ, StockCenterTopZ, Custom); `ToMatrix()` |
 | Setup | `CuttingParameters.cs` | `FeedRate`, `PlungeRate`, `RapidRate` (mm/min), `SpindleRpm`, `Stepover`, `Stepdown`, `SafeHeight`, `CellSize`, `Tolerance`, `MillingDirection` (Zigzag, OneWay) |
-| Setup | `MillingProject.cs` | Aggregate of all setup objects + `Models` (list of `ModelPlacement`), `RoutingStrategyId`, `PostProcessorId`, `CutScope` (Everything, Separation), `MinIslandVolume` (mm3, separation only); JSON serializable, schema 3 (schema 1 `StlPath`, schema 2 `RoughingStrategyId`, `FinishingStrategyId` and `Parameters.Direction` are read and dropped on load) |
-| Setup | `ModelPlacement.cs`, `ModelLayout.cs` | One STL with offset and rotation about Z; the layout places every model (orientation, rotation, offset), takes machine zero from the stock corner around the union and merges the machine meshes; aligning one model to the stock minimum, middle or maximum per axis (`AlignedOffset`) is a fixed point because the stock follows the union, and it reports when the stock follows that model |
+| Setup | `MillingProject.cs` | Aggregate of all setup objects + `Models` (list of `ModelPlacement`), `RoutingStrategyId`, `PostProcessorId`, `CutScope` (Everything, Separation), `MinIslandVolume` (mm3, separation only), `ReachPercent` (reach rule, default 50); JSON serializable, schema 3 (the legacy strategy id `three-axis-precise` is mapped to `three-axis-freedom` on load (schema 1 `StlPath`, schema 2 `RoughingStrategyId`, `FinishingStrategyId` and `Parameters.Direction` are read and dropped on load) |
+| Setup | `ModelPlacement.cs`, `ModelLayout.cs` | One STL with offset and rotation about Z; the layout places every model (orientation, rotation, offset), takes machine zero from the stock corner around the anchor (`AnchorBounds`: the union of the models before their offsets, so an offset moves a model inside the stock) and merges the machine meshes; `StockBoundsMachine` is the stock box in machine space (corner at minus the origin offset), `AlignedOffset` puts one model at the stock minimum, middle or maximum per axis in one step |
+| Setup | `MillingPreset.cs` | Named copy of Tool, Axes, Parameters, `RoutingStrategyId`, `PostProcessorId`, `CutScope`, `MinIslandVolume`, `ReachPercent`; `FromProject`, `ApplyTo` (deep copies through the project JSON options) |
 | Setup | `ProjectSerializer.cs` | `System.Text.Json` read/write with invariant culture and schema version |
 | HeightMap | `HeightMap.cs` | Uniform grid: `OriginX`, `OriginY`, `CellSize`, `Width`, `Height`, `float[] Z`; `float.NaN` = no material / outside stock; cell-world conversions; `Clone()`; `Min()`, `Max()` |
 | HeightMap | `MeshRasterizer.cs` | Model map: top-down rasterization of triangles, max Z per cell; uncovered cells = `floor` value |
 | HeightMap | `ToolProfile.cs` | Footprint of a tool on the grid: list of `(dx, dy, dz)` where `dz(d) = 0` (flat) or `r - sqrt(r^2 - d^2)` (ball) |
 | HeightMap | `HeightMapDilation.cs` | Drop cutter: `tip[i,j] = max over footprint of (model[i+dx, j+dy] - dz)`, and the closing `ComputeRemaining` (material left when the tip has been everywhere a map allows) |
-| HeightMap | `ReachMap.cs` | Reach floor by majority: the `(n / 2 + 1)`-th largest of the `n` values `model - dz` over the footprint cells holding stock, never below the stock floor; the pipeline's tip map. A mixed footprint is entered when at least half of it is stock, so the minority cells are cut on purpose |
+| HeightMap | `ReachMap.cs` | Reach floor by vote: the value at ascending rank `ceil(n * percent / 100) - 1` of the `n` values `model - dz` over the footprint cells holding stock, never below the stock floor; the pipeline's tip map. `percent` is `MillingProject.ReachPercent`: 50 is the majority rule (a mixed footprint is entered when at least half of it is stock, so the minority cells are cut on purpose), 100 the drop cutter |
 | HeightMap | `HeadClearance.cs` | Head-limit map: `limit[i,j] = max over annulus (cutter radius < d <= head radius) of model - CutterLength`; effective tip = `max(tip, limit)`; head-limited mask |
 | HeightMap | `DistanceTransform.cs` | Exact Euclidean distance of every cell to the nearest cell of a mask (separable lower envelope of parabolas), used by the separation region |
 | Slicing | `MillingStep.cs` | One level: `Level` (Z) and the mask of tool positions taking part |
@@ -179,7 +180,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | Toolpath | `GougeChecker.cs` | Verifies no feed segment goes below the tip map (used by tests and analysis) |
 | Toolpath | `ToolpathSimplifier.cs` | Vector output: every run of consecutive feed segments at one rate is reduced by Douglas-Peucker to the vertices needed within `Tolerance`, then a merge pass drops kept vertices whose neighbours' chord still holds; a chord is also rejected when it dips below the effective tip map; rapids, plunges and run end points are untouched |
 | Toolpath/Strategies | `ZLayerByLayerStrategy.cs` | Id `z-layer-by-layer` (default). Cave by cave: the nodes of a cave at its level (`NodeLattice` at `Stepover`) in the order `RouteSolver` finds over the material as it stands then, one level down in place, the children before the next sibling, a rise only when a subtree is done |
-| Toolpath/Strategies | `ThreeAxisPreciseStrategy.cs` | Id `three-axis-precise`. One route over the coverage cells on the `FinishingStepover` lattice plus every cell where the tip steps by more than `Tolerance`, each at its tip height; moves follow the surface polyline, no level |
+| Toolpath/Strategies | `ThreeAxisFreedomStrategy.cs` | Id `three-axis-freedom` ("3 axis freedom"). One free route per level of the plan over the coverage cells whose tip lies below the previous level, on the `FinishingStepover` lattice plus every cell where the level map `max(tip, level)` steps by more than `Tolerance`, each at `max(tip, level)`; moves follow the surface polyline over the level map, so no pass cuts deeper than one `Stepdown` and the last visit of a cell is at its tip |
 | GCode | `GCodeFormatter.cs` | Invariant number formatting, 3 decimals, trailing zero trimming |
 
 `src/Miller.Solver` (namespace `Miller.Solver`, no references):
@@ -213,13 +214,14 @@ placeholder; the task that implements it is written in the placeholder header.
 |---|---|
 | `Services/ProjectService.cs` | Current `MillingProject`, change notification, new/load/save via `ProjectSerializer` |
 | `Services/MeshImportService.cs` | Loads STL files through `StlReader`, validates (non-empty, finite bounds), keeps one `Mesh` per model placement in project order |
-| `Services/PipelineService.cs` | mesh -> `AxisSetup` transform -> stock -> model map -> tip map -> head limit -> slice plan -> cut scope -> roughing strategy -> finishing strategy -> linker -> simplifier -> statistics; progress and cancellation |
+| `Services/PipelineService.cs` | mesh -> `AxisSetup` transform -> stock (aligned to `ModelLayout.AnchorBoundsMachine`) -> model map -> tip map -> head limit -> slice plan -> cut scope -> routing strategy -> simplifier -> statistics; progress and cancellation |
 | `Services/ExportService.cs` | Toolpath + project -> post-processor -> `.nc` file |
 | `Services/SimulationService.cs` | Owns `SimulationEngine`, `SimulationClock`, `MaterialRemover`, `CollisionDetector`; `Advance(realSeconds)`; `SeekTo(fraction)` (forward sweeps in place, backward replays from a fresh stock); exposes snapshot (tool position, dirty rectangle, events) |
 | `Services/AnalysisService.cs` | Runs `FinalModelAnalyzer` and `UncuttableRegions` on demand |
 | `Services/SettingsService.cs` | User preferences JSON in the per-user application data folder: last folders, window size, last speed factor |
+| `Services/PresetService.cs` | Named `MillingPreset`s in one `presets.json` next to the executable (`AppContext.BaseDirectory`); `Load`, `Save` (replace by name, case-insensitive), `Delete`; a corrupt file throws |
 | `Services/LogService.cs` | Append-only text log in `logs/miller.log` next to the executable; exception formatting |
-| `Validation/ProjectValidator.cs` | Rule list with messages: cutter length > 0, head diameter > cutter diameter, stepover in (0, cutter diameter], stepdown > 0, safe height > 0, cell size in [0.01, 5] mm, feed rates > 0, speed factor in [0.1, 1000], model fits inside stock |
+| `Validation/ProjectValidator.cs` | Rule list with messages: cutter length > 0, head diameter > cutter diameter, stepover in (0, cutter diameter], stepdown > 0, safe height > 0, cell size in [0.01, 5] mm, feed rates > 0, reach percent in (0, 100], model fits inside the stock box in machine space (`ModelLayout.StockBoundsMachine`) |
 | `Validation/ValidationResult.cs` | Errors and warnings with the field name they refer to |
 | `Progress/ProgressReport.cs` | Stage name, fraction 0..1, message |
 
@@ -232,20 +234,22 @@ placeholder; the task that implements it is written in the placeholder header.
 | Styles | `Colors.axaml` | The only file with color literals |
 | Styles | `Theme.axaml` | Control styles referencing `Colors.axaml` resources |
 | Views | `MainWindow.axaml(.cs)` | Menu bar, left settings tabs, central viewport, bottom status bar with progress |
-| Views | `MainMenu.axaml` | File (Open STL, Open Project, Save Project, Save Project As, Export NC, Exit), View (Reset Camera, Show Toolpath, Show Stock, Show Model), Simulation (Play, Pause, Stop, Run To End), Help (About) |
+| Views | `MainMenu.axaml` | File (Open STL, Open Project, Save Project, Save Project As, Export NC, Exit), Toolpath (Generate, Cancel), View (Reset Camera; Show Model, Stock, Toolpath, Tool as check items bound two-way to the viewport flags), Simulation (Play, Pause, Stop, Run To End), Help (About) |
 | Views | `ToolSettingsView.axaml` | Cutter diameter, cutter length, head diameter, tip type |
 | Views | `StockSettingsView.axaml` | Shape, dimensions, placement, margin, fit button |
 | Views | `AxisSettingsView.axaml` | Axis mapping, directions, rotations, origin mode |
-| Views | `ModelsView.axaml` | Model list with add and remove, auto-fit stock alignment per axis (Min, Center, Max), offset and rotation of the selected model, Min, Center and Max per axis with a message when the stock follows the model |
+| Views | `PresetsView.axaml` | First tab: preset list, name box, Save, Load, Delete |
+| Views | `ModelsView.axaml` | Model list with add and remove, auto-fit stock alignment per axis (Min, Center, Max), offset and rotation of the selected model, Min, Center and Max per axis |
 | Views | `CuttingParametersView.axaml` | Feed, plunge, rapid, spindle, stepover, stepdown, safe height, cell size, direction |
-| Views | `StrategySelectionView.axaml` | Roughing strategy, finishing strategy, cut scope, post-processor, Generate button, statistics |
+| Views | `StrategySelectionView.axaml` | Routing strategy, cut scope, minimum island volume, reach percent, post-processor, Generate button, statistics |
 | Views | `SimulationControlsView.axaml` | Play, pause, stop, step, run-to-end, logarithmic speed slider 0.1 to 1000 with numeric entry, progress bar (a press seeks to that fraction), simulated time, collision counter |
 | Views | `AnalysisView.axaml` | Final-model mode toggle, legend (Ok, RestMaterial, Gouge, Overhang, HeadLimited, CornerLimited), statistics |
 | Views | `AboutWindow.axaml` | Version, licenses pointer |
-| Views | `Viewport3DControl.cs` | `OpenGlControlBase` subclass: init, render, deinit; mouse orbit/pan/zoom; delegates to `SceneRenderer` |
+| Views | `Viewport3DControl.cs` | `OpenGlControlBase` subclass: init, render, deinit; right drag orbits, wheel drag pans, wheel zooms, double click fits, left press picks a model and drags it in X and Y (ray-plane at the hit height); delegates to `SceneRenderer` |
+| Controls | `NumericBox.cs` | `TextBox` subclass with a float `Value`: typed text is kept as typed, valid text is committed per keystroke, invalid text sets a data validation error, the text is rewritten only on an outside `Value` change |
 | ViewModels | `ViewModelBase.cs` | `ObservableObject` base with validation helpers |
 | ViewModels | `MainWindowViewModel.cs` | Commands for the menu, owns child view models, status text |
-| ViewModels | `ToolSettingsViewModel.cs`, `StockSettingsViewModel.cs`, `AxisSettingsViewModel.cs`, `CuttingParametersViewModel.cs`, `StrategySelectionViewModel.cs`, `SimulationViewModel.cs`, `AnalysisViewModel.cs`, `ViewportViewModel.cs` | One per view; bind to the project through `ProjectService`; validation messages from `ProjectValidator` |
+| ViewModels | `ToolSettingsViewModel.cs`, `StockSettingsViewModel.cs`, `AxisSettingsViewModel.cs`, `CuttingParametersViewModel.cs`, `StrategySelectionViewModel.cs`, `ModelsViewModel.cs`, `PresetsViewModel.cs`, `SimulationViewModel.cs`, `AnalysisViewModel.cs`, `ViewportViewModel.cs` | One per view; bind to the project through `ProjectService`; validation messages from `ProjectValidator`; `ViewportViewModel` also owns the pick and the drag (`BeginDrag`, `DragTo`, `ModelDragged`), hidden models are not hit |
 | Rendering | `GlConstants.cs` | GL enum values not exposed by Avalonia's `GlInterface` |
 | Rendering | `GlFunctions.cs` | Delegates obtained via `GlInterface.GetProcAddress` for VAO, buffer and uniform functions missing from `GlInterface` |
 | Rendering | `GlShaders.cs` | GLSL sources; version preamble selected from `GlVersion` (`#version 300 es` + precision, or `#version 330 core`) |
@@ -292,9 +296,10 @@ Mirrors the source tree: `Core/<Folder>/<Type>Tests.cs`,
 STL file
   -> StlReader ................ Mesh (model coordinates)
   -> AxisSetup.ToMatrix() ..... Mesh (machine coordinates, Z up, origin per OriginMode)
-  -> StockModel ............... stock HeightMap (box or cylinder, top = stock top)
+  -> StockModel ............... stock HeightMap (box or cylinder, top = stock top), aligned to the
+                                anchor (models before their offsets), so offsets move models inside it
   -> MeshRasterizer ........... model HeightMap (max Z per cell, floor where no model)
-  -> ReachMap ................. tip HeightMap: reach floor per position by footprint majority
+  -> ReachMap ................. tip HeightMap: reach floor per position by footprint vote (ReachPercent)
   -> HeadClearance ............ head-limit HeightMap, effective tip = max(tip, limit)
   -> Slicer ................... SlicePlan (levels with masks, coverage)
   -> SeparationRegion ......... plan restricted to the cut scope, Standing map; strategies see
