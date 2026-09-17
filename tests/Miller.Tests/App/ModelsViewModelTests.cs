@@ -173,4 +173,50 @@ public sealed class ModelsViewModelTests : IDisposable
         Assert.Equal(StockAlignment.Max, vm.Models.StockAlignZ);
         Assert.True(vm.Models.IsAutoFit);
     }
+
+    // A value edit must not republish the name list: the list box would reset its selection, disable
+    // the placement fields and take the keyboard focus away in the middle of typing.
+    [Fact]
+    public async Task ValueEdits_KeepTheNameListAndTheSelection_WhileStructuralChangesRepublishIt()
+    {
+        var vm = await WithTwoCubesAsync();
+        var names = vm.Models.Names;
+        var namesRaised = 0;
+        var selectionRaised = 0;
+        var viewportSelections = 0;
+        vm.Models.PropertyChanged += (_, e) =>
+        {
+            namesRaised += e.PropertyName == nameof(ModelsViewModel.Names) ? 1 : 0;
+            selectionRaised += e.PropertyName == nameof(ModelsViewModel.SelectedIndex) ? 1 : 0;
+        };
+        vm.Viewport.SelectionChanged += (_, _) => viewportSelections++;
+
+        vm.Models.OffsetX = -12.5f;
+        vm.Models.OffsetZ = -3f;
+        vm.Models.RotationZ = -90f;
+        vm.Axes.RotationZ = 15f;
+        vm.Tool.CutterDiameter = 4f;
+        Assert.Equal(0, namesRaised);
+        Assert.Equal(0, selectionRaised);
+        Assert.Equal(0, viewportSelections);
+        Assert.Same(names, vm.Models.Names);
+        Assert.Equal(1, vm.Models.SelectedIndex);
+        Assert.Equal(new Vector3(-12.5f, 0, -3f), vm.Project.Current.Models[1].Offset);
+
+        vm.Models.SelectedIndex = 0;
+        vm.Models.RemoveCommand.Execute(null);
+        Assert.Equal(1, namesRaised);
+        Assert.Equal(new[] { "second.stl" }, vm.Models.Names);
+
+        var path = Path.Combine(_root, "third.stl");
+        File.WriteAllText(path, TestMeshes.AsciiCubeText());
+        _dialogs.OpenResults.Enqueue(path);
+        await vm.OpenStlCommand.ExecuteAsync(null);
+        Assert.Equal(2, namesRaised);
+        Assert.Equal(new[] { "second.stl", "third.stl" }, vm.Models.Names);
+
+        vm.NewProjectCommand.Execute(null);
+        Assert.Equal(3, namesRaised);
+        Assert.Empty(vm.Models.Names);
+    }
 }

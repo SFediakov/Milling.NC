@@ -41,6 +41,11 @@ public sealed partial class ModelsViewModel : SettingsViewModelBase
 
     private readonly MeshImportService _meshImport;
 
+    // Published to the list box only when a name is added, removed or renamed: a new list instance
+    // on every project edit made the list box reset its selection, which disabled the placement
+    // fields and took the keyboard focus away in the middle of typing a value.
+    private IReadOnlyList<string> _names = Array.Empty<string>();
+
     [ObservableProperty]
     private int _selectedIndex = -1;
 
@@ -50,6 +55,7 @@ public sealed partial class ModelsViewModel : SettingsViewModelBase
         _meshImport = meshImport ?? throw new ArgumentNullException(nameof(meshImport));
         AddCommand = addCommand ?? throw new ArgumentNullException(nameof(addCommand));
         _meshImport.MeshChanged += (_, _) => OnReload();
+        RefreshNames();
     }
 
     public event EventHandler? SelectionChanged;
@@ -66,7 +72,7 @@ public sealed partial class ModelsViewModel : SettingsViewModelBase
 
     public StockAlignment StockAlignZ { get => Current.Stock.AlignZ; set => Edit(p => p.Stock.AlignZ = value); }
 
-    public IReadOnlyList<string> Names => Current.Models.Select(m => m.DisplayName).ToList();
+    public IReadOnlyList<string> Names => _names;
 
     public int Count => Current.Models.Count;
 
@@ -112,7 +118,7 @@ public sealed partial class ModelsViewModel : SettingsViewModelBase
     {
         var index = SelectedIndex;
         SelectedIndex = -1;
-        Edit(p => p.Models.RemoveAt(index), nameof(Names));
+        Edit(p => p.Models.RemoveAt(index), null);
         _meshImport.RemoveAt(index);
     }
 
@@ -152,7 +158,7 @@ public sealed partial class ModelsViewModel : SettingsViewModelBase
 
     protected override void OnReload()
     {
-        OnPropertyChanged(nameof(Names));
+        RefreshNames();
         OnPropertyChanged(nameof(Count));
         foreach (var name in StockProperties)
         {
@@ -182,6 +188,18 @@ public sealed partial class ModelsViewModel : SettingsViewModelBase
 
         var index = SelectedIndex;
         Edit(p => p.Models[index].Offset = change(p.Models[index].Offset), property);
+    }
+
+    private void RefreshNames()
+    {
+        var names = Current.Models.Select(m => m.DisplayName).ToList();
+        if (names.SequenceEqual(_names, StringComparer.Ordinal))
+        {
+            return;
+        }
+
+        _names = names;
+        OnPropertyChanged(nameof(Names));
     }
 
     private void RaisePlacement()
