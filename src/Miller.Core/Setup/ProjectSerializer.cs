@@ -44,6 +44,13 @@ public static class ProjectSerializer
         project.RoughingStrategyId = null;
         project.FinishingStrategyId = null;
         project.Parameters.Direction = null;
+
+        // "3 axis precise" became "3 axis freedom" (one stepdown per pass) under a new id.
+        if (project.RoutingStrategyId == Toolpaths.Strategies.ThreeAxisFreedomStrategy.LegacyStrategyId)
+        {
+            project.RoutingStrategyId = Toolpaths.Strategies.ThreeAxisFreedomStrategy.StrategyId;
+        }
+
         project.SchemaVersion = MillingProject.CurrentSchemaVersion;
         return project;
     }

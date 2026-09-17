@@ -1,7 +1,7 @@
 namespace Miller.Core.Setup;
 
 // Units: mm, mm/min, rpm. Stepover spaces the nodes of "Z layer by layer", FinishingStepover those
-// of "3 axis precise", Stepdown is the layer height of "Z layer by layer".
+// of "3 axis freedom", Stepdown is the layer height of both.
 public sealed class CuttingParameters
 {
     public const float DefaultFeedRate = 800f;

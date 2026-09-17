@@ -2,19 +2,27 @@ using Miller.Core.Slicing;
 
 namespace Miller.Core.HeightMaps;
 
-// Where the tool axis may go, decided by majority over its footprint (guide 6.3). At a level z a
+// Where the tool axis may go, decided by a vote over its footprint (guide 6.3). At a level z a
 // footprint cell that holds stock is "unintended" when the model stands above the tool bottom there
 // (model - dz > z) and "intended" otherwise; a position is reachable at z when the intended cells
-// are at least as many as the unintended ones. Lowering z only turns intended cells into
-// unintended ones, so reachability is monotone and one height per position, the reach floor,
-// describes it: the (n / 2 + 1)-th largest of the n values model - dz over the footprint cells that
-// hold stock, never below the stock floor (a ball bottom stands above the tip at the footprint
+// are at least `percent` of the footprint cells that hold stock (50 = majority, ties to the stock;
+// 100 = every cell, the drop cutter). Lowering z only turns intended cells into unintended ones, so
+// reachability is monotone and one height per position, the reach floor, describes it: the value
+// at ascending rank ceil(n * percent / 100) - 1 of the n values model - dz over the footprint cells
+// that hold stock, never below the stock floor (a ball bottom stands above the tip at the footprint
 // edge, so the values there can lie under the floor). Positions whose footprint touches no stock
 // are NaN. Against the drop cutter (HeightMapDilation.ComputeTipMap, the largest of the n values)
 // this cuts the minority cells of a mixed footprint on purpose.
 public static class ReachMap
 {
-    public static HeightMap Compute(HeightMap model, HeightMap stock, ToolProfile profile, float floor)
+    public const float DefaultPercent = 50f;
+    public const float MinPercent = 0f;
+    public const float MaxPercent = 100f;
+
+    // Guards ceil(n * p / 100) against 2.0000000004 for exact products such as 4 * 50 / 100.
+    private const double RankSlack = 1e-9;
+
+    public static HeightMap Compute(HeightMap model, HeightMap stock, ToolProfile profile, float floor, float percent = DefaultPercent)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(stock);
@@ -22,6 +30,11 @@ public static class ReachMap
         if (!model.SameGridAs(stock))
         {
             throw new ArgumentException("Model map and stock map must share the same grid.", nameof(stock));
+        }
+
+        if (!(percent > MinPercent && percent <= MaxPercent))
+        {
+            throw new ArgumentOutOfRangeException(nameof(percent), percent, $"Reach percent must lie in ({MinPercent}, {MaxPercent}].");
         }
 
         var offsets = profile.Offsets;
@@ -83,11 +96,25 @@ public static class ReachMap
                     continue;
                 }
 
-                reach.Z[center] = MathF.Max(Select(tops.AsSpan(0, n), n - (n / 2 + 1)), floor);
+                reach.Z[center] = MathF.Max(Select(tops.AsSpan(0, n), Rank(n, percent)), floor);
             }
         }
 
         return reach;
+    }
+
+    // Ascending rank of the reach floor among n values: the lowest value that still leaves at least
+    // ceil(n * percent / 100) cells intended (values at or below it). 50 gives the median rule
+    // n - (n / 2 + 1), 100 gives the largest value.
+    public static int Rank(int n, float percent)
+    {
+        if (n < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(n), n, "At least one value is needed.");
+        }
+
+        var needed = (int)Math.Ceiling(n * (double)percent / 100.0 - RankSlack);
+        return Math.Clamp(needed - 1, 0, n - 1);
     }
 
     // The value that sorting ascending would put at `rank` (quickselect; the span is reordered).

@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:Miller.App.ViewModels"
+             xmlns:c="using:Miller.App.Controls"
              x:Class="Miller.App.Views.ToolSettingsView"
              x:DataType="vm:ToolSettingsViewModel">
   <ScrollViewer>
@@ -11,15 +12,15 @@
       <TextBox Name="NameBox" Text="{Binding Name}" />
 
       <TextBlock Classes="label" Text="Cutter diameter (mm)" />
-      <TextBox Name="CutterDiameterBox" Classes="numeric" Text="{Binding CutterDiameter}" HorizontalAlignment="Left" />
+      <c:NumericBox Name="CutterDiameterBox" Classes="numeric" Value="{Binding CutterDiameter}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding CutterDiameterError}" IsVisible="{Binding CutterDiameterError, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
       <TextBlock Classes="label" Text="Cutter length below the head (mm)" />
-      <TextBox Name="CutterLengthBox" Classes="numeric" Text="{Binding CutterLength}" HorizontalAlignment="Left" />
+      <c:NumericBox Name="CutterLengthBox" Classes="numeric" Value="{Binding CutterLength}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding CutterLengthError}" IsVisible="{Binding CutterLengthError, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
       <TextBlock Classes="label" Text="Head diameter (mm)" />
-      <TextBox Name="HeadDiameterBox" Classes="numeric" Text="{Binding HeadDiameter}" HorizontalAlignment="Left" />
+      <c:NumericBox Name="HeadDiameterBox" Classes="numeric" Value="{Binding HeadDiameter}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding HeadDiameterError}" IsVisible="{Binding HeadDiameterError, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
       <TextBlock Classes="label" Text="Tip" />

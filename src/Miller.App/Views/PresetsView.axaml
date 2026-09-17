@@ -1,0 +1,19 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Miller.App.ViewModels"
+             x:Class="Miller.App.Views.PresetsView"
+             x:DataType="vm:PresetsViewModel">
+  <ScrollViewer>
+    <StackPanel Margin="8" Spacing="4">
+      <TextBlock Classes="header" Text="Presets" />
+      <ListBox Name="PresetList" ItemsSource="{Binding Names}" SelectedIndex="{Binding SelectedIndex}" Height="200" />
+      <TextBlock Classes="label" Text="Name" />
+      <TextBox Name="PresetNameBox" Text="{Binding Name}" />
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <Button Name="SavePresetButton" Content="Save" Command="{Binding SaveCommand}" />
+        <Button Name="LoadPresetButton" Content="Load" Command="{Binding LoadCommand}" />
+        <Button Name="DeletePresetButton" Content="Delete" Command="{Binding DeleteCommand}" />
+      </StackPanel>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

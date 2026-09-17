@@ -63,6 +63,7 @@ public static class TestServices
             new SimulationService(),
             new AnalysisService(),
             new SettingsService(Path.Combine(tempRoot, "settings")),
+            new PresetService(Path.Combine(tempRoot, "presets")),
             dialogs ?? new FakeFileDialogService(),
             errors ?? new FakeErrorDialogService(),
             confirm ?? new FakeConfirmDialogService(),

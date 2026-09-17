@@ -51,5 +51,9 @@ public sealed class MillingProject
     // that stays; smaller islands are milled out. 0 keeps every island.
     public float MinIslandVolume { get; set; }
 
+    // Reach rule (ReachMap): the share of the footprint cells that must be free of model for the
+    // tool to enter a position, in percent. 50 is the majority rule, 100 never cuts the model.
+    public float ReachPercent { get; set; } = HeightMaps.ReachMap.DefaultPercent;
+
     public static MillingProject Default() => new();
 }

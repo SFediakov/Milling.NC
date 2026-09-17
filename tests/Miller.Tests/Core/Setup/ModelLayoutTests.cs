@@ -48,9 +48,9 @@ public sealed class ModelLayoutTests
         var union = ModelLayout.MachineBounds(project, new[] { a.Bounds, b.Bounds });
         Assert.Equal(30f, union.Size.X, 3);
         Assert.Equal(10f, union.Size.Y, 3);
-        // Auto-fit stock: the union sits in the middle of the 100 x 100 stock, so machine zero is at
-        // the stock corner and the first box starts 35 mm in.
-        Assert.Equal(35f, meshes[0].Bounds.Min.X, 3);
+        // Auto-fit stock anchored to the boxes at zero offset (both at 0..10): the stock is centred on
+        // that anchor, so the first box starts 45 mm in and the second, offset by 20, at 65.
+        Assert.Equal(45f, meshes[0].Bounds.Min.X, 3);
         Assert.Equal(45f, meshes[0].Bounds.Min.Y, 3);
         Assert.Equal(2 * a.TriangleCount, ModelLayout.MergeMachineMeshes(project, new[] { a, b }).TriangleCount);
     }
@@ -76,11 +76,11 @@ public sealed class ModelLayoutTests
         project.Stock.Placement = StockPlacement.Explicit;
         project.Stock.ExplicitOrigin = Vector3.Zero;
         var bounds = new[] { a.Bounds, b.Bounds };
-        // Stock corner at the union minimum, size 100 x 100 x 30. Moving a model moves the union and
-        // with it the stock, so the result is the fixed point: model 0 ends at x 65..75 with the union
-        // starting at model 1 (x 20), corner 20 and stock middle 70.
+        // Stock corner at the anchor minimum (both boxes at 0..10 before their offsets), size
+        // 100 x 100 x 30, so the stock middle is 50 whatever the offsets: model 0 (centre 5) needs 45,
+        // model 1 (centre 35 on Y after its offset 30) needs 30 + 15.
         var centered = ModelLayout.CenteredOffset(project, bounds, 0, 0);
-        Assert.Equal(65f, centered.X, 3);
+        Assert.Equal(45f, centered.X, 3);
         Assert.Equal(0f, centered.Y, 3);
         Assert.Equal(0f, centered.Z, 3);
         var centeredY = ModelLayout.CenteredOffset(project, bounds, 1, 1);

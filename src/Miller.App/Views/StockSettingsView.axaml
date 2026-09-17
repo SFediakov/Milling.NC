@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:Miller.App.ViewModels"
+             xmlns:c="using:Miller.App.Controls"
              x:Class="Miller.App.Views.StockSettingsView"
              x:DataType="vm:StockSettingsViewModel">
   <ScrollViewer>
@@ -12,22 +13,22 @@
 
       <StackPanel Name="BoxFields" IsVisible="{Binding IsBox}" Spacing="4">
         <TextBlock Classes="label" Text="Size X (mm)" />
-        <TextBox Name="SizeXBox" Classes="numeric" Text="{Binding SizeX}" HorizontalAlignment="Left" />
+        <c:NumericBox Name="SizeXBox" Classes="numeric" Value="{Binding SizeX}" HorizontalAlignment="Left" />
         <TextBlock Classes="validation" Text="{Binding SizeXError}" IsVisible="{Binding SizeXError, Converter={x:Static ObjectConverters.IsNotNull}}" />
         <TextBlock Classes="label" Text="Size Y (mm)" />
-        <TextBox Name="SizeYBox" Classes="numeric" Text="{Binding SizeY}" HorizontalAlignment="Left" />
+        <c:NumericBox Name="SizeYBox" Classes="numeric" Value="{Binding SizeY}" HorizontalAlignment="Left" />
         <TextBlock Classes="validation" Text="{Binding SizeYError}" IsVisible="{Binding SizeYError, Converter={x:Static ObjectConverters.IsNotNull}}" />
         <TextBlock Classes="label" Text="Size Z (mm)" />
-        <TextBox Name="SizeZBox" Classes="numeric" Text="{Binding SizeZ}" HorizontalAlignment="Left" />
+        <c:NumericBox Name="SizeZBox" Classes="numeric" Value="{Binding SizeZ}" HorizontalAlignment="Left" />
         <TextBlock Classes="validation" Text="{Binding SizeZError}" IsVisible="{Binding SizeZError, Converter={x:Static ObjectConverters.IsNotNull}}" />
       </StackPanel>
 
       <StackPanel Name="CylinderFields" IsVisible="{Binding IsCylinder}" Spacing="4">
         <TextBlock Classes="label" Text="Diameter (mm)" />
-        <TextBox Name="DiameterBox" Classes="numeric" Text="{Binding Diameter}" HorizontalAlignment="Left" />
+        <c:NumericBox Name="DiameterBox" Classes="numeric" Value="{Binding Diameter}" HorizontalAlignment="Left" />
         <TextBlock Classes="validation" Text="{Binding DiameterError}" IsVisible="{Binding DiameterError, Converter={x:Static ObjectConverters.IsNotNull}}" />
         <TextBlock Classes="label" Text="Height (mm)" />
-        <TextBox Name="HeightBox" Classes="numeric" Text="{Binding Height}" HorizontalAlignment="Left" />
+        <c:NumericBox Name="HeightBox" Classes="numeric" Value="{Binding Height}" HorizontalAlignment="Left" />
         <TextBlock Classes="validation" Text="{Binding HeightError}" IsVisible="{Binding HeightError, Converter={x:Static ObjectConverters.IsNotNull}}" />
       </StackPanel>
 
@@ -36,15 +37,15 @@
       <TextBlock Classes="warning" Text="{Binding PlacementWarning}" IsVisible="{Binding PlacementWarning, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
       <TextBlock Classes="label" Text="Margin around the model (mm)" />
-      <TextBox Name="MarginBox" Classes="numeric" Text="{Binding Margin}" HorizontalAlignment="Left" />
+      <c:NumericBox Name="MarginBox" Classes="numeric" Value="{Binding Margin}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding MarginError}" IsVisible="{Binding MarginError, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
       <StackPanel Name="ExplicitFields" IsVisible="{Binding IsExplicit}" Spacing="4">
         <TextBlock Classes="label" Text="Stock corner offset from the model minimum (mm)" />
         <StackPanel Orientation="Horizontal" Spacing="4">
-          <TextBox Name="OriginXBox" Classes="numeric" Text="{Binding OriginX}" />
-          <TextBox Name="OriginYBox" Classes="numeric" Text="{Binding OriginY}" />
-          <TextBox Name="OriginZBox" Classes="numeric" Text="{Binding OriginZ}" />
+          <c:NumericBox Name="OriginXBox" Classes="numeric" Value="{Binding OriginX}" />
+          <c:NumericBox Name="OriginYBox" Classes="numeric" Value="{Binding OriginY}" />
+          <c:NumericBox Name="OriginZBox" Classes="numeric" Value="{Binding OriginZ}" />
         </StackPanel>
       </StackPanel>
 
