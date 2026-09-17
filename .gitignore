@@ -1,0 +1,19 @@
+# Build output (CLAUDE.md: built components are excluded from commits)
+bin/
+obj/
+build/
+out/
+dist/
+
+# Claude Code session-local state: machine-owned phase files and logs.
+# TASK_MODE is kept so phase enforcement is on after a fresh clone.
+.claude/state/*
+!.claude/state/TASK_MODE
+.claude/settings.local.json
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+
+# Vendored NuGet packages: populated once per clone by scripts/vendor-packages.sh, never committed.
+third_party/nuget/*.nupkg

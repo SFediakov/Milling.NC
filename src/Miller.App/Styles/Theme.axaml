@@ -1,0 +1,42 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!-- Every color here comes from Colors.axaml. -->
+  <Style Selector="Window">
+    <Setter Property="Background" Value="{DynamicResource WindowBackgroundBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+  </Style>
+  <Style Selector="TabItem">
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="MinHeight" Value="32" />
+    <Setter Property="Padding" Value="10,4" />
+  </Style>
+  <Style Selector="TextBlock.header">
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+    <Setter Property="Margin" Value="0,8,0,4" />
+  </Style>
+  <Style Selector="TextBlock.label">
+    <Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="Margin" Value="0,0,8,0" />
+  </Style>
+  <Style Selector="TextBox.numeric">
+    <Setter Property="Width" Value="96" />
+    <Setter Property="HorizontalContentAlignment" Value="Right" />
+  </Style>
+  <Style Selector="TextBlock.validation">
+    <Setter Property="Foreground" Value="{DynamicResource ErrorBrush}" />
+    <Setter Property="FontSize" Value="11" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+  <Style Selector="TextBlock.warning">
+    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+    <Setter Property="FontSize" Value="11" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+  <Style Selector="Border.panel">
+    <Setter Property="Background" Value="{DynamicResource PanelBackgroundBrush}" />
+    <Setter Property="Padding" Value="8" />
+    <Setter Property="CornerRadius" Value="4" />
+  </Style>
+</Styles>

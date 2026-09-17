@@ -1,0 +1,54 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Miller.App.ViewModels"
+             x:Class="Miller.App.Views.ToolSettingsView"
+             x:DataType="vm:ToolSettingsViewModel">
+  <ScrollViewer>
+    <StackPanel Margin="8" Spacing="4">
+      <TextBlock Classes="header" Text="Tool" />
+
+      <TextBlock Classes="label" Text="Name" />
+      <TextBox Name="NameBox" Text="{Binding Name}" />
+
+      <TextBlock Classes="label" Text="Cutter diameter (mm)" />
+      <TextBox Name="CutterDiameterBox" Classes="numeric" Text="{Binding CutterDiameter}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding CutterDiameterError}" IsVisible="{Binding CutterDiameterError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+      <TextBlock Classes="label" Text="Cutter length below the head (mm)" />
+      <TextBox Name="CutterLengthBox" Classes="numeric" Text="{Binding CutterLength}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding CutterLengthError}" IsVisible="{Binding CutterLengthError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+      <TextBlock Classes="label" Text="Head diameter (mm)" />
+      <TextBox Name="HeadDiameterBox" Classes="numeric" Text="{Binding HeadDiameter}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding HeadDiameterError}" IsVisible="{Binding HeadDiameterError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+      <TextBlock Classes="label" Text="Tip" />
+      <ComboBox Name="TipTypeBox" ItemsSource="{Binding TipTypes}" SelectedItem="{Binding TipType}" Width="120" HorizontalAlignment="Left" />
+
+      <TextBlock Classes="header" Text="Schematic" />
+      <Border Classes="panel" HorizontalAlignment="Left">
+        <Canvas Name="Schematic" Width="{x:Static vm:ToolSettingsViewModel.SchematicWidth}" Height="{x:Static vm:ToolSettingsViewModel.SchematicHeight}">
+          <Rectangle Name="HeadShape"
+                     Canvas.Left="{Binding HeadLeft}"
+                     Canvas.Top="0"
+                     Width="{Binding HeadWidth}"
+                     Height="{x:Static vm:ToolSettingsViewModel.SchematicHeadHeight}"
+                     Fill="{DynamicResource ToolHeadBrush}" />
+          <Rectangle Name="CutterShape"
+                     Canvas.Left="{Binding CutterLeft}"
+                     Canvas.Top="{x:Static vm:ToolSettingsViewModel.SchematicHeadHeight}"
+                     Width="{Binding CutterWidth}"
+                     Height="{Binding CutterHeight}"
+                     Fill="{DynamicResource ToolCutterBrush}" />
+          <Ellipse Name="BallShape"
+                   Canvas.Left="{Binding CutterLeft}"
+                   Canvas.Top="{Binding BallTop}"
+                   Width="{Binding CutterWidth}"
+                   Height="{Binding CutterWidth}"
+                   Fill="{DynamicResource ToolCutterBrush}"
+                   IsVisible="{Binding IsBall}" />
+        </Canvas>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

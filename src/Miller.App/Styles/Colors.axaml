@@ -1,0 +1,52 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!-- The only file in the repository that may contain color literals (tests/Miller.Tests/App/ColorRuleTests.cs). -->
+  <Color x:Key="WindowBackgroundColor">#FF1E1F24</Color>
+  <Color x:Key="PanelBackgroundColor">#FF2A2C33</Color>
+  <Color x:Key="TextColor">#FFE6E6E6</Color>
+  <Color x:Key="AccentColor">#FF3D8BFD</Color>
+  <Color x:Key="ErrorColor">#FFE5484D</Color>
+  <Color x:Key="WarningColor">#FFF5A524</Color>
+  <Color x:Key="ViewportBackgroundColor">#FF14161B</Color>
+  <Color x:Key="ModelColor">#FF8FB3D9</Color>
+  <Color x:Key="SelectionColor">#FFFFD166</Color>
+  <Color x:Key="StockColor">#FFC9B58F</Color>
+  <Color x:Key="ToolpathRapidColor">#FFE5484D</Color>
+  <Color x:Key="ToolpathFeedColor">#FF3DDC84</Color>
+  <Color x:Key="ToolpathPlungeColor">#FFF5A524</Color>
+  <Color x:Key="ToolCutterColor">#FFD0D0D0</Color>
+  <Color x:Key="ToolHeadColor">#FF707070</Color>
+  <Color x:Key="CategoryOkColor">#FF3DDC84</Color>
+  <Color x:Key="CategoryRestMaterialColor">#FFF5A524</Color>
+  <Color x:Key="CategoryGougeColor">#FFE5484D</Color>
+  <Color x:Key="CategoryOverhangColor">#FFA855F7</Color>
+  <Color x:Key="CategoryHeadLimitedColor">#FF06B6D4</Color>
+  <Color x:Key="CategoryCornerLimitedColor">#FFEAB308</Color>
+  <Color x:Key="AxisXColor">#FFE5484D</Color>
+  <Color x:Key="AxisYColor">#FF3DDC84</Color>
+  <Color x:Key="AxisZColor">#FF3D8BFD</Color>
+
+  <SolidColorBrush x:Key="WindowBackgroundBrush" Color="{StaticResource WindowBackgroundColor}" />
+  <SolidColorBrush x:Key="PanelBackgroundBrush" Color="{StaticResource PanelBackgroundColor}" />
+  <SolidColorBrush x:Key="TextBrush" Color="{StaticResource TextColor}" />
+  <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />
+  <SolidColorBrush x:Key="ErrorBrush" Color="{StaticResource ErrorColor}" />
+  <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}" />
+  <SolidColorBrush x:Key="ViewportBackgroundBrush" Color="{StaticResource ViewportBackgroundColor}" />
+  <SolidColorBrush x:Key="ModelBrush" Color="{StaticResource ModelColor}" />
+  <SolidColorBrush x:Key="StockBrush" Color="{StaticResource StockColor}" />
+  <SolidColorBrush x:Key="ToolpathRapidBrush" Color="{StaticResource ToolpathRapidColor}" />
+  <SolidColorBrush x:Key="ToolpathFeedBrush" Color="{StaticResource ToolpathFeedColor}" />
+  <SolidColorBrush x:Key="ToolpathPlungeBrush" Color="{StaticResource ToolpathPlungeColor}" />
+  <SolidColorBrush x:Key="ToolCutterBrush" Color="{StaticResource ToolCutterColor}" />
+  <SolidColorBrush x:Key="ToolHeadBrush" Color="{StaticResource ToolHeadColor}" />
+  <SolidColorBrush x:Key="CategoryOkBrush" Color="{StaticResource CategoryOkColor}" />
+  <SolidColorBrush x:Key="CategoryRestMaterialBrush" Color="{StaticResource CategoryRestMaterialColor}" />
+  <SolidColorBrush x:Key="CategoryGougeBrush" Color="{StaticResource CategoryGougeColor}" />
+  <SolidColorBrush x:Key="CategoryOverhangBrush" Color="{StaticResource CategoryOverhangColor}" />
+  <SolidColorBrush x:Key="CategoryHeadLimitedBrush" Color="{StaticResource CategoryHeadLimitedColor}" />
+  <SolidColorBrush x:Key="CategoryCornerLimitedBrush" Color="{StaticResource CategoryCornerLimitedColor}" />
+  <SolidColorBrush x:Key="AxisXBrush" Color="{StaticResource AxisXColor}" />
+  <SolidColorBrush x:Key="AxisYBrush" Color="{StaticResource AxisYColor}" />
+  <SolidColorBrush x:Key="AxisZBrush" Color="{StaticResource AxisZColor}" />
+</ResourceDictionary>

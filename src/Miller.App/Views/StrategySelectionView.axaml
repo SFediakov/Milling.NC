@@ -1,0 +1,48 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Miller.App.ViewModels"
+             xmlns:tp="using:Miller.Core.Toolpaths"
+             xmlns:gc="using:Miller.Core.GCode"
+             x:Class="Miller.App.Views.StrategySelectionView"
+             x:DataType="vm:StrategySelectionViewModel">
+  <ScrollViewer>
+    <StackPanel Margin="8" Spacing="4">
+      <TextBlock Classes="header" Text="Strategy" />
+
+      <TextBlock Classes="label" Text="Routing strategy" />
+      <ComboBox Name="StrategyBox" ItemsSource="{x:Static vm:StrategySelectionViewModel.Strategies}" SelectedItem="{Binding Strategy}" Width="260" HorizontalAlignment="Left">
+        <ComboBox.ItemTemplate>
+          <DataTemplate x:DataType="tp:IToolpathStrategy">
+            <TextBlock Text="{Binding DisplayName}" />
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+      <TextBlock Text="Z layer by layer cuts each cave level by level (Stepdown, Stepover) and rises only when the cave is done. 3 axis precise follows the surface in one route (Stepover of 3 axis precise). Both take the fastest route the solver finds." TextWrapping="Wrap" />
+
+      <TextBlock Classes="label" Text="Cut scope" />
+      <ComboBox Name="CutScopeBox" ItemsSource="{x:Static vm:StrategySelectionViewModel.CutScopes}" SelectedItem="{Binding CutScope}" Width="260" HorizontalAlignment="Left" />
+      <TextBlock Text="Everything clears all reachable stock. Separation cuts the model surface and a trench that frees it, terraced where the head needs room." TextWrapping="Wrap" />
+      <TextBlock Classes="label" Text="Material islands: keep islands of at least (mm3)" />
+      <TextBox Name="MinIslandVolumeBox" Classes="numeric" Text="{Binding MinIslandVolume}" IsEnabled="{Binding IsSeparation}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding MinIslandVolumeError}" IsVisible="{Binding MinIslandVolumeError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Text="Separation only: stock the trench encloses on all sides is an island. An island smaller than this volume is milled out; 0 keeps every island." TextWrapping="Wrap" />
+
+      <TextBlock Classes="label" Text="Post-processor" />
+      <ComboBox Name="PostProcessorBox" ItemsSource="{Binding PostProcessors}" SelectedItem="{Binding PostProcessor}" Width="260" HorizontalAlignment="Left">
+        <ComboBox.ItemTemplate>
+          <DataTemplate x:DataType="gc:IPostProcessor">
+            <TextBlock Text="{Binding DisplayName}" />
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+
+      <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+        <Button Name="GenerateButton" Content="Generate toolpath" Command="{Binding GenerateCommand}" />
+        <Button Name="CancelButton" Content="Cancel" Command="{Binding CancelCommand}" />
+      </StackPanel>
+
+      <TextBlock Classes="header" Text="Statistics" />
+      <TextBlock Name="StatisticsText" Text="{Binding StatisticsText}" TextWrapping="Wrap" />
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

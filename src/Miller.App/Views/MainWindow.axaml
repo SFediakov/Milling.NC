@@ -1,0 +1,76 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Miller.App.ViewModels"
+        xmlns:views="using:Miller.App.Views"
+        x:Class="Miller.App.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="{Binding Title}"
+        MinWidth="960"
+        MinHeight="600">
+  <!-- Menu items in a closed submenu are not effectively enabled, so MenuItem.HotKey never fires
+       from the window; the gestures are bound here and the menu shows them through InputGesture. -->
+  <Window.KeyBindings>
+    <KeyBinding Gesture="Ctrl+O" Command="{Binding OpenStlCommand}" />
+    <KeyBinding Gesture="Ctrl+S" Command="{Binding SaveProjectCommand}" />
+    <KeyBinding Gesture="Ctrl+E" Command="{Binding ExportNcCommand}" />
+    <KeyBinding Gesture="F5" Command="{Binding GenerateCommand}" />
+    <KeyBinding Gesture="Ctrl+D0" Command="{Binding ResetCameraCommand}" />
+    <KeyBinding Gesture="Ctrl+D1" Command="{Binding ToggleModelCommand}" />
+    <KeyBinding Gesture="Ctrl+D2" Command="{Binding ToggleStockCommand}" />
+    <KeyBinding Gesture="Ctrl+D3" Command="{Binding ToggleToolpathCommand}" />
+    <KeyBinding Gesture="Ctrl+D4" Command="{Binding ToggleToolCommand}" />
+  </Window.KeyBindings>
+  <DockPanel>
+    <views:MainMenu DockPanel.Dock="Top" />
+
+    <Border DockPanel.Dock="Bottom" Name="StatusBar" Classes="panel" Padding="8,4">
+      <DockPanel>
+        <ProgressBar DockPanel.Dock="Right"
+                     Name="ProgressBar"
+                     Width="200"
+                     Minimum="0"
+                     Maximum="1"
+                     Value="{Binding Progress}"
+                     IsVisible="{Binding IsBusy}"
+                     Margin="8,0,0,0" />
+        <Button DockPanel.Dock="Right"
+                Name="CancelButton"
+                Content="Cancel"
+                Command="{Binding CancelGenerateCommand}"
+                IsVisible="{Binding IsBusy}" />
+        <TextBlock Name="StatusText" Text="{Binding StatusText}" VerticalAlignment="Center" />
+      </DockPanel>
+    </Border>
+
+    <TabControl DockPanel.Dock="Left" Name="SettingsTabs" Width="360">
+      <TabItem Header="Models" Name="ModelsTab">
+        <views:ModelsView DataContext="{Binding Models}" />
+      </TabItem>
+      <TabItem Header="Tool" Name="ToolTab">
+        <views:ToolSettingsView DataContext="{Binding Tool}" />
+      </TabItem>
+      <TabItem Header="Stock" Name="StockTab">
+        <views:StockSettingsView DataContext="{Binding Stock}" />
+      </TabItem>
+      <TabItem Header="Axes" Name="AxesTab">
+        <views:AxisSettingsView DataContext="{Binding Axes}" />
+      </TabItem>
+      <TabItem Header="Cutting" Name="CuttingTab">
+        <views:CuttingParametersView DataContext="{Binding Cutting}" />
+      </TabItem>
+      <TabItem Header="Strategy" Name="StrategyTab">
+        <views:StrategySelectionView DataContext="{Binding Strategy}" />
+      </TabItem>
+      <TabItem Header="Simulation" Name="SimulationTab">
+        <views:SimulationControlsView DataContext="{Binding SimulationPanel}" />
+      </TabItem>
+      <TabItem Header="Analysis" Name="AnalysisTab">
+        <views:AnalysisView DataContext="{Binding Analysis}" />
+      </TabItem>
+    </TabControl>
+
+    <Border Name="ViewportHost" Background="{DynamicResource ViewportBackgroundBrush}">
+      <views:Viewport3DControl Name="Viewport" ViewModel="{Binding Viewport}" />
+    </Border>
+  </DockPanel>
+</Window>

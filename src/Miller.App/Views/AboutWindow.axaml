@@ -1,0 +1,25 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Miller.App.ViewModels"
+        x:Class="Miller.App.Views.AboutWindow"
+        x:DataType="vm:AboutViewModel"
+        Title="{Binding Title}"
+        Width="480"
+        Height="360"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner">
+  <StackPanel Margin="16" Spacing="8">
+    <TextBlock Classes="header" Name="TitleText" Text="{Binding Title}" />
+    <TextBlock Name="DescriptionText" Text="{Binding Description}" TextWrapping="Wrap" />
+    <TextBlock Classes="header" Text="Packages" />
+    <ItemsControl Name="PackageList" ItemsSource="{Binding PackageList}">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="vm:AboutViewModel+PackageInfo">
+          <TextBlock Text="{Binding Line}" />
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+    <TextBlock Name="LicensesText" Text="{Binding LicensesNote}" TextWrapping="Wrap" Margin="0,8,0,0" />
+    <TextBlock Text="Shortcuts: Ctrl+O open STL, Ctrl+S save project, Ctrl+E export NC, F5 generate toolpath, Ctrl+0 reset camera, Ctrl+1 to Ctrl+4 show or hide model, stock, toolpath and tool. Mouse in the viewport: right button rotates, wheel button moves, wheel zooms, left click selects a model, double click fits the view. On Windows the app registers itself for the high performance GPU in the graphics settings when no entry for it exists; the choice applies from the next start." TextWrapping="Wrap" />
+  </StackPanel>
+</Window>
