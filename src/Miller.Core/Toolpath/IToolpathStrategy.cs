@@ -1,3 +1,5 @@
+using Miller.Core.Progress;
+
 namespace Miller.Core.Toolpaths;
 
 // The exchangeable routing algorithm. Implementations live in Toolpath/Strategies and are listed in
@@ -10,5 +12,7 @@ public interface IToolpathStrategy
 
     string DisplayName { get; }
 
-    Toolpath Generate(ToolpathContext context, IProgress<float>? progress, CancellationToken cancellation);
+    // Progress is one report per routed pass: pass k of the passes that hold nodes, with the share of
+    // all nodes routed so far.
+    Toolpath Generate(ToolpathContext context, IProgress<StepProgress>? progress, CancellationToken cancellation);
 }

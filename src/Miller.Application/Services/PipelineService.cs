@@ -1,7 +1,9 @@
+using System.Globalization;
 using Miller.Application.Progress;
 using Miller.Application.Validation;
 using Miller.Core.Geometry;
 using Miller.Core.HeightMaps;
+using Miller.Core.Progress;
 using Miller.Core.Setup;
 using Miller.Core.Simulation;
 using Miller.Core.Slicing;
@@ -37,22 +39,28 @@ public sealed record PipelineResult(
 
 // Runs the stages of docs/ARCHITECTURE.md 5.1 in order; the routed toolpath is simplified to vectors
 // within the tolerance before the statistics. Progress fractions are cumulative over the
-// stage weights below; cancellation is honoured between stages and inside the strategy.
+// stage weights below; the message names the stage and, for the stages with an inner loop, the
+// unit and number of the iteration and the percent of the stage. Cancellation is honoured between
+// stages and inside the strategy.
 public sealed class PipelineService
 {
-    private static readonly (string Stage, float Weight)[] Stages =
+    private static readonly (string Stage, float Weight, string Unit)[] Stages =
     {
-        ("validate", 0.02f),
-        ("transform", 0.03f),
-        ("stock", 0.05f),
-        ("model map", 0.15f),
-        ("reach map", 0.15f),
-        ("head clearance", 0.10f),
-        ("slice", 0.05f),
-        ("route", 0.38f),
-        ("simplify", 0.02f),
-        ("statistics", 0.05f),
+        ("validate", 0.02f, ""),
+        ("transform", 0.03f, ""),
+        ("stock", 0.05f, ""),
+        ("model map", 0.15f, ""),
+        ("reach map", 0.15f, "round"),
+        ("head clearance", 0.10f, "iteration"),
+        ("slice", 0.05f, ""),
+        ("route", 0.38f, "pass"),
+        ("simplify", 0.02f, ""),
+        ("statistics", 0.05f, ""),
     };
+
+    // A report that repeats the last message is forwarded only once the bar has moved by this much
+    // (one pixel of a 200 px bar), so a row-by-row producer does not flood the UI thread.
+    public const float MinVisibleDelta = 0.005f;
 
     // Head limit iterations rarely need more than two rounds; the cap keeps a pathological grid finite.
     public const int MaxHeadIterations = 8;
@@ -101,7 +109,7 @@ public sealed class PipelineService
 
         reporter.Begin(4);
         var profile = ToolProfile.Create(project.Tool, p.CellSize);
-        var tip = ReachMap.Compute(model, stock.Map, profile, floor, project.ReachPercent);
+        var tip = ReachMap.Compute(model, stock.Map, profile, floor, project.ReachPercent, p.Tolerance, reporter.StageProgress(4));
         cancellation.ThrowIfCancellationRequested();
 
         reporter.Begin(5);
@@ -122,6 +130,7 @@ public sealed class PipelineService
             var settled = SameWithin(next, effective, p.Tolerance);
             effective = next;
             cancellation.ThrowIfCancellationRequested();
+            reporter.Report(5, new StepProgress(iteration, MaxHeadIterations, (float)iteration / MaxHeadIterations));
             if (settled || iteration >= MaxHeadIterations)
             {
                 break;
@@ -178,10 +187,15 @@ public sealed class PipelineService
         return true;
     }
 
+    // Turns the stage table and the producers' StepProgress into ProgressReports: the fraction is the
+    // stage start plus its weight times the stage fraction, the message the stage name followed by
+    // "unit step of steps, percent%" when the stage has an inner loop.
     private sealed class StageReporter
     {
         private readonly IProgress<ProgressReport>? _progress;
         private readonly float[] _starts;
+        private string _lastMessage = string.Empty;
+        private float _lastFraction = -1f;
 
         public StageReporter(IProgress<ProgressReport>? progress)
         {
@@ -195,25 +209,41 @@ public sealed class PipelineService
             }
         }
 
-        public void Begin(int stage) => Report(stage, 0f);
+        public void Begin(int stage) => Report(stage, new StepProgress(0, 0, 0f));
 
-        public void Done() => _progress?.Report(new ProgressReport("done", 1f, "Toolpath ready"));
+        public void Done() => Forward(new ProgressReport("done", 1f, "Toolpath ready"));
 
-        public IProgress<float> StageProgress(int stage) => new Forwarder(f => Report(stage, f));
+        public IProgress<StepProgress> StageProgress(int stage) => new Forwarder(step => Report(stage, step));
 
-        private void Report(int stage, float fractionOfStage)
+        public void Report(int stage, StepProgress step)
         {
-            var (name, weight) = Stages[stage];
-            _progress?.Report(new ProgressReport(name, _starts[stage] + weight * Math.Clamp(fractionOfStage, 0f, 1f), name));
+            var (name, weight, unit) = Stages[stage];
+            var fraction = Math.Clamp(step.Fraction, 0f, 1f);
+            var message = step.Steps == 0
+                ? name
+                : string.Create(CultureInfo.InvariantCulture, $"{name}: {unit} {step.Step} of {step.Steps}, {(int)MathF.Round(fraction * 100f, MidpointRounding.AwayFromZero)}%");
+            Forward(new ProgressReport(name, _starts[stage] + weight * fraction, message));
         }
 
-        private sealed class Forwarder : IProgress<float>
+        private void Forward(ProgressReport report)
         {
-            private readonly Action<float> _report;
+            if (report.Message == _lastMessage && report.Fraction - _lastFraction < MinVisibleDelta)
+            {
+                return;
+            }
 
-            public Forwarder(Action<float> report) => _report = report;
+            _lastMessage = report.Message;
+            _lastFraction = report.Fraction;
+            _progress?.Report(report);
+        }
 
-            public void Report(float value) => _report(value);
+        private sealed class Forwarder : IProgress<StepProgress>
+        {
+            private readonly Action<StepProgress> _report;
+
+            public Forwarder(Action<StepProgress> report) => _report = report;
+
+            public void Report(StepProgress value) => _report(value);
         }
     }
 }

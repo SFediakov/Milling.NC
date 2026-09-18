@@ -94,7 +94,7 @@ public sealed class MaterialIslandsTests
     }
 
     // Square ring of four 10 mm wide bars (outer 40 x 40, hole 20 x 20, 5 high) in a 50 x 50 x 5
-    // stock; the 6 mm cutter reaches 3 mm into the bars, which leaves a 4 mm wall around the hole.
+    // stock; the 6 mm cutter's axis stops one radius before the bars, which leaves the bars whole.
     public static Mesh Ring()
     {
         var bars = new[]
@@ -116,9 +116,10 @@ public sealed class MaterialIslandsTests
         var kept = SeparationRegion.Build(context.Plan, context.EffectiveTip, context.Stock, context.Tool, context.Parameters, context.StockTop, 0f, 0f);
         var island = Assert.Single(MaterialIslands.Find(kept.Standing, context.EffectiveTip, context.Stock, context.Parameters.Tolerance));
         Assert.Empty(kept.MilledIslands);
-        // The tool axis stays inside the 20 x 20 hole (the cutter reaches into the bars from there);
-        // the island is the hole minus the one-cell trench band along its walls: 18 to 20 mm square, 5 deep.
-        Assert.InRange(island.Volume, 18 * 18 * 5f, 20 * 20 * 5f);
+        // The tool axis stays one radius (3 mm) inside the 20 x 20 hole walls, so the floor-level
+        // positions form a 14 x 14 square and the island is that square minus the one-cell trench
+        // band along its outline: 12 to 14 mm square, 5 deep.
+        Assert.InRange(island.Volume, 12 * 12 * 5f, 14 * 14 * 5f);
         var (ci, cj) = context.Stock.CellOf(25f, 25f);
         Assert.Equal(context.StockTop, kept.Standing[ci, cj], 3);
         Assert.False(kept.Plan.Steps[^1].Mask[ci, cj]);

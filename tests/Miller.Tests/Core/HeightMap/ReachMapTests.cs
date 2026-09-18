@@ -7,8 +7,8 @@ using Xunit;
 
 namespace Miller.Tests.Core.HeightMaps;
 
-// The reach floor is decided by majority over the footprint cells that hold stock: the
-// (n / 2 + 1)-th largest model top, so ties go to the stock side, and the map is monotone in Z.
+// The reach floor is voted in rounds over the footprint cells that hold stock (ReachMapRoundsTests
+// covers the rounds); here the fixtures, the helpers, the bounds and the timing.
 public sealed class ReachMapTests
 {
     private const float Cell = 0.5f;
@@ -35,22 +35,23 @@ public sealed class ReachMapTests
     }
 
     [Fact]
-    public void Majority_DecidesMixedFootprints_AndTiesGoToTheStock()
+    public void MixedFootprints_KeepTheWallTop_WhenTheFloorIsReachedWithoutThem()
     {
         var (model, stock) = WallAtTen();
         Assert.Equal(5, PlusProfile().Offsets.Length);
         var reach = ReachMap.Compute(model, stock, PlusProfile(), 0f);
-        // One wall cell of five: reachable at the floor. Four of five: not.
-        Assert.Equal(0f, reach[9, 5]);
+        // One wall cell of five: the four floor cells are reached by the positions further left in
+        // the drop-cutter round, so nothing is left to gain and the wall top stays. Four of five: not.
+        Assert.Equal(Wall, reach[9, 5]);
         Assert.Equal(Wall, reach[10, 5]);
         Assert.Equal(0f, reach[8, 5]);
         Assert.Equal(Wall, reach[11, 5]);
 
-        // Two of four (the cell below holds no stock): a tie, reachable at the floor.
+        // Two of four (the cell below holds no stock): the same, the floor cells are already reached.
         stock[9, 4] = float.NaN;
         model[9, 6] = Wall;
         var tied = ReachMap.Compute(model, stock, PlusProfile(), 0f);
-        Assert.Equal(0f, tied[9, 5]);
+        Assert.Equal(Wall, tied[9, 5]);
         // Three of four once the left cell is wall too.
         model[8, 5] = Wall;
         Assert.Equal(Wall, ReachMap.Compute(model, stock, PlusProfile(), 0f)[9, 5]);
@@ -66,7 +67,7 @@ public sealed class ReachMapTests
     }
 
     [Fact]
-    public void StraightWall_IsReachedUpToItsLine_SoTheWallIsCutBackByOneRadius()
+    public void StraightWall_IsPreserved_TheAxisStopsOneRadiusBeforeIt()
     {
         var (model, stock) = WallAtTen();
         var tool = new ToolDefinition { CutterDiameter = 6f, HeadDiameter = 10f, CutterLength = 20f };
@@ -75,17 +76,19 @@ public sealed class ReachMapTests
         var drop = HeightMapDilation.ComputeTipMap(model, profile);
         for (var j = 3; j < 17; j++)
         {
-            // Axis outside the wall line: floor; on or inside it: wall top.
-            Assert.Equal(0f, reach[9, j]);
+            // Axis within one radius of the wall line: wall top, like the drop cutter, because the
+            // floor beside the wall is reached from further out; on or inside it: wall top.
+            Assert.Equal(Wall, reach[9, j]);
             Assert.Equal(Wall, reach[10, j]);
-            // The drop cutter already stops one radius (6 cells) before the wall.
+            // The drop cutter stops one radius (6 cells) before the wall.
             Assert.Equal(Wall, drop[4, j]);
             Assert.Equal(0f, drop[3, j]);
+            Assert.Equal(0f, reach[3, j]);
         }
 
         for (var k = 0; k < reach.CellCount; k++)
         {
-            Assert.True(reach.Z[k] <= drop.Z[k] + 1e-6f, "the majority floor is never above the drop cutter");
+            Assert.True(reach.Z[k] <= drop.Z[k] + 1e-6f, "the reach floor is never above the drop cutter");
         }
     }
 
@@ -121,8 +124,11 @@ public sealed class ReachMapTests
     }
 
     // A ball bottom stands r - sqrt(r^2 - d^2) above the tip at distance d, so each footprint cell
-    // votes with model - dz. Over a flat top the four edge cells (dz = r here) outvote the center
-    // and the floor is one dz below the top: the majority rule lets a ball tip dimple a flat surface.
+    // votes with model - dz. Over a flat top the four edge cells (dz = r here) would outvote the
+    // center, but every top cell is reached through its own position in the drop-cutter round, so
+    // the later rounds have nothing to gain there and the top keeps its height: no dimple. The
+    // column beside the wall is not reached by the drop cutter (its own position is held up by the
+    // wall edge, the neighbours' edges stay above it) and is entered in the second round.
     [Fact]
     public void BallTip_CountsTheToolBottomHeightPerCell()
     {
@@ -133,9 +139,10 @@ public sealed class ReachMapTests
         Assert.Equal(0.5f, edge, 4);
         Assert.Equal(Wall, flat[10, 5]);
         Assert.Equal(Wall, flat[12, 5]);
-        Assert.Equal(Wall - edge, ball[10, 5], 4);
-        Assert.Equal(Wall - edge, ball[12, 5], 4);
+        Assert.Equal(Wall, ball[10, 5], 4);
+        Assert.Equal(Wall, ball[12, 5], 4);
         Assert.Equal(0f, ball[9, 5]);
+        Assert.Equal(Wall, flat[9, 5]);
     }
 
     [Fact]
