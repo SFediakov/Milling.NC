@@ -1,3 +1,4 @@
+using Miller.Core.Progress;
 using Miller.Core.Setup;
 using Miller.Core.Toolpaths;
 using Xunit;
@@ -8,7 +9,7 @@ public sealed class StrategyRegistryTests
 {
     private sealed record FakeStrategy(string Id, string DisplayName) : IToolpathStrategy
     {
-        public Toolpath Generate(ToolpathContext context, IProgress<float>? progress, CancellationToken cancellation)
+        public Toolpath Generate(ToolpathContext context, IProgress<StepProgress>? progress, CancellationToken cancellation)
             => new();
     }
 

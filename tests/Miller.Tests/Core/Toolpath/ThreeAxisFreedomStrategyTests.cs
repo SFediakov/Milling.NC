@@ -53,12 +53,16 @@ public sealed class ThreeAxisFreedomStrategyTests
         }
     }
 
+    // The tip steps one cutter radius before the box wall (the reach floor beside the wall is the
+    // box top), so the last floor cell before the step is at x = 1.75 for the 6 mm tool.
     [Fact]
     public void WallCells_AreNodes_SoTheWallIsCutAtTheOutline()
     {
         var context = TestContexts.BoxInStock();
         var map = context.EffectiveTip;
-        var (wi, wj) = map.CellOf(4.75f, 10f);
+        var (wi, wj) = map.CellOf(1.75f, 10f);
+        Assert.Equal(0f, map[wi, wj], 3);
+        Assert.Equal(5f, map[wi + 1, wj], 3);
         Assert.True(ThreeAxisFreedomStrategy.IsStep(map, wi, wj, context.Parameters.Tolerance));
         var (fi, fj) = map.CellOf(1f, 1f);
         Assert.False(ThreeAxisFreedomStrategy.IsStep(map, fi, fj, context.Parameters.Tolerance));

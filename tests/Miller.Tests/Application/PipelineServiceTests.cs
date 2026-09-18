@@ -2,6 +2,7 @@ using Miller.Application.Progress;
 using Miller.Application.Services;
 using Miller.Application.Validation;
 using Miller.Core.Geometry;
+using Miller.Core.HeightMaps;
 using Miller.Core.Io;
 using Miller.Core.Setup;
 using Miller.Core.Toolpaths;
@@ -104,18 +105,22 @@ public sealed class PipelineServiceTests
 
         Assert.Empty(GougeChecker.Verify(result.Toolpath, result.EffectiveTip, project.Parameters.Tolerance));
 
-        // The reach floor decides by majority, so beside the walls, where the footprint is mostly
-        // stock, it lies below the model: the walls are cut back and the analysis reports gouge there.
+        // The reach floor never lies above the drop cutter, and beside the heart walls never below
+        // the model: the floor around the heart is reached in the first round, so no later round
+        // votes a wall line down, and the default 6 mm tool finds no feature narrow enough for the
+        // discounted vote to enter under the model.
+        var drop = HeightMapDilation.ComputeTipMap(result.Model, result.Profile);
         var below = 0;
         for (var k = 0; k < result.Model.CellCount; k++)
         {
+            Assert.True(result.Tip.Z[k] <= MathF.Max(drop.Z[k], result.Floor) + 1e-4f, $"cell {k}: reach floor above the drop cutter");
             if (result.Model.Z[k] - result.EffectiveTip.Z[k] > project.Parameters.Tolerance)
             {
                 below++;
             }
         }
 
-        Assert.True(below > 0, "the heart walls are cut back where the footprint is mostly stock");
+        Assert.Equal(0, below);
 
         var bounds = result.Toolpath.Bounds;
         Assert.True(bounds.Min.X >= result.Stock.Bounds.Min.X - 1e-3f && bounds.Max.X <= result.Stock.Bounds.Max.X + 1e-3f);

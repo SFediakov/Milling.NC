@@ -35,7 +35,7 @@ public static class TestContexts
         var model = MeshRasterizer.CreateGridFor(geometry.Bounds, parameters.CellSize, geometry.StockBottom);
         MeshRasterizer.Rasterize(machineMesh, model, geometry.StockBottom);
         var profile = ToolProfile.Create(tool, parameters.CellSize);
-        var tip = ReachMap.Compute(model, geometry.Map, profile, geometry.StockBottom);
+        var tip = ReachMap.Compute(model, geometry.Map, profile, geometry.StockBottom, ReachMap.DefaultPercent, parameters.Tolerance);
         var limit = HeadClearance.ComputeHeadLimit(model, profile, tool.CutterLength);
         var effective = HeadClearance.ApplyHeadLimit(tip, limit);
         var plan = Slicer.Build(effective, geometry.Map, parameters);

@@ -1,5 +1,6 @@
 using System.Numerics;
 using Miller.Core.HeightMaps;
+using Miller.Core.Progress;
 using Miller.Solver;
 
 namespace Miller.Core.Toolpaths.Strategies;
@@ -19,7 +20,7 @@ public sealed class ZLayerByLayerStrategy : IToolpathStrategy
 
     public string DisplayName => "Z layer by layer";
 
-    public Toolpath Generate(ToolpathContext context, IProgress<float>? progress, CancellationToken cancellation)
+    public Toolpath Generate(ToolpathContext context, IProgress<StepProgress>? progress, CancellationToken cancellation)
     {
         ArgumentNullException.ThrowIfNull(context);
         var p = context.Parameters;
@@ -29,6 +30,7 @@ public sealed class ZLayerByLayerStrategy : IToolpathStrategy
         var step = NodeLattice.StepCells(p.Stepover, map.CellSize);
         var nodes = new Dictionary<Cave, List<int>>();
         var nodesLeft = 0L;
+        var passCount = 0;
         foreach (var cave in All(tree.Roots))
         {
             var labels = tree.Labels[cave.Level];
@@ -36,12 +38,14 @@ public sealed class ZLayerByLayerStrategy : IToolpathStrategy
             var list = NodeLattice.Nodes((i, j) => labels[j * map.Width + i] == id, map.Width, map.Height, step);
             nodes[cave] = list;
             nodesLeft += list.Count;
+            passCount += list.Count > 0 ? 1 : 0;
         }
 
         var planned = context.Stock.Clone();
         var writer = new RouteWriter(p, context.SafeZ);
         var budget = new RouteBudget(RouteBudget.MaxEvaluations);
         var total = nodesLeft;
+        var pass = 0;
         var pending = new List<Cave>(tree.Roots);
         var stack = new Stack<List<Cave>>();
         stack.Push(pending);
@@ -61,6 +65,7 @@ public sealed class ZLayerByLayerStrategy : IToolpathStrategy
             var caveNodes = nodes[cave];
             if (caveNodes.Count > 0)
             {
+                pass++;
                 var clearance = (float[])planned.Z.Clone();
                 foreach (var c in cave.Cells)
                 {
@@ -78,7 +83,7 @@ public sealed class ZLayerByLayerStrategy : IToolpathStrategy
                     writer.Follow(problem.Node(order[k]), grid);
                 }
 
-                progress?.Report(total == 0 ? 1f : (float)(total - nodesLeft) / total);
+                progress?.Report(new StepProgress(pass, passCount, (float)(total - nodesLeft) / total));
             }
 
             foreach (var c in cave.Cells)

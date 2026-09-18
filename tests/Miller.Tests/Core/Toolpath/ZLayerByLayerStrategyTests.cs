@@ -1,5 +1,6 @@
 using System.Numerics;
 using Miller.Core.HeightMaps;
+using Miller.Core.Progress;
 using Miller.Core.Setup;
 using Miller.Core.Simulation;
 using Miller.Core.Toolpaths;
@@ -147,12 +148,12 @@ public sealed class ZLayerByLayerStrategyTests
         Assert.ThrowsAny<OperationCanceledException>(() => Strategy.Generate(TestContexts.BoxInStock(), null, source.Token));
     }
 
-    private sealed class Progress : IProgress<float>
+    private sealed class Progress : IProgress<StepProgress>
     {
         private readonly Action<float> _report;
 
         public Progress(Action<float> report) => _report = report;
 
-        public void Report(float value) => _report(value);
+        public void Report(StepProgress value) => _report(value.Fraction);
     }
 }

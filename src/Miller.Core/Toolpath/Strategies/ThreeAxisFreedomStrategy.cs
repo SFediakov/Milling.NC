@@ -1,4 +1,5 @@
 using Miller.Core.HeightMaps;
+using Miller.Core.Progress;
 using Miller.Core.Slicing;
 using Miller.Solver;
 
@@ -24,7 +25,7 @@ public sealed class ThreeAxisFreedomStrategy : IToolpathStrategy
 
     public string DisplayName => "3 axis freedom";
 
-    public Toolpath Generate(ToolpathContext context, IProgress<float>? progress, CancellationToken cancellation)
+    public Toolpath Generate(ToolpathContext context, IProgress<StepProgress>? progress, CancellationToken cancellation)
     {
         ArgumentNullException.ThrowIfNull(context);
         var p = context.Parameters;
@@ -81,6 +82,8 @@ public sealed class ThreeAxisFreedomStrategy : IToolpathStrategy
 
         var budget = new RouteBudget(RouteBudget.MaxEvaluations);
         var total = nodesLeft;
+        var passCount = passes.Count(entry => entry.Cells.Count > 0);
+        var pass = 0;
         foreach (var (cells, levelMap) in passes)
         {
             cancellation.ThrowIfCancellationRequested();
@@ -88,6 +91,8 @@ public sealed class ThreeAxisFreedomStrategy : IToolpathStrategy
             {
                 continue;
             }
+
+            pass++;
 
             var grid = new RouteGrid(levelMap.Z, map.Width, map.Height, map.OriginX, map.OriginY, map.CellSize);
             var xs = new float[cells.Count];
@@ -111,7 +116,7 @@ public sealed class ThreeAxisFreedomStrategy : IToolpathStrategy
                 writer.Follow(problem.Node(order[k]), grid);
             }
 
-            progress?.Report((float)(total - nodesLeft) / total);
+            progress?.Report(new StepProgress(pass, passCount, (float)(total - nodesLeft) / total));
         }
 
         return writer.Finish();
