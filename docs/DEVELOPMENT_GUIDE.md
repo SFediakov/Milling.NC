@@ -16,7 +16,7 @@ Contents:
 7. Coding rules and definition of done
 8. Known pitfalls
 9. Milestones
-10. Task list (T-001 to T-130)
+10. Task list (T-001 to T-133)
 
 ---
 
@@ -348,13 +348,28 @@ Uncuttable classification (`UncuttableRegions`):
   times faster than Z), the Z part being the vertical travel of the surface
   polyline between the two nodes (`SurfacePath`: every cell-edge crossing lifted
   to the highest plateau touching it, never below the straight line between the
-  ends, rise and descent in place at the ends). `RouteSolver` walks nearest
-  neighbour over candidate lists (10 planar-nearest) and improves with 2-opt and
-  Or-opt until nothing improves or the program's budget of 40,000,000 evaluated
-  candidate moves (`RouteBudget.MaxEvaluations`, shared in proportion to node
-  counts) is spent. Going around an obstacle is not a separate search: the
-  tour through the intermediate nodes is the way around, and the cost of a move
-  over an obstacle is its climb.
+  ends, rise and descent in place at the ends), plus the turn fine below.
+  `RouteSolver` starts from the cheaper of two walks over candidate lists (10
+  planar-nearest): the nearest-neighbour walk and a smooth walk that scores
+  each step together with the cheapest step after it, fine included. It
+  improves with 2-opt and Or-opt until nothing improves or the program's budget
+  of 40,000,000 evaluated candidate moves (`RouteBudget.MaxEvaluations`, shared
+  in proportion to node counts) is spent; the fine of every move is exact.
+  Going around an obstacle is not a separate search: the tour through the
+  intermediate nodes is the way around, and the cost of a move over an
+  obstacle is its climb.
+- Turn fine (`TurnFine`): a turn is the change of the XY direction between the
+  chords into and out of a node. Above 35 degrees it is fined, unless the node
+  belongs to a real circular move: four consecutive nodes on one circle within
+  half a cell, turning the same way at both inner nodes, each turn below 90
+  degrees, so a square corner or a U-turn never is. A movement is the stretch
+  between two fined turns or a route end; its first and last 5 mm run at 0.3 of
+  the speed, so a fined turn slows the 5 mm before and after it, overlapping
+  zones count once and route ends clip them. The fine is charged on XY travel,
+  `(1 / 0.3 - 1) / 3` cost units per slow millimetre. On a lattice the solver
+  therefore runs straight and rounds corners with two 45 degree turns on one
+  lattice circle instead of turning 90 degrees. Once turns lie closer than one
+  zone, removing one frees nothing, which is why the start walk matters.
 - "Z layer by layer": cave by cave. A cave is cut completely at its level, then
   the tool drops one level in place into the first child cave; a sibling is
   visited only when the whole subtree is done, nearest first. Every route is
@@ -1587,6 +1602,14 @@ check that decides done.
 - Input: user request (negative values must be allowed everywhere coordinates are typed); reproduced: a valid keystroke in a Models offset field republished the model name list, the list box reset its selection, the field was disabled for an instant and lost the keyboard focus, so "-12.5" ended as -1; a lone "-" was flagged as an error
 - Output: `ModelsViewModel.Names` is cached and republished only when the names differ; `NumericBox.IsIncomplete` treats a sign or decimal-point prefix as input in progress (no error, no value); headless tests type "-12.5" one character at a time into the Models offsets, the Axes custom zero and the Stock explicit origin
 - Acceptance: every character reaches the project, the field keeps the focus, `SelectedIndex` and the viewport selection do not change during a value edit; "" and "abc" remain errors; suite green
+- Status: done
+
+#### T-133 Turn fine in the route solver
+- Depends on: T-118
+- Files: `src/Miller.Solver/TurnFine.cs`, `src/Miller.Solver/FineWindow.cs`, `src/Miller.Solver/RouteSolver.cs`, `src/Miller.Solver/LocalSearch.cs`, `tests/Miller.Tests/Solver/*`, `tests/Miller.Tests/Golden/heart_grbl.nc`
+- Input: user request (a turn of more than 35 degrees slows the first and last 5 mm of the movement to 0.3 of the speed, except a real circular move; circular movements preferred to moves from one axis to another)
+- Output: `TurnFine` (section 6.4), `PathCost` = travel + fine, the smooth start walk, exact fine deltas in 2-opt and Or-opt (`FineWindow`: stretches between changed nodes walked once, shared by the current and the moved route); `heart_grbl.nc` regenerated
+- Acceptance: one right angle between long chords fines 10 mm; exactly 35 degrees is not fined; zones run across short chords and overlap once; the lattice octagon and a hexagon arc are circular, square corners, U-turns and staircases are not; reversed routes cost the same; one more evaluation never raises the fined cost; on a 12 x 8 lattice fewer fined turns than the row pattern and more circular than fined turns; the user's heart (15 routes, 4,866 nodes) fined cost 2,083 to 1,945 (fine -13 percent, travel +5 percent), 3 axis freedom 11,307 to 9,482; route time 0.02 s to 0.65 s and 0.24 s to 5.4 s
 - Status: done
 
 ### M8 Packaging and release

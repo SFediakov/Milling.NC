@@ -193,8 +193,10 @@ placeholder; the task that implements it is written in the placeholder header.
 | `RouteCost.cs` | `XySpeedFactor = 3`, `ZSpeedFactor = 1`; exact cost = XY / 3 + climb of the polyline; lower bound = XY / 3 + height difference |
 | `RouteBudget.cs` | `MaxEvaluations = 40,000,000` candidate moves per program, shared by all route instances in proportion to their nodes |
 | `SpatialBuckets.cs` | Uniform buckets for k-nearest and nearest-unvisited ring searches |
-| `RouteSolver.cs` | `Solve(problem, start, budget, allowance, cancellation)`: candidate lists (10 planar-nearest with exact costs), nearest-neighbour walk, then `LocalSearch`; deterministic; `PathCost` |
-| `LocalSearch.cs` | 2-opt and Or-opt (segments of 1 to 3) on an open path with a fixed first node, don't-look bits, current edge costs kept, free edges bounded from below before an exact trace, a direct-mapped pair-cost cache, segment moves as two or three reversals |
+| `RouteSolver.cs` | `Solve(problem, start, budget, allowance, cancellation)`: candidate lists (10 planar-nearest with exact costs), the cheaper of the nearest-neighbour walk and the smooth walk (each step scored with the cheapest next step, turn fine included), then `LocalSearch`; deterministic; `PathCost` = travel + turn fine |
+| `LocalSearch.cs` | 2-opt and Or-opt (segments of 1 to 3) on an open path with a fixed first node, don't-look bits, current edge costs and XY lengths kept, the fined status of every node kept current, the exact fine change of every move, free edges bounded from below before an exact trace, a direct-mapped pair-cost cache, segment moves as two or three reversals |
+| `TurnFine.cs` | Turn fine: XY turn above 35 degrees fined unless four consecutive nodes form a real arc (one circle within half a cell, same side, both turns below 90 degrees); 5 mm before and after at 0.3 of the speed, overlaps once, route ends clip; `IsFined`, `SlowLength`, `Fine` |
+| `FineWindow.cs` | `PathView` (a route as up to four forward or reversed pieces of a base order) and `FineWindow` (the part of the slow length that depends on the changed nodes; stretches between them walked once up to 10 mm and shared by every view) |
 | GCode | `IPostProcessor.cs` | `Id`, `DisplayName`, `FileExtension`, `Write(Toolpath, MillingProject, TextWriter)` |
 | GCode | `PostProcessorRegistry.cs` | Explicit static list; `GetById`, `All` |
 | GCode | `GrblPostProcessor.cs` | Id `grbl`, extension `.nc`. Header comments, `G21 G90 G94 G17`, `S.. M3`, `G0`/`G1` with `F`, `M5`, `M30` |
