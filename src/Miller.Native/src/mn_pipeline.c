@@ -156,29 +156,52 @@ static int generate(const mn_job* job, stage_monitor* stage, const volatile int3
     MN_CHECK(mn_reach_compute(g, r->model.z, r->stock.z, r->profile.offsets, r->profile.offset_count, r->floor, job->reach_percent, p->tolerance, &monitor, r->tip.z));
     MN_STOP_IF_CANCELLED();
 
-    /* head clearance: the head must clear what the cutter leaves, rounded up to the level it stands at
-     * until the pass that reaches it; limits only rise, so the loop is bounded. */
+    /* head clearance: the head must clear what the cutter leaves (the closing of the effective tip),
+     * rounded up to the level it stands at until the pass that reaches it. Stock above the model that
+     * blocks the head is marked should be cut (T-136); the strategies cut it to its closing before the
+     * tool goes deeper beside it, so it counts with the closing plus the tolerance (the simplified path
+     * may run that much above the planned tip), and the coordinates are defined again. Marks only
+     * grow; the loop ends when the effective tip is stable and nothing new was marked, or after
+     * MN_MAX_HEAD_ITERATIONS. */
     begin(stage, MN_STAGE_HEAD);
     MN_CHECK(mn_map_clone(&r->effective, &r->tip));
     MN_CHECK(mn_map_create(&r->limit, g, NAN));
-    mn_map remaining;
-    mn_map next;
-    MN_CHECK(mn_map_create(&remaining, g, NAN));
-    int status = mn_map_create(&next, g, NAN);
+    r->head_limited = (uint8_t*)mn_alloc((size_t)cells, 1);
+    r->should_cut = (uint8_t*)mn_alloc((size_t)cells, 1);
+    if (r->head_limited == NULL || r->should_cut == NULL) {
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for the head-limited and should-cut masks.");
+    }
+    mn_map cut_to = { 0 };
+    mn_map remaining = { 0 };
+    mn_map next = { 0 };
+    int status = mn_map_create(&cut_to, g, NAN);
+    if (status == MN_OK) {
+        status = mn_map_create(&remaining, g, NAN);
+    }
+    if (status == MN_OK) {
+        status = mn_map_create(&next, g, NAN);
+    }
     if (status != MN_OK) {
+        mn_map_free(&cut_to);
         mn_map_free(&remaining);
+        mn_map_free(&next);
         return status;
     }
     for (int iteration = 1;; iteration++) {
-        mn_remaining_compute(g, r->effective.z, r->profile.offsets, r->profile.offset_count, remaining.z);
+        mn_remaining_compute(g, r->effective.z, r->profile.offsets, r->profile.offset_count, cut_to.z);
         for (int k = 0; k < cells; k++) {
-            remaining.z[k] = mn_ceil_level(remaining.z[k], r->stock_top, p->stepdown);
+            float closed = cut_to.z[k];
+            remaining.z[k] = r->should_cut[k] ? closed + p->tolerance : mn_ceil_level(closed, r->stock_top, p->stepdown);
+            cut_to.z[k] = closed + p->tolerance;
         }
         mn_head_limit_compute(g, remaining.z, r->profile.annulus, r->profile.annulus_count, job->tool.cutter_length, r->limit.z);
+        int marked = mn_mark_should_cut(g, r->tip.z, r->model.z, cut_to.z, remaining.z, r->limit.z, r->profile.annulus, r->profile.annulus_count, job->tool.cutter_length, p->tolerance,
+            r->should_cut);
         mn_apply_limit(r->tip.z, r->limit.z, cells, next.z);
-        int settled = same_within(next.z, r->effective.z, cells, p->tolerance);
+        int settled = marked == 0 && same_within(next.z, r->effective.z, cells, p->tolerance);
         memcpy(r->effective.z, next.z, (size_t)cells * sizeof(float));
         if (cancelled(cancel)) {
+            mn_map_free(&cut_to);
             mn_map_free(&remaining);
             mn_map_free(&next);
             return mn_fail(MN_ERR_CANCELLED, "Cancelled.");
@@ -188,13 +211,9 @@ static int generate(const mn_job* job, stage_monitor* stage, const volatile int3
             break;
         }
     }
+    mn_map_free(&cut_to);
     mn_map_free(&remaining);
     mn_map_free(&next);
-    r->head_limited = (uint8_t*)mn_alloc((size_t)cells, 1);
-    r->should_cut = (uint8_t*)mn_alloc((size_t)cells, 1);
-    if (r->head_limited == NULL || r->should_cut == NULL) {
-        return mn_fail(MN_ERR_MEMORY, "Out of memory for the head-limited mask.");
-    }
     mn_head_limited_mask(r->tip.z, r->limit.z, cells, p->tolerance, r->head_limited);
 
     /* slice and cut scope; strategies stay above the standing stock as well as above the model. */

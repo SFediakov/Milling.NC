@@ -320,7 +320,9 @@ Mirrors the source tree: `Core/<Folder>/<Type>Tests.cs`,
 
 Every step from the transform to the statistics runs inside the native library
 in one `mn_generate` call (`ToolpathGeneration.Run`); the names below are the
-facades that expose the same step on its own.
+facades that expose the same step on its own. The head clearance step feeds back
+(T-136): stock above the model that blocks the head becomes should be cut, the
+tip is defined again, and the strategies receive the should-cut mask.
 
 ```
 STL file

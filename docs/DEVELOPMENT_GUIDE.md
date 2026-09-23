@@ -300,6 +300,21 @@ effectiveTip[i,j] = max(tip[i,j], limit[i,j])
 headLimited[i,j] = limit[i,j] > tip[i,j] + Tolerance
 ```
 
+In the pipeline the head limit is taken over the material the cutter leaves, not
+the model: `closing = min over the footprint of effectiveTip + dz`, rounded up
+to the level it stands at (`CeilToLevel`), iterated from the tip map until the
+effective tip settles (at most 8 rounds). Collision feedback (T-136): every cell
+is shouldn't be cut (the model), might be cut (stock above the model) or should
+be cut. At a head-limited position a ring cell whose rounded-up material blocks
+the head, stands above `model + Tolerance` and could be cut lower
+(`closing + Tolerance < rounded - Tolerance`) becomes should be cut, when marking
+the blocking cells of the position lowers its limit at all. A should-cut cell
+counts with `closing + Tolerance` instead of the rounded-up value (the
+simplified path may run `Tolerance` above the planned tip), and the round is
+repeated. Marks only grow; the loop ends when the effective tip is stable and
+nothing new was marked, or after 8 rounds. The strategies cut every should-cut
+cell to its closing before the tool goes deeper beside it (section 6.4).
+
 Material removal (`MaterialRemover`), one sample of the tool at tip `(x, y, z)`:
 
 ```
@@ -392,6 +407,13 @@ Uncuttable classification (`UncuttableRegions`):
   solved over the material as it stands at that moment (the cave's cells at the
   level, everything else at what the previous routes left), so a move that
   leaves the cave climbs the standing material instead of slotting through it.
+  Should-cut passes (T-136): after the level route of a cave, one route visits
+  every cave cell whose footprint holds a should-cut cell and whose tip lies
+  between this level and the next at its tip; the band between the stock top and
+  the first level, which is in no cave, gets such a route before the first cave.
+  Every such cell is a node (a lattice at the finishing stepover left the stock
+  higher than the head limit counts on). Without should-cut cells the strategy is
+  unchanged.
 - "3 axis freedom": one free route per level of the plan. At level L the nodes
   are the coverage cells whose tip lies below the previous level (the stock top
   for the first), each at `max(tip, L)`, and the moves follow the surface
@@ -399,7 +421,8 @@ Uncuttable classification (`UncuttableRegions`):
   `Stepdown` into the material the previous level left and a wall is descended
   level by level. A cell whose tip lies between two levels is visited last at its
   tip, so the surface is followed without level quantization. The program starts
-  with a plunge from safe Z at the first node.
+  with a plunge from safe Z at the first node. It needs no should-cut pass
+  (T-136) for the same reason.
 - Segments (`RouteWriter`): level, rising and gently descending parts of the
   polyline are feeds; a descent steeper than `MaxRampSlope` (2, about 63
   degrees) is a feed over the lower point and a plunge. A travel between two
@@ -1645,6 +1668,14 @@ check that decides done.
 - Input: user request (different head forms for the collision checks: a four-sided section with top and bottom diameter and a length)
 - Output: `HeadShape` Cylinder or Frustum with `HeadTopDiameter` and `HeadLength` (section 6.2); the tool profile gives every head ring cell the height of the head underside; the head limit and the simulation collision check subtract or add it; Tool tab shape selector with the frustum fields and a trapezoid schematic; the viewport draws the cone
 - Acceptance: hand-computed underside heights on the ring; a narrowing or straight frustum equals the cylinder of its bottom; a cylinder ignores the frustum fields; the head limit of a frustum lies between the cylinders of its two diameters; a column under the cone clears the frustum and hits the cylinder of the top diameter; validation and serializer rules; zero head collisions in the simulation of a frustum job
+- Status: done
+
+#### T-136 Collision feedback: should-cut cells
+- Depends on: T-134, T-135
+- Files: `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/src/mn_maps.c`, `src/Miller.Native/src/mn_strategies.c`, `tests/Miller.Tests/Application/ShouldCutTests.cs`, `tests/Miller.Tests/Golden/heart_grbl.nc`
+- Input: user request (during the collision check, cells that are not the target shape and block the head change from "might be cut" to "should be cut", then the coordinates are defined again)
+- Output: third cell state in the head clearance loop (section 6.3), `PipelineResult.ShouldCut`; Z layer should-cut passes per cave and for the top band (section 6.4); `heart_grbl.nc` regenerated
+- Acceptance: on the box fixtures the should-cut stock is removed to its closing, the head-limited area is smaller than without feedback, zero gouges and zero simulated head collisions in both strategies; the top band pass runs; a project without blocking stock marks nothing and keeps the head limit of the loop without feedback; heart (default project) head-limited cells 1,460 to 1,260, rest material 305 to 235 mm3, zero head events, machining time 3.1 to 4.7 min; with an 8 mm cutter zero head events in every scope and strategy (the ball tip had 175 before)
 - Status: done
 
 ### M8 Packaging and release
