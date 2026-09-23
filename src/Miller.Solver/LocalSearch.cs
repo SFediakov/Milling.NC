@@ -2,11 +2,14 @@ namespace Miller.Solver;
 
 // 2-opt and Or-opt on an open path whose first node stays fixed, over the candidate lists, with
 // don't-look bits (a node leaves the queue when no move around it improves and returns when an
-// edge at it changes). The costs of the current edges are kept, so evaluating a move computes only
-// the new edges: the candidate edge comes from the cache, the other new edge is bounded from below
-// first and traced exactly only when the bound still leaves a gain. One evaluation is one candidate
-// move considered, whatever it costs to evaluate. A segment move is done as two or three
-// reversals, which keeps the interior edge costs in place.
+// edge at it or its turn fine changes). The costs of the current edges are kept, so evaluating a
+// move computes only the new edges: the candidate edge comes from the cache, the other new edge is
+// bounded from below first and traced exactly only when the bound still leaves a gain. The turn
+// fine of a move is exact: the windowed term of FineWindow over the nodes within two places of a
+// removed or added edge, on the route the move would produce against the current one, with the
+// fined status of every node kept current. One evaluation is one candidate move considered,
+// whatever it costs to evaluate. A segment move is done as two or three reversals, which keeps the
+// interior edge costs in place.
 internal sealed class LocalSearch
 {
     private const float MinGain = 1e-5f;
@@ -15,11 +18,15 @@ internal sealed class LocalSearch
     private const int MinCacheBits = 12;
     private const int MaxCacheBits = 20;
 
+    // Three removed and three added edges, four nodes around each.
+    private const int MaxChanged = 24;
+
     private readonly RouteProblem _problem;
     private readonly CandidateLists _candidates;
     private readonly int[] _order;
     private readonly int[] _pos;
     private readonly float[] _edge;
+    private readonly float[] _len;
     private readonly bool[] _queued;
     private readonly Queue<int> _queue;
     private readonly long _allowance;
@@ -28,6 +35,13 @@ internal sealed class LocalSearch
     private readonly long[] _cacheKeys;
     private readonly float[] _cacheValues;
     private readonly int _cacheMask;
+    private readonly bool[] _fined;
+    private readonly FineWindow _window;
+    private readonly PathView _current;
+    private readonly PathView _moved;
+    private readonly int[] _changed = new int[MaxChanged];
+    private readonly int[] _changedNodes = new int[MaxChanged];
+    private int _changedCount;
 
     public LocalSearch(RouteProblem problem, CandidateLists candidates, int[] order, long allowance, CancellationToken cancellation)
     {
@@ -39,6 +53,7 @@ internal sealed class LocalSearch
         _cancellation = cancellation;
         _pos = new int[_n];
         _edge = new float[Math.Max(_n - 1, 0)];
+        _len = new float[Math.Max(_n - 1, 0)];
         _queued = new bool[_n];
         _queue = new Queue<int>(_n);
         var bits = Math.Clamp(64 - System.Numerics.BitOperations.LeadingZeroCount((ulong)Math.Max(_n * 4 - 1, 1)), MinCacheBits, MaxCacheBits);
@@ -46,15 +61,27 @@ internal sealed class LocalSearch
         _cacheValues = new float[1 << bits];
         Array.Fill(_cacheKeys, -1L);
         _cacheMask = (1 << bits) - 1;
+        _fined = new bool[problem.Count];
+        _window = new FineWindow(_fined);
+        _current = new PathView(problem);
+        _current.Reset(order, _len);
+        _current.Add(0, _n - 1, false);
+        _moved = new PathView(problem);
         for (var k = 0; k < _n; k++)
         {
             _pos[order[k]] = k;
             if (k + 1 < _n)
             {
                 _edge[k] = Cost(order[k], order[k + 1]);
+                _len[k] = RouteCost.Planar(problem.Node(order[k]), problem.Node(order[k + 1]));
             }
 
             Push(order[k]);
+        }
+
+        for (var k = 0; k < _n; k++)
+        {
+            _fined[order[k]] = FinedAt(k);
         }
     }
 
@@ -115,11 +142,12 @@ internal sealed class LocalSearch
                 var s = _order[i + 1];
                 var hasNext = j + 1 < _n;
                 var removed = _edge[i] + (hasNext ? _edge[j] : 0f);
+                var fine = ReversalFine(i + 1, j);
                 var added = 0f;
                 if (hasNext)
                 {
                     var cn = _order[j + 1];
-                    if (removed - dac - Lower(s, cn) <= MinGain)
+                    if (removed - dac - fine - Lower(s, cn) <= MinGain)
                     {
                         continue;
                     }
@@ -127,7 +155,7 @@ internal sealed class LocalSearch
                     added = Cost(s, cn);
                 }
 
-                if (removed - dac - added > MinGain)
+                if (removed - dac - added - fine > MinGain)
                 {
                     Reverse(i + 1, j);
                     SetEdge(i);
@@ -140,6 +168,7 @@ internal sealed class LocalSearch
                         Push(_order[j + 1]);
                     }
 
+                    RefreshFined();
                     return true;
                 }
             }
@@ -149,11 +178,12 @@ internal sealed class LocalSearch
                 var cs = _order[j + 1];
                 var hasNext = i + 1 < _n;
                 var removed = _edge[j] + (hasNext ? _edge[i] : 0f);
+                var fine = ReversalFine(j + 1, i);
                 var added = 0f;
                 if (hasNext)
                 {
                     var an = _order[i + 1];
-                    if (removed - dac - Lower(cs, an) <= MinGain)
+                    if (removed - dac - fine - Lower(cs, an) <= MinGain)
                     {
                         continue;
                     }
@@ -161,7 +191,7 @@ internal sealed class LocalSearch
                     added = Cost(cs, an);
                 }
 
-                if (removed - dac - added > MinGain)
+                if (removed - dac - added - fine > MinGain)
                 {
                     Reverse(j + 1, i);
                     SetEdge(j);
@@ -174,6 +204,7 @@ internal sealed class LocalSearch
                         Push(_order[i + 1]);
                     }
 
+                    RefreshFined();
                     return true;
                 }
             }
@@ -233,11 +264,12 @@ internal sealed class LocalSearch
                         var hasCs = jc + 1 < _n;
                         var cs = hasCs ? _order[jc + 1] : -1;
                         var removedC = hasCs ? _edge[jc] : 0f;
-                        if (removed + removedC - bridgeLower - dec - (hasCs ? Lower(other, cs) : 0f) > MinGain)
+                        var fine = SegmentFine(i, length, jc, reversed: end == 1);
+                        if (removed + removedC - bridgeLower - dec - fine - (hasCs ? Lower(other, cs) : 0f) > MinGain)
                         {
                             var bridge = hasNext ? Cost(p, nx) : 0f;
                             var tail = hasCs ? Cost(other, cs) : 0f;
-                            if (removed + removedC - bridge - dec - tail > MinGain)
+                            if (removed + removedC - bridge - dec - tail - fine > MinGain)
                             {
                                 MoveSegment(i, length, jc, reversed: end == 1);
                                 Push(p);
@@ -254,6 +286,7 @@ internal sealed class LocalSearch
                                     Push(cs);
                                 }
 
+                                RefreshFined();
                                 return true;
                             }
                         }
@@ -264,11 +297,12 @@ internal sealed class LocalSearch
                         // ..., cp, c, ... becomes ..., cp, other, ..., e, c, ...
                         var cp = _order[jc - 1];
                         var removedC = _edge[jc - 1];
-                        if (removed + removedC - bridgeLower - dec - Lower(cp, other) > MinGain)
+                        var fine = SegmentFine(i, length, jc - 1, reversed: end == 0);
+                        if (removed + removedC - bridgeLower - dec - fine - Lower(cp, other) > MinGain)
                         {
                             var bridge = hasNext ? Cost(p, nx) : 0f;
                             var head = Cost(cp, other);
-                            if (removed + removedC - bridge - dec - head > MinGain)
+                            if (removed + removedC - bridge - dec - head - fine > MinGain)
                             {
                                 MoveSegment(i, length, jc - 1, reversed: end == 0);
                                 Push(p);
@@ -281,6 +315,7 @@ internal sealed class LocalSearch
                                     Push(nx);
                                 }
 
+                                RefreshFined();
                                 return true;
                             }
                         }
@@ -291,6 +326,96 @@ internal sealed class LocalSearch
 
         return false;
     }
+
+    // Change of the turn fine if order[l .. r] were reversed.
+    private float ReversalFine(int l, int r)
+    {
+        _moved.Reset(_order, _len);
+        _moved.Add(0, l - 1, false);
+        _moved.Add(l, r, true);
+        _moved.Add(r + 1, _n - 1, false);
+        return FineChange(l - 1, r + 1 < _n ? r : -1, -1);
+    }
+
+    // Change of the turn fine if MoveSegment(i, length, t, reversed) were done.
+    private float SegmentFine(int i, int length, int t, bool reversed)
+    {
+        var last = i + length - 1;
+        _moved.Reset(_order, _len);
+        if (t > last)
+        {
+            _moved.Add(0, i - 1, false);
+            _moved.Add(last + 1, t, false);
+            _moved.Add(i, last, reversed);
+            _moved.Add(t + 1, _n - 1, false);
+            return FineChange(i - 1, last, t + 1 < _n ? t : -1);
+        }
+
+        _moved.Add(0, t, false);
+        _moved.Add(i, last, reversed);
+        _moved.Add(t + 1, i - 1, false);
+        _moved.Add(last + 1, _n - 1, false);
+        return FineChange(t, i - 1, last + 1 < _n ? last : -1);
+    }
+
+    // Fine of the route in _moved less the fine of the current route, in RouteCost units. The removed
+    // edges are given by their positions in the current route (-1 for none); the added edges are the
+    // joins between the pieces of _moved. The nodes whose status may differ are kept for RefreshFined.
+    private float FineChange(int removedA, int removedB, int removedC)
+    {
+        _changedCount = 0;
+        AddAround(removedA);
+        AddAround(removedB);
+        AddAround(removedC);
+        for (var k = 0; k + 1 < _moved.Pieces; k++)
+        {
+            var e = _moved.PieceEnd(k);
+            for (var p = Math.Max(e - 1, 0); p <= Math.Min(e + 2, _n - 1); p++)
+            {
+                Add(_moved.BasePosition(p));
+            }
+        }
+
+        _window.Prepare(_order, _len, _n, _changed, _changedCount);
+        var after = _window.Term(_moved, true);
+        var before = _window.Term(_current, false);
+        return (after - before) * TurnFine.PerSlowMillimetre;
+    }
+
+    private void AddAround(int edge)
+    {
+        if (edge < 0)
+        {
+            return;
+        }
+
+        for (var p = Math.Max(edge - 1, 0); p <= Math.Min(edge + 2, _n - 1); p++)
+        {
+            Add(p);
+        }
+    }
+
+    private void Add(int position)
+    {
+        _changed[_changedCount] = position;
+        _changedNodes[_changedCount] = _order[position];
+        _changedCount++;
+    }
+
+    // After a move: the status of every node the last FineChange named, which is the move just done.
+    private void RefreshFined()
+    {
+        for (var k = 0; k < _changedCount; k++)
+        {
+            var node = _changedNodes[k];
+            _fined[node] = FinedAt(_pos[node]);
+            Push(node);
+        }
+    }
+
+    private bool FinedAt(int k)
+        => k > 0 && k < _n - 1
+        && TurnFine.IsFined(_problem, k >= 2 ? _order[k - 2] : -1, _order[k - 1], _order[k], _order[k + 1], k + 2 < _n ? _order[k + 2] : -1);
 
     // Moves order[i .. i + length - 1] to directly after position t (t outside i - 1 .. i + length - 1),
     // reversed or not, as reversals of adjacent blocks; the three junction edges are recomputed.
@@ -346,6 +471,7 @@ internal sealed class LocalSearch
             if (r - 1 > l)
             {
                 (_edge[l], _edge[r - 1]) = (_edge[r - 1], _edge[l]);
+                (_len[l], _len[r - 1]) = (_len[r - 1], _len[l]);
             }
 
             l++;
@@ -358,6 +484,7 @@ internal sealed class LocalSearch
         if (k >= 0 && k + 1 < _n)
         {
             _edge[k] = Cost(_order[k], _order[k + 1]);
+            _len[k] = RouteCost.Planar(_problem.Node(_order[k]), _problem.Node(_order[k + 1]));
         }
     }
 

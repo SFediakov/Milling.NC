@@ -17,6 +17,11 @@
   Debug-only developer tooling with no shipped feature behind it, so it is dropped from
   `Directory.Packages.props`, `Miller.App.csproj` and `third_party/nuget/`. Adding
   `AvaloniaUI.DiagnosticsSupport` later is a one-line change in T-002 and T-006.
+- The turn fine (T-133) is not a cluster of its own: it is part of the route solver's cost, the
+  local search evaluates it inside every candidate move, so it lives in `Miller.Solver`
+  (`TurnFine.cs`, `FineWindow.cs`), which is already the insulated numeric cluster.
+- `RouteSolver` builds two start walks and keeps the cheaper one; both always run, so it is a
+  multi-start, not a fallback or a switch.
 
 ## Placeholder convention (architecture delivered without implementation)
 
@@ -335,3 +340,20 @@
 - NumericBox distinguishes incomplete from invalid text: a sign or decimal-point prefix ("-", "+",
   ".", "-.", "+.") clears the error and leaves Value alone, so the first keystroke of a negative
   number is not shown as a mistake; "" and "abc" stay errors as T-128 requires.
+- Turn fine (T-133): once fined turns lie closer than one slow zone the slow length saturates, so a
+  2-opt or Or-opt move that removes one turn frees nothing and is rejected; the start walk decides
+  the turn structure. A fine-aware walk alone made the heart worse than the old solver on the new
+  metric (it strands nodes to avoid a turn and pays the way back); the old and new solvers were
+  compared on the captured route problems, and keeping the cheaper of the nearest-neighbour and
+  the smooth walk beat the old solver on all 15 heart routes.
+- The fined status is kept per node and 2-opt reverses it in place, which is only valid when
+  `IsFined` gives the same answer for a reversed window: the circle is fitted through index-sorted
+  triples and both end points are tested. Thresholds come from double cosines, because the float
+  cosine of 90 degrees is -4.4e-8 and would let an exact right angle pass as circular.
+- Fine deltas were verified once by recomputing the full cost in double around every applied move
+  (6,007 random moves, the strategy and heart tests); float sums of a 517-unit route differ by 0.006,
+  so a float full recomputation is too coarse for that check.
+- A fined evaluation costs about 1.8 us against about 0.1 us before (walks up to 10 mm, fresh
+  status of the changed nodes): the heart's routes take 0.65 s instead of 0.02 s, 3 axis freedom 5.4 s
+  instead of 0.24 s. The 0.2 mm outline staircases stay in the G-code: every order of those nodes
+  turns at every cell, and the simplifier keeps them (0.14 mm deviation over a 0.05 mm tolerance).
