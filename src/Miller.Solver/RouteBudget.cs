@@ -31,7 +31,7 @@ public sealed class RouteBudget
             throw new ArgumentOutOfRangeException(nameof(nodes), $"{nodes} nodes of {nodesLeft} left.");
         }
 
-        return nodesLeft == 0 ? 0 : (long)(Remaining * (double)nodes / nodesLeft);
+        return Native.SolverNative.mn_budget_share(Remaining, nodes, nodesLeft);
     }
 
     internal void Consume(long evaluations)

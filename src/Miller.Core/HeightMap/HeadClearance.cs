@@ -1,13 +1,16 @@
+using Miller.Core.Native;
+
 namespace Miller.Core.HeightMaps;
 
-// The head (holder) is wider than the cutter and sits CutterLength above the tip. At tip height z the
-// model under the head ring must stay at or below z + CutterLength, so the tip cannot go lower than
-// limit[i,j] = max over the annulus of model - CutterLength. This is checked against the finished
-// surface (model map); the simulation's CollisionDetector checks the current stock separately.
+// The head (holder) is wider than the cutter and sits CutterLength above the tip, its underside Dz
+// higher over each ring cell (ToolProfile.AnnulusOffsets). At tip height z the material under the
+// ring must stay at or below z + CutterLength + Dz, so the tip cannot go lower than
+// limit[i,j] = max over the ring of (material - Dz) - CutterLength (native mn_head_limit). The
+// simulation's CollisionDetector checks the current stock with the same ring.
 public static class HeadClearance
 {
-    // NaN where no annulus cell holds model material: the head is unconstrained there.
-    public static HeightMap ComputeHeadLimit(HeightMap model, ToolProfile profile, float cutterLength)
+    // NaN where no ring cell holds material: the head is unconstrained there.
+    public static unsafe HeightMap ComputeHeadLimit(HeightMap model, ToolProfile profile, float cutterLength)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(profile);
@@ -16,80 +19,43 @@ public static class HeadClearance
             throw new ArgumentOutOfRangeException(nameof(cutterLength), cutterLength, "Cutter length must be positive.");
         }
 
-        var limit = new HeightMap(model.OriginX, model.OriginY, model.CellSize, model.Width, model.Height, float.NaN);
-        var annulus = profile.AnnulusOffsets;
-        for (var j = 0; j < model.Height; j++)
+        var limit = CoreNative.Empty(model, float.NaN);
+        var grid = CoreNative.GridOf(model);
+        var annulus = CoreNative.OffsetsOf(profile.AnnulusOffsets);
+        fixed (float* m = model.Z, l = limit.Z)
+        fixed (CoreNative.Offset* o = annulus)
         {
-            for (var i = 0; i < model.Width; i++)
-            {
-                var highest = float.NaN;
-                foreach (var o in annulus)
-                {
-                    var ii = i + o.Dx;
-                    var jj = j + o.Dy;
-                    if (!model.InBounds(ii, jj))
-                    {
-                        continue;
-                    }
-
-                    var z = model[ii, jj];
-                    if (float.IsNaN(z))
-                    {
-                        continue;
-                    }
-
-                    if (float.IsNaN(highest) || z > highest)
-                    {
-                        highest = z;
-                    }
-                }
-
-                limit[i, j] = float.IsNaN(highest) ? float.NaN : highest - cutterLength;
-            }
+            CoreNative.mn_head_limit(&grid, m, o, annulus.Length, cutterLength, l);
         }
 
         return limit;
     }
 
     // Effective tip = max(tip, limit); a NaN tip stays NaN, a NaN limit does not constrain.
-    public static HeightMap ApplyHeadLimit(HeightMap tip, HeightMap limit)
+    public static unsafe HeightMap ApplyHeadLimit(HeightMap tip, HeightMap limit)
     {
         RequireSameGrid(tip, limit);
-        var effective = tip.Clone();
-        for (var k = 0; k < effective.Z.Length; k++)
+        var effective = CoreNative.Empty(tip, float.NaN);
+        fixed (float* t = tip.Z, l = limit.Z, e = effective.Z)
         {
-            var t = tip.Z[k];
-            var l = limit.Z[k];
-            if (float.IsNaN(t) || float.IsNaN(l))
-            {
-                continue;
-            }
-
-            if (l > t)
-            {
-                effective.Z[k] = l;
-            }
+            CoreNative.mn_apply_head_limit(t, l, tip.CellCount, e);
         }
 
         return effective;
     }
 
     // True where the head, not the cutter, decides the depth: limit > tip + tolerance.
-    public static bool[,] HeadLimitedMask(HeightMap tip, HeightMap limit, float tolerance)
+    public static unsafe bool[,] HeadLimitedMask(HeightMap tip, HeightMap limit, float tolerance)
     {
         RequireSameGrid(tip, limit);
-        var mask = new bool[tip.Width, tip.Height];
-        for (var j = 0; j < tip.Height; j++)
+        var mask = new byte[tip.CellCount];
+        fixed (float* t = tip.Z, l = limit.Z)
+        fixed (byte* m = mask)
         {
-            for (var i = 0; i < tip.Width; i++)
-            {
-                var t = tip[i, j];
-                var l = limit[i, j];
-                mask[i, j] = !float.IsNaN(t) && !float.IsNaN(l) && l > t + tolerance;
-            }
+            CoreNative.mn_head_limited_mask(t, l, tip.CellCount, tolerance, m);
         }
 
-        return mask;
+        return CoreNative.Mask(mask, tip.Width, tip.Height);
     }
 
     private static void RequireSameGrid(HeightMap tip, HeightMap limit)

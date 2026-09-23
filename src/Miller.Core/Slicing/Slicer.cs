@@ -1,15 +1,21 @@
 using Miller.Core.HeightMaps;
+using Miller.Core.Native;
 using Miller.Core.Setup;
 
 namespace Miller.Core.Slicing;
 
 // Decomposes the job into levels z_k = stockTop - k * Stepdown while z_k is above the lowest
-// effective tip; the last level is clamped to that lowest tip. A cell takes part in a level when
-// the tool may sit at that level there (effectiveTip <= level) and the stock still has material
-// above it (stock > level). The coverage mask holds every cell with an effective tip.
+// effective tip; the last level is clamped to that lowest tip (native mn_slice). A cell takes part in
+// a level when the tool may sit at that level there (effectiveTip <= level, with LevelTolerance) and
+// the stock still has material above it (stock > level). The coverage mask holds every cell with an
+// effective tip.
 public static class Slicer
 {
-    public static SlicePlan Build(HeightMap effectiveTip, HeightMap stock, CuttingParameters parameters)
+    // Float slack so a value sitting on a level is not lifted to the level above; also the slack of
+    // the level masks (a rasterized 30 top reads 30.000002).
+    public const float LevelTolerance = 1e-4f;
+
+    public static unsafe SlicePlan Build(HeightMap effectiveTip, HeightMap stock, CuttingParameters parameters)
     {
         ArgumentNullException.ThrowIfNull(effectiveTip);
         ArgumentNullException.ThrowIfNull(stock);
@@ -24,24 +30,28 @@ public static class Slicer
             throw new ArgumentException($"Stepdown must be positive, got {parameters.Stepdown}.", nameof(parameters));
         }
 
-        var stockTop = stock.Max();
-        var lowest = effectiveTip.Min();
-        if (float.IsNaN(stockTop) || float.IsNaN(lowest))
+        var grid = CoreNative.GridOf(effectiveTip);
+        IntPtr plan;
+        fixed (float* t = effectiveTip.Z, s = stock.Z)
         {
-            throw new ArgumentException("Stock or tip map holds no material at all.", nameof(stock));
+            var status = CoreNative.mn_slice(&grid, t, s, parameters.Stepdown, &plan);
+            if (status == CoreNative.ErrorArgument)
+            {
+                throw new ArgumentException(CoreNative.LastError, nameof(stock));
+            }
+
+            CoreNative.Check(status);
         }
 
-        var steps = new List<MillingStep>();
-        foreach (var level in Levels(stockTop, lowest, parameters.Stepdown))
+        try
         {
-            steps.Add(new MillingStep(level, LevelMask(effectiveTip, stock, level)));
+            return CoreNative.PlanOf(plan, effectiveTip.Width, effectiveTip.Height);
         }
-
-        return new SlicePlan(steps, MaterialMask(effectiveTip), lowest);
+        finally
+        {
+            CoreNative.mn_plan_free(plan);
+        }
     }
-
-    // Float slack so a value sitting on a level is not lifted to the level above.
-    public const float LevelTolerance = 1e-4f;
 
     // Material is removed level by level, so a surface at z stands at the lowest level that
     // is still at or above z until the pass that reaches z; z above the first level stays at the top.
@@ -52,76 +62,43 @@ public static class Slicer
             throw new ArgumentOutOfRangeException(nameof(stepdown), stepdown, "Stepdown must be positive.");
         }
 
-        if (float.IsNaN(z) || z >= stockTop)
-        {
-            return z;
-        }
-
-        var steps = MathF.Floor((stockTop - z) / stepdown + LevelTolerance);
-        return stockTop - steps * stepdown;
+        return CoreNative.mn_ceil_to_level(z, stockTop, stepdown);
     }
 
-    public static HeightMap CeilToLevels(HeightMap map, float stockTop, float stepdown)
+    public static unsafe HeightMap CeilToLevels(HeightMap map, float stockTop, float stepdown)
     {
         ArgumentNullException.ThrowIfNull(map);
-        var result = map.Clone();
-        for (var k = 0; k < result.Z.Length; k++)
+        if (!(stepdown > 0))
         {
-            result.Z[k] = CeilToLevel(result.Z[k], stockTop, stepdown);
+            throw new ArgumentOutOfRangeException(nameof(stepdown), stepdown, "Stepdown must be positive.");
+        }
+
+        var result = CoreNative.Empty(map, float.NaN);
+        fixed (float* source = map.Z, target = result.Z)
+        {
+            CoreNative.mn_ceil_to_levels(source, map.CellCount, stockTop, stepdown, target);
         }
 
         return result;
     }
 
-    public static IEnumerable<float> Levels(float stockTop, float lowest, float stepdown)
+    public static unsafe IEnumerable<float> Levels(float stockTop, float lowest, float stepdown)
     {
-        for (var k = 1; ; k++)
+        if (!(stepdown > 0))
         {
-            var level = stockTop - k * stepdown;
-            if (level <= lowest)
-            {
-                if (lowest < stockTop)
-                {
-                    yield return lowest;
-                }
-
-                yield break;
-            }
-
-            yield return level;
-        }
-    }
-
-    // A tip within LevelTolerance above the level counts as on it, the same slack CeilToLevel uses:
-    // rasterized heights carry float rounding (a 30 top reads 30.000002, a head limit from it
-    // 18.000002), and a cell excluded here would be left one level higher than the head limit
-    // assumes, so the head would hit it.
-    private static bool[,] LevelMask(HeightMap tip, HeightMap stock, float level)
-    {
-        var mask = new bool[tip.Width, tip.Height];
-        for (var j = 0; j < tip.Height; j++)
-        {
-            for (var i = 0; i < tip.Width; i++)
-            {
-                var s = stock[i, j];
-                mask[i, j] = ReachMap.ReachableAt(tip[i, j], level) && !float.IsNaN(s) && s > level;
-            }
+            throw new ArgumentOutOfRangeException(nameof(stepdown), stepdown, "Stepdown must be positive.");
         }
 
-        return mask;
-    }
-
-    private static bool[,] MaterialMask(HeightMap tip)
-    {
-        var mask = new bool[tip.Width, tip.Height];
-        for (var j = 0; j < tip.Height; j++)
+        float* levels = null;
+        int count;
+        CoreNative.Check(CoreNative.mn_levels(stockTop, lowest, stepdown, &levels, &count));
+        try
         {
-            for (var i = 0; i < tip.Width; i++)
-            {
-                mask[i, j] = !float.IsNaN(tip[i, j]);
-            }
+            return new ReadOnlySpan<float>(levels, count).ToArray();
         }
-
-        return mask;
+        finally
+        {
+            CoreNative.mn_free(levels);
+        }
     }
 }

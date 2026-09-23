@@ -1,14 +1,18 @@
+using Miller.Core.Native;
 using Miller.Core.Setup;
 
 namespace Miller.Core.HeightMaps;
 
-// Grid offset (Dx, Dy) from the tool axis and the height Dz of the tool surface above the tip there.
+// Grid offset (Dx, Dy) from the tool axis and the height Dz of the tool surface there: above the tip
+// under the cutter, above the head bottom under the head.
 public readonly record struct ProfileOffset(int Dx, int Dy, float Dz);
 
-// The tool as seen by the grid: every cell offset under the cutter with the tool-bottom height above
-// the tip (flat: 0; ball: r - sqrt(r^2 - d^2)), and the ring of cell offsets under the head only.
-// Offsets are exact because a cell center displaced by (Dx, Dy) cells lies at distance
-// CellSize * sqrt(Dx^2 + Dy^2) from the axis when the axis sits on a cell center.
+// The tool as seen by the grid (native mn_profile_create): every cell offset under the cutter with
+// the tool-bottom height above the tip (flat: 0; ball: r - sqrt(r^2 - d^2)), and the ring of cell
+// offsets under the head only, with the height of the head underside above the head bottom (0 for a
+// cylinder; for a frustum 0 inside its bottom radius and, when it widens, rising linearly to its
+// length at the top radius). Offsets are exact because a cell center displaced by (Dx, Dy) cells
+// lies at distance CellSize * sqrt(Dx^2 + Dy^2) from the axis when the axis sits on a cell center.
 public sealed class ToolProfile
 {
     // Absolute slack on the radius comparisons so that d == r (float) counts as inside.
@@ -31,14 +35,14 @@ public sealed class ToolProfile
     // Cutter footprint, always containing (0, 0, 0).
     public ProfileOffset[] Offsets { get; }
 
-    // Head ring: cutter radius < d <= head radius; Dz is 0 and unused.
+    // Head ring: cutter radius < d <= head radius; Dz is the head underside above the head bottom.
     public ProfileOffset[] AnnulusOffsets { get; }
 
     public int RadiusCells { get; }
 
     public int HeadRadiusCells { get; }
 
-    public static ToolProfile Create(ToolDefinition tool, float cellSize)
+    public static unsafe ToolProfile Create(ToolDefinition tool, float cellSize)
     {
         ArgumentNullException.ThrowIfNull(tool);
         if (!(cellSize > 0))
@@ -51,42 +55,30 @@ public sealed class ToolProfile
             throw new ArgumentException($"Cutter diameter must be positive, got {tool.CutterDiameter}.", nameof(tool));
         }
 
-        var r = tool.CutterRadius;
-        var headRadius = tool.HeadRadius;
-        var reach = (int)MathF.Ceiling(MathF.Max(r, headRadius) / cellSize);
-        var offsets = new List<ProfileOffset>();
-        var annulus = new List<ProfileOffset>();
-        for (var dy = -reach; dy <= reach; dy++)
+        var native = CoreNative.ToolOf(tool);
+        CoreNative.Offset* offsets = null;
+        CoreNative.Offset* annulus = null;
+        int offsetCount, annulusCount;
+        CoreNative.Check(CoreNative.mn_profile_create(&native, cellSize, &offsets, &offsetCount, &annulus, &annulusCount));
+        try
         {
-            for (var dx = -reach; dx <= reach; dx++)
-            {
-                var d = cellSize * MathF.Sqrt(dx * dx + dy * dy);
-                if (d <= r + RadiusTolerance)
-                {
-                    offsets.Add(new ProfileOffset(dx, dy, BottomHeight(tool.TipType, r, d)));
-                }
-                else if (d <= headRadius + RadiusTolerance)
-                {
-                    annulus.Add(new ProfileOffset(dx, dy, 0f));
-                }
-            }
+            return new ToolProfile(tool, cellSize, CoreNative.ProfileOffsetsOf(offsets, offsetCount), CoreNative.ProfileOffsetsOf(annulus, annulusCount));
         }
-
-        return new ToolProfile(tool, cellSize, offsets.ToArray(), annulus.ToArray());
+        finally
+        {
+            CoreNative.mn_free(offsets);
+            CoreNative.mn_free(annulus);
+        }
     }
 
     // Height of the tool bottom above the tip at lateral distance d from the axis.
     public static float BottomHeight(TipType tipType, float radius, float d)
     {
-        switch (tipType)
+        if (tipType != TipType.Flat && tipType != TipType.Ball)
         {
-            case TipType.Flat:
-                return 0f;
-            case TipType.Ball:
-                var inside = MathF.Max(0f, radius * radius - d * d);
-                return radius - MathF.Sqrt(inside);
-            default:
-                throw new ArgumentException($"Unknown tip type {tipType}.", nameof(tipType));
+            throw new ArgumentException($"Unknown tip type {tipType}.", nameof(tipType));
         }
+
+        return CoreNative.mn_bottom_height((int)tipType, radius, d);
     }
 }
