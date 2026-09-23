@@ -1,6 +1,7 @@
 using System.Globalization;
 using Miller.Application.Progress;
 using Miller.Application.Validation;
+using Miller.Core.Generation;
 using Miller.Core.Geometry;
 using Miller.Core.HeightMaps;
 using Miller.Core.Progress;
@@ -35,13 +36,17 @@ public sealed record PipelineResult(
     // What stands after the levels besides the model (cut scope): the stock surface over cells never
     // cut, the terrace level over trench cells, NaN where only the model constrains the tool.
     public HeightMap Standing { get; init; } = new(0, 0, 1, 1, 1, float.NaN);
+
+    // Stock the collision check found in the way of the head and turned from may-cut into must-cut.
+    public bool[,] ShouldCut { get; init; } = new bool[0, 0];
 }
 
-// Runs the stages of docs/ARCHITECTURE.md 5.1 in order; the routed toolpath is simplified to vectors
+// Runs the stages of docs/ARCHITECTURE.md 5.1 in order: the validation here, every later stage in one
+// call of the native library (ToolpathGeneration); the routed toolpath is simplified to vectors
 // within the tolerance before the statistics. Progress fractions are cumulative over the
 // stage weights below; the message names the stage and, for the stages with an inner loop, the
 // unit and number of the iteration and the percent of the stage. Cancellation is honoured between
-// stages and inside the strategy.
+// stages and inside the reach map, the head clearance and the strategy.
 public sealed class PipelineService
 {
     private static readonly (string Stage, float Weight, string Unit)[] Stages =
@@ -62,7 +67,8 @@ public sealed class PipelineService
     // (one pixel of a 200 px bar), so a row-by-row producer does not flood the UI thread.
     public const float MinVisibleDelta = 0.005f;
 
-    // Head limit iterations rarely need more than two rounds; the cap keeps a pathological grid finite.
+    // Head limit iterations rarely need more than two rounds; the cap keeps a pathological grid finite
+    // (the native pipeline uses the same number).
     public const int MaxHeadIterations = 8;
 
     public Task<PipelineResult> RunAsync(MillingProject project, IReadOnlyList<Mesh> meshes, IProgress<ProgressReport>? progress, CancellationToken cancellation)
@@ -87,104 +93,19 @@ public sealed class PipelineService
             throw new ValidationException(validation);
         }
 
-        var strategy = StrategyRegistry.GetById(project.RoutingStrategyId);
+        StrategyRegistry.GetById(project.RoutingStrategyId);
         cancellation.ThrowIfCancellationRequested();
 
-        reporter.Begin(1);
-        var machineMesh = ModelLayout.MergeMachineMeshes(project, meshes);
-        cancellation.ThrowIfCancellationRequested();
-
-        reporter.Begin(2);
-        var p = project.Parameters;
-        // The stock is aligned to the models before their offsets, not to the merged mesh, so an
-        // offset model sits where the viewport shows it and may hang outside the stock.
-        var stock = StockModel.Create(project.Stock, ModelLayout.AnchorBoundsMachine(project, meshes.Select(m => m.Bounds).ToList()), p.CellSize);
-        cancellation.ThrowIfCancellationRequested();
-
-        reporter.Begin(3);
-        var floor = stock.StockBottom;
-        var model = MeshRasterizer.CreateGridFor(stock.Bounds, p.CellSize, floor);
-        MeshRasterizer.Rasterize(machineMesh, model, floor);
-        cancellation.ThrowIfCancellationRequested();
-
-        reporter.Begin(4);
-        var profile = ToolProfile.Create(project.Tool, p.CellSize);
-        var tip = ReachMap.Compute(model, stock.Map, profile, floor, project.ReachPercent, p.Tolerance, reporter.StageProgress(4));
-        cancellation.ThrowIfCancellationRequested();
-
-        reporter.Begin(5);
-        // The head must clear what the cutter leaves, not only the model: the limit comes from the
-        // remaining material (closing of the tip map), rounded up to the level it stands at
-        // until the pass that reaches it, since neighbours are cut level by level. A raised tip leaves
-        // more, so iterate until the effective tip settles; limits only rise, so the loop is bounded.
-        // The stock a narrower cut scope leaves standing is not part of this: the separation region
-        // terraces its trench so the head clears that stock by construction, and feeding it back here
-        // would widen the model region without end.
-        var effective = tip;
-        HeightMap limit;
-        for (var iteration = 1; ; iteration++)
-        {
-            var remaining = Slicer.CeilToLevels(HeightMapDilation.ComputeRemaining(effective, profile), stock.StockTop, p.Stepdown);
-            limit = HeadClearance.ComputeHeadLimit(remaining, profile, project.Tool.CutterLength);
-            var next = HeadClearance.ApplyHeadLimit(tip, limit);
-            var settled = SameWithin(next, effective, p.Tolerance);
-            effective = next;
-            cancellation.ThrowIfCancellationRequested();
-            reporter.Report(5, new StepProgress(iteration, MaxHeadIterations, (float)iteration / MaxHeadIterations));
-            if (settled || iteration >= MaxHeadIterations)
-            {
-                break;
-            }
-        }
-
-        var headLimited = HeadClearance.HeadLimitedMask(tip, limit, p.Tolerance);
-
-        reporter.Begin(6);
-        var sliced = Slicer.Build(effective, stock.Map, p);
-        var scoped = project.CutScope switch
-        {
-            CutScope.Everything => SeparationRegion.Everything(sliced, effective),
-            CutScope.Separation => SeparationRegion.Build(sliced, effective, stock.Map, project.Tool, p, stock.StockTop, floor, project.MinIslandVolume),
-            _ => throw new ArgumentException($"Unknown cut scope {project.CutScope}.", nameof(project)),
-        };
-        var plan = scoped.Plan;
-        // Strategies stay above the standing stock as well as above the model.
-        var strategyTip = HeadClearance.ApplyHeadLimit(effective, scoped.Standing);
-        var context = new ToolpathContext(model, tip, strategyTip, limit, stock.Map, plan, project.Tool, profile, p, stock.StockTop);
-        cancellation.ThrowIfCancellationRequested();
-
-        reporter.Begin(7);
-        var routed = strategy.Generate(context, reporter.StageProgress(7), cancellation);
-        cancellation.ThrowIfCancellationRequested();
-
-        reporter.Begin(8);
-        var toolpath = ToolpathSimplifier.Simplify(routed, strategyTip, p.Tolerance);
-        cancellation.ThrowIfCancellationRequested();
-
-        reporter.Begin(9);
-        var statistics = ToolpathStatistics.Compute(toolpath, p);
+        // Every stage after the validation runs in the native library; its reports carry the stage.
+        var generated = ToolpathGeneration.Run(project, meshes, (stage, step) => reporter.Report(stage, step), cancellation);
         reporter.Done();
 
-        return new PipelineResult(machineMesh, stock, model, tip, effective, limit, headLimited, plan, toolpath, statistics, profile, floor, p.Tolerance)
+        return new PipelineResult(generated.MachineMesh, generated.Stock, generated.Model, generated.Tip, generated.EffectiveTip, generated.HeadLimit, generated.HeadLimitedMask, generated.Plan, generated.Toolpath, generated.Statistics, generated.Profile, generated.Floor, project.Parameters.Tolerance)
         {
-            Parameters = p,
-            Standing = scoped.Standing,
+            Parameters = project.Parameters,
+            Standing = generated.Standing,
+            ShouldCut = generated.ShouldCut,
         };
-    }
-
-    private static bool SameWithin(HeightMap a, HeightMap b, float tolerance)
-    {
-        for (var k = 0; k < a.Z.Length; k++)
-        {
-            var x = a.Z[k];
-            var y = b.Z[k];
-            if (float.IsNaN(x) != float.IsNaN(y) || (!float.IsNaN(x) && MathF.Abs(x - y) > tolerance))
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     // Turns the stage table and the producers' StepProgress into ProgressReports: the fraction is the
@@ -213,8 +134,6 @@ public sealed class PipelineService
 
         public void Done() => Forward(new ProgressReport("done", 1f, "Toolpath ready"));
 
-        public IProgress<StepProgress> StageProgress(int stage) => new Forwarder(step => Report(stage, step));
-
         public void Report(int stage, StepProgress step)
         {
             var (name, weight, unit) = Stages[stage];
@@ -235,15 +154,6 @@ public sealed class PipelineService
             _lastMessage = report.Message;
             _lastFraction = report.Fraction;
             _progress?.Report(report);
-        }
-
-        private sealed class Forwarder : IProgress<StepProgress>
-        {
-            private readonly Action<StepProgress> _report;
-
-            public Forwarder(Action<StepProgress> report) => _report = report;
-
-            public void Report(StepProgress value) => _report(value);
         }
     }
 }

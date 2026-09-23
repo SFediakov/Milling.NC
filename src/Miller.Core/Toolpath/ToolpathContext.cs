@@ -19,4 +19,8 @@ public sealed record ToolpathContext(
     float StockTop)
 {
     public float SafeZ => StockTop + Parameters.SafeHeight;
+
+    // Cells the head collided with that do not belong to the model (the collision check of the
+    // pipeline): they must be cut down to their floor before the tool works deeper beside them.
+    public bool[,]? ShouldCut { get; init; }
 }

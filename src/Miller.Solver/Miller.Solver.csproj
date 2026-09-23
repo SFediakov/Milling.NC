@@ -1,5 +1,26 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>Miller.Solver</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
+  <!-- The toolpath generation runs in the native C library src/Miller.Native. Every build of this
+       project configures and builds it with CMake (the Visual Studio generator on Windows, the default
+       Makefile generator on Linux) and copies the library next to the assemblies of every project
+       that references this one, for build and publish alike. -->
+  <PropertyGroup>
+    <MillerNativeSource>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../Miller.Native'))</MillerNativeSource>
+    <MillerNativeBuild>$(MillerNativeSource)/build</MillerNativeBuild>
+    <MillerNativeFile Condition="$([MSBuild]::IsOSPlatform('Windows'))">miller_native.dll</MillerNativeFile>
+    <MillerNativeFile Condition="!$([MSBuild]::IsOSPlatform('Windows'))">libmiller_native.so</MillerNativeFile>
+  </PropertyGroup>
+
+  <Target Name="BuildMillerNative" BeforeTargets="BeforeBuild">
+    <Exec Command="cmake -S &quot;$(MillerNativeSource)&quot; -B &quot;$(MillerNativeBuild)&quot; -DCMAKE_BUILD_TYPE=Release" />
+    <Exec Command="cmake --build &quot;$(MillerNativeBuild)&quot; --config Release" />
+  </Target>
+
+  <ItemGroup>
+    <None Include="$(MillerNativeBuild)/out/$(MillerNativeFile)" Link="$(MillerNativeFile)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
 </Project>

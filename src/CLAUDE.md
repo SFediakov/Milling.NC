@@ -18,8 +18,15 @@
   `Directory.Packages.props`, `Miller.App.csproj` and `third_party/nuget/`. Adding
   `AvaloniaUI.DiagnosticsSupport` later is a one-line change in T-002 and T-006.
 - The turn fine (T-133) is not a cluster of its own: it is part of the route solver's cost, the
-  local search evaluates it inside every candidate move, so it lives in `Miller.Solver`
-  (`TurnFine.cs`, `FineWindow.cs`), which is already the insulated numeric cluster.
+  local search evaluates it inside every candidate move, so it lives with the route solver
+  (since T-134 in `src/Miller.Native/src/mn_route.c` and `mn_window.c`).
+- The native library `src/Miller.Native` (T-134, user request: all toolpath generation in one
+  built C library) is one cluster for the whole generation, and its insulation is weaker than a
+  .NET cluster's: a memory fault inside C ends the process instead of raising an exception the
+  caller could catch. Mitigation: every export checks its arguments and returns a status code with
+  a message, the facades validate before the call and turn a status into the former .NET
+  exception, and no C code uses longjmp, abort or a global state other than the thread-local
+  error text.
 - `RouteSolver` builds two start walks and keeps the cheaper one; both always run, so it is a
   multi-start, not a fallback or a switch.
 
@@ -357,3 +364,17 @@
   status of the changed nodes): the heart's routes take 0.65 s instead of 0.02 s, 3 axis freedom 5.4 s
   instead of 0.24 s. The 0.2 mm outline staircases stay in the G-code: every order of those nodes
   turns at every cell, and the simplifier keeps them (0.14 mm deviation over a 0.05 mm tolerance).
+- A C port that must reproduce .NET float results bit for bit has to copy four .NET rules, each of
+  which changed an output on the heart: `MathF.Max` and `MathF.Min` return NaN when either side is
+  NaN and order -0 below +0 (C `fmaxf` does neither); `MathF.Round` rounds ties to even (`rintf`,
+  not `roundf`); .NET 9 and later saturate a float-to-int conversion and give 0 for NaN (C is
+  undefined there); `Vector3.Transform` is compiled to fused multiply-adds, so the C transform is
+  `fmaf` in the same order. MSVC needs `/fp:precise` and gcc `-ffp-contract=off` so the compiler adds
+  no contraction of its own. Constants such as cos 35 degrees are written from their bits.
+- Starting threads for every block of 16 rows made the native reach map slower than the C#
+  `Parallel.For` (thread start costs more than a block); a pool that lives for the whole map and
+  waits on a condition variable between blocks brought it from 26 ms to 15 ms.
+- The C# pipeline had no tolerance for a different order of float sums, so the differential test
+  (30 heart variants, every map and segment compared by bits) found each porting slip at once; the
+  one crash it found was a component list whose offsets were relative in one function and absolute
+  in its caller.

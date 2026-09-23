@@ -105,18 +105,41 @@ three decimals.
         | references
         v
 +---------------------------------------------------------------+
-| Miller.Solver   Route solver over flat arrays (no domain types)|  Numeric
+| Miller.Solver   Route solver facades (no domain types)         |  Numeric
++---------------------------------------------------------------+
+        | P/Invoke (both Core and Solver)
+        v
++---------------------------------------------------------------+
+| Miller.Native   miller_native.dll / libmiller_native.so (C11)  |  Native
+|                 the whole toolpath generation                  |
 +---------------------------------------------------------------+
 
-Miller.Tests references all four.
+Miller.Tests references all four .NET projects.
 ```
 
 Rules:
 
-- `Miller.Solver` references nothing. It holds the hot numeric loops of the
-  routing (surface polyline, pair costs, nearest-neighbour walk, 2-opt and
-  Or-opt local search) over flat `float[]` arrays and knows no domain type, so
-  the same assembly boundary is where a native implementation would go.
+- `Miller.Native` is the native C library that runs the whole toolpath
+  generation (T-134): mesh transform, rasterizing, stock, reach map, head
+  clearance, slicing, separation, islands, both strategies with lattice, cave
+  tree and route solver, route writer, gouge check, simplifier and statistics.
+  `mn_generate` runs the complete pipeline in one call; every stage is also
+  exported on its own. It is C11 with no dependency but the C runtime and the
+  thread API of the system, reproduces the former C# float results bit for bit
+  (MathF.Max NaN rules, ties-to-even rounding, saturating conversions, the fused
+  multiply-add of `Vector3.Transform`) and is built by CMake from the
+  `Miller.Solver` project on every build. Errors come back as status codes with
+  a thread-local message; the facades turn them into the same .NET exceptions
+  as before.
+- `Miller.Solver` references nothing managed. It holds the P/Invoke facades of
+  the routing (surface polyline, pair costs, turn fine, route solver, budget)
+  and knows no domain type.
+- The C# classes of the generation (`ReachMap`, `HeadClearance`, `Slicer`,
+  `SeparationRegion`, the strategies, `RouteWriter`, `GougeChecker`,
+  `ToolpathSimplifier`, `ToolpathStatistics` and the rest) keep their public
+  signatures and forward to the native library (`Miller.Core/Native/CoreNative.cs`);
+  they hold no algorithm of their own any more. `ToolpathGeneration.Run` builds
+  the job for `mn_generate` and reads every map, mask, plan and segment back.
 - `Miller.Core` references `Miller.Solver` and no package. It has no file
   dialogs, no threads of its own, no timers. It is deterministic: same input,
   same output, on every OS.
@@ -283,7 +306,8 @@ Mirrors the source tree: `Core/<Folder>/<Type>Tests.cs`,
 
 | Path | Purpose |
 |---|---|
-| `build.sh` | The only build script. Restore, build, test, publish for `win-x64` and `linux-x64`, assemble `dist/`. Runs on Linux and on Git Bash for Windows |
+| `build.sh` | The only build script. Restore, build, test, publish the host runtime (`win-x64` on Windows, `linux-x64` on Linux), assemble `dist/`. Runs on Linux and on Git Bash for Windows |
+| `src/Miller.Native/` | The native C library of the toolpath generation: `CMakeLists.txt`, `include/miller_native.h` (the exported API), `src/*.c`; built into `src/Miller.Native/build/out` |
 | `launchers/Miller.sh` | Copied to `dist/linux-x64/Miller.sh`; `cd` to its own directory and `exec ./Miller "$@"` |
 | `scripts/vendor-packages.sh` | One-time, online: downloads every package in `Directory.Packages.props` with dependencies into `third_party/nuget/` |
 | `third_party/nuget/` | Vendored `.nupkg` files; the only NuGet source. Git-ignored, filled once per clone by `scripts/vendor-packages.sh` |
@@ -293,6 +317,10 @@ Mirrors the source tree: `Core/<Folder>/<Type>Tests.cs`,
 ## 5. Data flow
 
 ### 5.1 Toolpath pipeline (PipelineService)
+
+Every step from the transform to the statistics runs inside the native library
+in one `mn_generate` call (`ToolpathGeneration.Run`); the names below are the
+facades that expose the same step on its own.
 
 ```
 STL file
@@ -375,9 +403,13 @@ file test in `tests/Miller.Tests/Golden/`.
 ## 7. Cross-platform build and launchers
 
 - Source is identical for both systems. `build.sh` runs
-  `dotnet publish src/Miller.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true`
-  and the same with `-r linux-x64`, then copies `launchers/Miller.sh` into
-  `dist/linux-x64/`.
+  `dotnet publish src/Miller.App -c Release -r <rid> --self-contained -p:PublishSingleFile=true`
+  for the runtime of the host: `win-x64` on Windows, `linux-x64` on Linux (then it
+  copies `launchers/Miller.sh` into `dist/linux-x64/`). The native library is
+  compiled by the host's C compiler (MSVC with the static C runtime on Windows, gcc
+  on Linux), so a system cannot publish the other one without a cross compiler.
+- Build requirements besides the .NET 10 SDK: CMake 3.20 or newer and a C11
+  compiler (Visual Studio Build Tools on Windows, `gcc` and `make` on Linux).
 - Windows start file: `dist/win-x64/Miller.exe`.
 - Linux start file: `dist/linux-x64/Miller.sh` (executable bit set by `build.sh`).
 - Root launchers `Miller.cmd` (Windows) and `Miller.sh` (Linux, Git Bash) run the published

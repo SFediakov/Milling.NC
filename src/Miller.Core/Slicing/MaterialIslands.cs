@@ -1,5 +1,5 @@
 using Miller.Core.HeightMaps;
-using Miller.Core.Toolpaths;
+using Miller.Core.Native;
 
 namespace Miller.Core.Slicing;
 
@@ -7,14 +7,15 @@ namespace Miller.Core.Slicing;
 // indices (j * width + i) and the material milling it out would remove.
 public sealed record MaterialIsland(int[] Cells, float Volume);
 
-// Islands of the separation scope. Standing stock above the reach floor (the never-cut cells and
-// the terraces of the trench) falls into 8-connected components; the innermost trench band lies at
-// the floor and separates them. A component that touches the grid border or a cell without stock
-// is the outer frame, every other one is an island. Milling an island out hands its cells back to
-// the level masks and the coverage as the unrestricted plan has them, and nothing stands there.
+// Islands of the separation scope (native mn_islands_find, mn_islands_remove_below). Standing stock
+// above the reach floor (the never-cut cells and the terraces of the trench) falls into 8-connected
+// components; the innermost trench band lies at the floor and separates them. A component that
+// touches the grid border or a cell without stock is the outer frame, every other one is an island.
+// Milling an island out hands its cells back to the level masks and the coverage as the unrestricted
+// plan has them, and nothing stands there.
 public static class MaterialIslands
 {
-    public static IReadOnlyList<MaterialIsland> Find(HeightMap standing, HeightMap effectiveTip, HeightMap stock, float tolerance)
+    public static unsafe IReadOnlyList<MaterialIsland> Find(HeightMap standing, HeightMap effectiveTip, HeightMap stock, float tolerance)
     {
         ArgumentNullException.ThrowIfNull(standing);
         ArgumentNullException.ThrowIfNull(effectiveTip);
@@ -24,43 +25,31 @@ public static class MaterialIslands
             throw new ArgumentException("Standing, tip and stock maps must share the same grid.", nameof(standing));
         }
 
-        var width = standing.Width;
-        var height = standing.Height;
-        var mask = new bool[width, height];
-        for (var j = 0; j < height; j++)
+        var grid = CoreNative.GridOf(standing);
+        int* cells = null;
+        int* offsets = null;
+        float* volumes = null;
+        int count;
+        fixed (float* s = standing.Z, t = effectiveTip.Z, k = stock.Z)
         {
-            for (var i = 0; i < width; i++)
-            {
-                var above = standing[i, j] - effectiveTip[i, j];
-                mask[i, j] = !float.IsNaN(stock[i, j]) && above > tolerance;
-            }
+            CoreNative.Check(CoreNative.mn_islands_find(&grid, s, t, k, tolerance, &cells, &offsets, &volumes, &count));
         }
 
-        CaveTree.Label(mask, width, height, out var components);
-        var area = standing.CellSize * standing.CellSize;
-        var islands = new List<MaterialIsland>();
-        foreach (var cells in components)
+        try
         {
-            if (TouchesTheOutside(cells, stock))
-            {
-                continue;
-            }
-
-            var volume = 0f;
-            foreach (var c in cells)
-            {
-                volume += (standing.Z[c] - effectiveTip.Z[c]) * area;
-            }
-
-            islands.Add(new MaterialIsland(cells, volume));
+            return IslandsOf(cells, offsets, volumes, count);
         }
-
-        return islands;
+        finally
+        {
+            CoreNative.mn_free(cells);
+            CoreNative.mn_free(offsets);
+            CoreNative.mn_free(volumes);
+        }
     }
 
     // Gives the cells of every island below the threshold back to the masks, the coverage and the
     // standing map; returns the islands milled out.
-    public static IReadOnlyList<MaterialIsland> RemoveBelow(
+    public static unsafe IReadOnlyList<MaterialIsland> RemoveBelow(
         IReadOnlyList<MaterialIsland> islands, float minVolume, IReadOnlyList<bool[,]> allowed, bool[][,] masks, bool[,] fullCoverage, bool[,] coverage, HeightMap standing)
     {
         ArgumentNullException.ThrowIfNull(islands);
@@ -74,54 +63,54 @@ public static class MaterialIslands
             throw new ArgumentOutOfRangeException(nameof(minVolume), minVolume, "The island volume to keep must be 0 or greater.");
         }
 
-        var removed = new List<MaterialIsland>();
         var width = standing.Width;
-        foreach (var island in islands)
+        var height = standing.Height;
+        var cellCount = standing.CellCount;
+        var levels = masks.Length;
+        var allowedBytes = new byte[Math.Max(levels * cellCount, 1)];
+        var maskBytes = new byte[allowedBytes.Length];
+        for (var k = 0; k < levels; k++)
         {
-            if (!(island.Volume < minVolume))
-            {
-                continue;
-            }
-
-            foreach (var c in island.Cells)
-            {
-                var i = c % width;
-                var j = c / width;
-                for (var k = 0; k < masks.Length; k++)
-                {
-                    masks[k][i, j] = allowed[k][i, j];
-                }
-
-                coverage[i, j] = fullCoverage[i, j];
-                standing.Z[c] = float.NaN;
-            }
-
-            removed.Add(island);
+            CoreNative.Bytes(allowed[k]).CopyTo(allowedBytes, k * cellCount);
+            CoreNative.Bytes(masks[k]).CopyTo(maskBytes, k * cellCount);
         }
 
-        return removed;
+        var full = CoreNative.Bytes(fullCoverage);
+        var covered = CoreNative.Bytes(coverage);
+        var islandCells = islands.SelectMany(i => i.Cells).ToArray();
+        var islandOffsets = new int[islands.Count + 1];
+        for (var k = 0; k < islands.Count; k++)
+        {
+            islandOffsets[k + 1] = islandOffsets[k] + islands[k].Cells.Length;
+        }
+
+        var islandVolumes = islands.Select(i => i.Volume).ToArray();
+        var removed = new int[Math.Max(islands.Count, 1)];
+        int removedCount;
+        fixed (int* c = islandCells, o = islandOffsets, r = removed)
+        fixed (float* v = islandVolumes, s = standing.Z)
+        fixed (byte* a = allowedBytes, m = maskBytes, f = full, cov = covered)
+        {
+            CoreNative.Check(CoreNative.mn_islands_remove_below(c, o, v, islands.Count, minVolume, levels, cellCount, a, m, f, cov, s, r, &removedCount));
+        }
+
+        for (var k = 0; k < levels; k++)
+        {
+            CoreNative.CopyInto(maskBytes.AsSpan(k * cellCount, cellCount), masks[k]);
+        }
+
+        CoreNative.CopyInto(covered, coverage);
+        return removed.Take(removedCount).Select(k => islands[k]).ToList();
     }
 
-    private static bool TouchesTheOutside(int[] cells, HeightMap stock)
+    internal static unsafe IReadOnlyList<MaterialIsland> IslandsOf(int* cells, int* offsets, float* volumes, int count)
     {
-        foreach (var c in cells)
+        var islands = new List<MaterialIsland>(count);
+        for (var k = 0; k < count; k++)
         {
-            var i = c % stock.Width;
-            var j = c / stock.Width;
-            for (var dj = -1; dj <= 1; dj++)
-            {
-                for (var di = -1; di <= 1; di++)
-                {
-                    var ii = i + di;
-                    var jj = j + dj;
-                    if (!stock.InBounds(ii, jj) || float.IsNaN(stock[ii, jj]))
-                    {
-                        return true;
-                    }
-                }
-            }
+            islands.Add(new MaterialIsland(new ReadOnlySpan<int>(cells + offsets[k], offsets[k + 1] - offsets[k]).ToArray(), volumes[k]));
         }
 
-        return false;
+        return islands;
     }
 }

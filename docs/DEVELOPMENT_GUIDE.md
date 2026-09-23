@@ -16,7 +16,7 @@ Contents:
 7. Coding rules and definition of done
 8. Known pitfalls
 9. Milestones
-10. Task list (T-001 to T-133)
+10. Task list (T-001 to T-136)
 
 ---
 
@@ -57,7 +57,8 @@ fails; do not invent an alternative.
 | Math | `System.Numerics.Vector3`, `Matrix4x4` (float) |
 | Serialization | `System.Text.Json` |
 | Package source | `third_party/nuget/` only; `NuGet.config` clears every other source. The `.nupkg` files are git-ignored: run `bash scripts/vendor-packages.sh` once per clone (online), every later restore is offline |
-| Linux build | `bash build.sh` on a Linux machine with the .NET 10 SDK; no container, no network after the one-time vendoring (packages come from `third_party/nuget/`) |
+| Native library | `src/Miller.Native`, C11, CMake 3.20 or newer; MSVC (Visual Studio Build Tools, static C runtime) on Windows, gcc on Linux. The build of `Miller.Solver` runs CMake, so `dotnet build` needs both on the PATH |
+| Linux build | `bash build.sh` on a Linux machine with the .NET 10 SDK, CMake and gcc; no container, no network after the one-time vendoring (packages come from `third_party/nuget/`) |
 | Shell for scripts | bash (Git Bash on Windows). No PowerShell scripts; the one `.cmd` file is the root `Miller.cmd` start file for Explorer |
 
 No other package may be added. If a task seems to need one, the task is wrong;
@@ -72,7 +73,7 @@ Directory.Packages.props     central pinned package versions
 NuGet.config                 single local source
 global.json                  SDK pin
 .editorconfig
-build.sh                     restore, build, test, publish (both RIDs), assemble dist/
+build.sh                     restore, build, test, publish (host RID), assemble dist/
 Miller.sh                    root start file for Linux and Git Bash: runs dist/<rid>/Miller with the arguments
 Miller.cmd                   root start file for Windows Explorer and cmd: starts dist\win-x64\Miller.exe detached, waits only for -- commands
 launchers/Miller.sh          Linux start file (copied to dist/linux-x64/)
@@ -80,7 +81,8 @@ scripts/vendor-packages.sh   one-time online download of packages into third_par
 third_party/nuget/           vendored .nupkg files (git-ignored; only README.md is tracked)
 samples/heart.miller.json    sample project for the fixture STL
 Milling_Heart_V2.STL         fixture (binary STL, 4050 triangles)
-src/Miller.Solver/           route solver over flat arrays: surface polyline, costs, budget, 2-opt and Or-opt (no domain types)
+src/Miller.Native/           native C library: the whole toolpath generation (CMake, include/miller_native.h, src/*.c)
+src/Miller.Solver/           route solver facades over the native library: surface polyline, costs, budget, turn fine (no domain types)
 src/Miller.Core/             domain: geometry, io, setup, heightmap, slicing, toolpath, gcode, simulation, analysis
 src/Miller.Application/      services, validation, progress
 src/Miller.App/              Avalonia UI: views, view models, rendering, ui services, styles, assets
@@ -97,7 +99,7 @@ Build output directories are limited to `bin/`, `obj/`, `build/`, `out/`,
 Identical commands on Windows (Git Bash) and Linux:
 
 ```bash
-bash build.sh                 # restore, build Release, test, publish win-x64 + linux-x64, assemble dist/
+bash build.sh                 # restore, build Release, test, publish the host RID, assemble dist/
 bash build.sh --no-publish    # restore, build, test only (used during tasks)
 bash build.sh --no-test       # restore, build, publish
 ```
@@ -105,11 +107,10 @@ bash build.sh --no-test       # restore, build, publish
 What `build.sh` does, in order:
 
 1. `dotnet restore Miller.sln` (sources come from `NuGet.config`, so this is offline; a fresh clone runs `bash scripts/vendor-packages.sh` once before).
-2. `dotnet build Miller.sln -c Release --no-restore`.
+2. `dotnet build Miller.sln -c Release --no-restore`; the `BuildMillerNative` target of `Miller.Solver` runs `cmake -S src/Miller.Native -B src/Miller.Native/build` and `cmake --build` first, and the library is copied next to every assembly that references `Miller.Solver`.
 3. `dotnet test Miller.sln -c Release --no-build` unless `--no-test`.
-4. `rm -rf dist/win-x64`, then `dotnet publish src/Miller.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o dist/win-x64`.
-5. `rm -rf dist/linux-x64`, then `dotnet publish src/Miller.App -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -o dist/linux-x64`.
-6. `cp launchers/Miller.sh dist/linux-x64/Miller.sh && chmod +x dist/linux-x64/Miller.sh dist/linux-x64/Miller`.
+4. `rm -rf dist`, then for the host RID only (`win-x64` under Git Bash for Windows, `linux-x64` on Linux): `dotnet publish src/Miller.App -c Release -r <rid> --self-contained -p:PublishSingleFile=true -o dist/<rid>`.
+5. On Linux: `cp launchers/Miller.sh dist/linux-x64/Miller.sh && chmod +x dist/linux-x64/Miller.sh dist/linux-x64/Miller`.
 
 Start files:
 
@@ -126,9 +127,10 @@ Start files:
   Settings > Display > Graphics creates), effective from the next start. The Linux
   launchers export `DRI_PRIME=1`.
 
-Linux build: the same `bash build.sh` on a Linux machine with the .NET 10 SDK
-installed. Both RIDs are produced there as well; cross-publishing `win-x64`
-from Linux is supported by the .NET SDK. No network is needed after the one-time
+Linux build: the same `bash build.sh` on a Linux machine with the .NET 10 SDK,
+CMake and gcc installed. It produces `linux-x64` only: the native library is
+compiled by the host's C compiler, and the Windows package comes from a Windows
+build. No network is needed after the one-time
 `bash scripts/vendor-packages.sh` because `NuGet.config` restores from `third_party/nuget/` only.
 
 Output size: `Release` is the only configuration (`Miller.sln` defines no `Debug`,
@@ -136,7 +138,7 @@ Output size: `Release` is the only configuration (`Miller.sln` defines no `Debug
 `dotnet build`/`dotnet test` writes the same `bin/Release` tree. The
 `TrimPackageNativeAssets` target in `Directory.Build.props` keeps only the native
 libraries of `win-x64` and `linux-x64` and drops the native `.pdb` symbols that
-SkiaSharp and HarfBuzzSharp ship; each publish starts from an empty `dist/<rid>`.
+SkiaSharp and HarfBuzzSharp ship; each publish starts from an empty `dist/`.
 
 Headless verification of a Linux binary without a display:
 
@@ -1610,6 +1612,14 @@ check that decides done.
 - Input: user request (a turn of more than 35 degrees slows the first and last 5 mm of the movement to 0.3 of the speed, except a real circular move; circular movements preferred to moves from one axis to another)
 - Output: `TurnFine` (section 6.4), `PathCost` = travel + fine, the smooth start walk, exact fine deltas in 2-opt and Or-opt (`FineWindow`: stretches between changed nodes walked once, shared by the current and the moved route); `heart_grbl.nc` regenerated
 - Acceptance: one right angle between long chords fines 10 mm; exactly 35 degrees is not fined; zones run across short chords and overlap once; the lattice octagon and a hexagon arc are circular, square corners, U-turns and staircases are not; reversed routes cost the same; one more evaluation never raises the fined cost; on a 12 x 8 lattice fewer fined turns than the row pattern and more circular than fined turns; the user's heart (15 routes, 4,866 nodes) fined cost 2,083 to 1,945 (fine -13 percent, travel +5 percent), 3 axis freedom 11,307 to 9,482; route time 0.02 s to 0.65 s and 0.24 s to 5.4 s
+- Status: done
+
+#### T-134 Toolpath generation in one native C library
+- Depends on: T-133
+- Files: `src/Miller.Native/**`, `src/Miller.Solver/Miller.Solver.csproj`, `src/Miller.Solver/Native/SolverNative.cs`, `src/Miller.Solver/*.cs`, `src/Miller.Core/Native/CoreNative.cs`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Core/HeightMap/*.cs`, `src/Miller.Core/Slicing/*.cs`, `src/Miller.Core/Toolpath/**/*.cs`, `src/Miller.Core/Simulation/StockModel.cs`, `src/Miller.Core/Geometry/Mesh.cs`, `src/Miller.Application/Services/PipelineService.cs`, `build.sh`
+- Input: user request (all toolpath generation executed from one built C library with no feature degradation, execution speed optimized; the first wording said C++, the user changed it to C)
+- Output: `miller_native` (C11, CMake, built on every `dotnet build`), `mn_generate` runs transform to statistics in one call, every stage exported on its own; the C# classes are facades with unchanged signatures; a persistent worker pool runs the reach map rows; `LocalSearch.cs`, `FineWindow.cs`, `SpatialBuckets.cs` removed; `build.sh` publishes the host RID
+- Acceptance: every map, mask, plan, segment and statistic bit-identical to the C# pipeline on 30 heart variants (both strategies, both scopes, flat and ball tip, rotated, mirrored, cylinder stock, reach percent, short cutter, 1.2 mm cutter); the 557 existing tests and the golden files unchanged and green; heart timings best of 3 (C# to native): z-layer 808 to 545 ms, separation 1,039 to 753 ms, 3 axis freedom 4,915 to 3,901 ms, 1.2 mm cutter at 0.1 mm cells 4,182 to 2,765 ms
 - Status: done
 
 ### M8 Packaging and release

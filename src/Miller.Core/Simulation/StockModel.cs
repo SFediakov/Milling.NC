@@ -16,9 +16,10 @@ public sealed record StockGeometry(HeightMap Map, float StockTop, float StockBot
 public static class StockModel
 {
     // The stock's minimum corner comes from the same rule AxisSetup.ToMatrix used to place machine
-    // zero, so model and stock agree by construction. Box: every cell at the top. Cylinder: cells whose
-    // center lies outside the circle inscribed in the bounding square are NaN (no material).
-    public static StockGeometry Create(StockDefinition stock, BoundingBox modelBoundsMachine, float cellSize)
+    // zero, so model and stock agree by construction (native mn_stock_map). Box: every cell at the
+    // top. Cylinder: cells whose center lies outside the circle inscribed in the bounding square are
+    // NaN (no material).
+    public static unsafe StockGeometry Create(StockDefinition stock, BoundingBox modelBoundsMachine, float cellSize)
     {
         ArgumentNullException.ThrowIfNull(stock);
         if (modelBoundsMachine.IsEmpty)
@@ -35,30 +36,16 @@ public static class StockModel
         var corner = AxisSetup.StockCorner(modelBoundsMachine, stock);
         var bounds = new BoundingBox(corner, corner + size);
         var top = bounds.Max.Z;
-        var map = MeshRasterizer.CreateGridFor(bounds, cellSize, top);
-        if (stock.Shape == StockShape.Cylinder)
+        Native.CoreNative.Grid grid;
+        float* z = null;
+        Native.CoreNative.Check(Native.CoreNative.mn_stock_map(corner.X, corner.Y, size.X, size.Y, top, stock.Shape == StockShape.Cylinder ? 1 : 0, stock.Diameter, cellSize, &grid, &z));
+        try
         {
-            MaskOutsideCircle(map, corner.X + size.X / 2, corner.Y + size.Y / 2, stock.Diameter / 2);
+            return new StockGeometry(Native.CoreNative.MapOf(grid, z), top, bounds.Min.Z, bounds);
         }
-
-        return new StockGeometry(map, top, bounds.Min.Z, bounds);
-    }
-
-    private static void MaskOutsideCircle(HeightMap map, float centerX, float centerY, float radius)
-    {
-        var r2 = radius * radius;
-        for (var j = 0; j < map.Height; j++)
+        finally
         {
-            for (var i = 0; i < map.Width; i++)
-            {
-                var c = map.CellCenter(i, j);
-                var dx = c.X - centerX;
-                var dy = c.Y - centerY;
-                if (dx * dx + dy * dy > r2)
-                {
-                    map[i, j] = float.NaN;
-                }
-            }
+            Native.CoreNative.mn_free(z);
         }
     }
 }
