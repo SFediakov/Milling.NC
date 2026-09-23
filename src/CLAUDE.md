@@ -378,3 +378,18 @@
   (30 heart variants, every map and segment compared by bits) found each porting slip at once; the
   one crash it found was a component list whose offsets were relative in one function and absolute
   in its caller.
+- Collision feedback (T-136): a head limit that counts on stock cut exactly to its closing fails by
+  up to Tolerance, because the simplifier keeps chords up to Tolerance above the planned tip. On the
+  heart with an 8 mm cutter that alone gave 3 axis freedom 24 head events; a should-cut cell counts
+  with closing + Tolerance. Rounding up to the level (CeilToLevel) had hidden this slack before.
+- The Z layer has no cave above the first level: stock between the stock top and the first level is
+  never cut by a level route, so should-cut stock there needs its own route before the first cave
+  (349 head events on the heart with an 8 mm cutter without it).
+- A should-cut route over a lattice at the finishing stepover leaves sloped stock 0.01 to 0.08 mm
+  above its closing; every cell over should-cut stock is a node. 3 axis freedom needed no change
+  (extra nodes there only lengthened the path from 14.0 to 17.4 min).
+- A strategy that visits cells at their tip realizes the majority reach map exactly, including its
+  cut-back walls: the rotated heart's gouge cells under the Z layer went from 584 to 1432, the
+  number 3 axis freedom already had before T-136. That is the confirmed reach rule, not a defect.
+- Found while evaluating T-136 and not changed: 3 axis freedom in separation scope on a 10 mm box in a
+  30 mm stock under a 12 mm cutter gives 1582 simulated head events, before and after T-136.

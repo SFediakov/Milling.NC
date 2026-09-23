@@ -99,6 +99,66 @@ MN_API void mn_head_limit(const mn_grid* grid, const float* remaining, const mn_
     mn_head_limit_compute(grid, remaining, annulus, count, cutter_length, limit);
 }
 
+/* Collision feedback (T-136). Every cell is shouldn't be cut (the model), might be cut (stock above
+ * the model) or should be cut. Where the head keeps the tip above its reach floor, a ring cell that
+ * blocks it with stock above the model, and that the cutter can take lower than the level the stock
+ * stands at (`cut_to`, the height a should-cut cell counts with, below its rounded-up value), becomes
+ * should be cut, provided that marking the blocking cells of the position lowers its limit at all.
+ * Marks only grow. Returns how many cells were marked. */
+int mn_mark_should_cut(const mn_grid* g, const float* tip, const float* model, const float* cut_to, const float* remaining, const float* limit, const mn_offset* annulus, int count,
+    float cutter_length, float tolerance, uint8_t* should_cut)
+{
+    int marked = 0;
+    for (int j = 0; j < g->height; j++) {
+        for (int i = 0; i < g->width; i++) {
+            int p = j * g->width + i;
+            float t = tip[p];
+            float l = limit[p];
+            if (mn_isnan(t) || mn_isnan(l) || !(l > t + tolerance)) {
+                continue;
+            }
+            float lowered = NAN;
+            int candidates = 0;
+            for (int o = 0; o < count; o++) {
+                int ii = i + annulus[o].dx;
+                int jj = j + annulus[o].dy;
+                if (!mn_in_bounds(g, ii, jj)) {
+                    continue;
+                }
+                int c = jj * g->width + ii;
+                float z = remaining[c];
+                if (mn_isnan(z)) {
+                    continue;
+                }
+                int candidate = !should_cut[c] && z - annulus[o].dz - cutter_length > t + tolerance && z > model[c] + tolerance && cut_to[c] < z - tolerance;
+                float stays = candidate ? cut_to[c] : z;
+                float reach = stays - annulus[o].dz;
+                candidates += candidate;
+                if (mn_isnan(lowered) || reach > lowered) {
+                    lowered = reach;
+                }
+            }
+            if (candidates == 0 || !(lowered - cutter_length < l - tolerance)) {
+                continue;
+            }
+            for (int o = 0; o < count; o++) {
+                int ii = i + annulus[o].dx;
+                int jj = j + annulus[o].dy;
+                if (!mn_in_bounds(g, ii, jj)) {
+                    continue;
+                }
+                int c = jj * g->width + ii;
+                float z = remaining[c];
+                if (!mn_isnan(z) && !should_cut[c] && z - annulus[o].dz - cutter_length > t + tolerance && z > model[c] + tolerance && cut_to[c] < z - tolerance) {
+                    should_cut[c] = 1;
+                    marked++;
+                }
+            }
+        }
+    }
+    return marked;
+}
+
 /* Effective tip = max(tip, limit); a NaN tip stays NaN, a NaN limit does not constrain. */
 void mn_apply_limit(const float* tip, const float* limit, int cells, float* effective)
 {

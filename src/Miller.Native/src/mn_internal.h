@@ -42,6 +42,8 @@ void mn_remaining_compute(const mn_grid* g, const float* tip, const mn_offset* o
 int mn_reach_compute(const mn_grid* g, const float* model, const float* stock, const mn_offset* offsets, int count, float floor, float percent, float tolerance, const mn_monitor* monitor, float* reach);
 void mn_head_limit_compute(const mn_grid* g, const float* remaining, const mn_offset* annulus, int count, float cutter_length, float* limit);
 void mn_apply_limit(const float* tip, const float* limit, int cells, float* effective);
+int mn_mark_should_cut(const mn_grid* g, const float* tip, const float* model, const float* cut_to, const float* remaining, const float* limit, const mn_offset* annulus, int count,
+    float cutter_length, float tolerance, uint8_t* should_cut);
 int mn_distance_transform(const uint8_t* mask, int width, int height, float cell_size, float* distances);
 
 /* ---- slicing ---- */
