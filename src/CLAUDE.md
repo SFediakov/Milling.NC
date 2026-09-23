@@ -393,3 +393,9 @@
   number 3 axis freedom already had before T-136. That is the confirmed reach rule, not a defect.
 - Found while evaluating T-136 and not changed: 3 axis freedom in separation scope on a 10 mm box in a
   30 mm stock under a 12 mm cutter gives 1582 simulated head events, before and after T-136.
+- Bug that existed before T-136 and is fixed by it: the heart with a ball tip and an 8 mm cutter gave
+  175 simulated head events (the strip beside the walls stood higher than its rounded-up level);
+  with the should-cut feedback it gives none.
+- The Linux side of the native build (gcc flags `-ffp-contract=off -fno-fast-math`, pthreads,
+  `libmiller_native.so`) has not been compiled on this machine; the first Linux `bash build.sh`
+  verifies it, and the golden export diff shows whether gcc keeps the MSVC float results.
