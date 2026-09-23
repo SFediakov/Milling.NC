@@ -3,7 +3,9 @@
 /* Orders the nodes of a route problem into one open path from a given start (RouteSolver): two start
  * walks over candidate lists (the 10 planar-nearest nodes of each node with their exact costs), the
  * nearest-neighbour walk and the smooth walk that also weighs the fine of the next turn; the cheaper
- * one is improved by 2-opt and Or-opt until no move improves or the allowance is spent. */
+ * one is improved by 2-opt and Or-opt until no move improves or the allowance is spent. A move is
+ * screened with the fine of the nodes next to its joins and applied only when the exact fine, over
+ * every node whose status the move can change, still leaves a gain. */
 
 #define MN_CANDIDATES 10
 #define MN_TARGET_PER_BUCKET 4.0f
@@ -12,7 +14,6 @@
 #define MN_MAX_SEGMENT 3
 #define MN_MIN_CACHE_BITS 12
 #define MN_MAX_CACHE_BITS 20
-#define MN_MAX_CHANGED 24
 
 /* ---- spatial buckets ---- */
 
@@ -346,9 +347,9 @@ static int nearest_neighbour(const mn_problem* problem, mn_buckets* buckets, con
     return status == MN_OK ? MN_OK : mn_fail(MN_ERR_MEMORY, "Out of memory for the nearest-neighbour walk.");
 }
 
-static float prefix_term(mn_window* window, mn_view* view, const int* order, const float* lengths, const mn_problem* problem, int end)
+static float prefix_term(mn_window* window, mn_view* view, const int* order, const float* lengths, const mn_problem* problem, const mn_turn_cache* cache, int end)
 {
-    mn_view_reset(view, order, lengths, problem->x, problem->y, problem->grid.g.cell_size);
+    mn_view_reset(view, order, lengths, problem->x, problem->y, problem->grid.g.cell_size, cache);
     mn_view_add(view, 0, end, 0);
     return mn_window_term(window, view, 1);
 }
@@ -363,7 +364,9 @@ static int smooth_walk(const mn_problem* problem, mn_buckets* buckets, const mn_
     uint8_t* fined = (uint8_t*)mn_alloc((size_t)n, 1);
     float* lengths = (float*)mn_alloc((size_t)n, sizeof(float));
     mn_window window;
+    mn_turn_cache cache;
     int window_ready = 0;
+    int cache_ready = 0;
     if (visited == NULL || fined == NULL || lengths == NULL) {
         status = mn_fail(MN_ERR_MEMORY, "Out of memory for the smooth walk.");
         goto done;
@@ -373,6 +376,11 @@ static int smooth_walk(const mn_problem* problem, mn_buckets* buckets, const mn_
         goto done;
     }
     window_ready = 1;
+    status = mn_turn_cache_init(&cache, n);
+    if (status != MN_OK) {
+        goto done;
+    }
+    cache_ready = 1;
     mn_view view;
     int changed[4];
     float per_mm = mn_per_slow_millimetre();
@@ -386,7 +394,8 @@ static int smooth_walk(const mn_problem* problem, mn_buckets* buckets, const mn_
             changed[count++] = p;
         }
         mn_window_prepare(&window, order, lengths, mn_mini(step + 2, n), changed, count);
-        float before = prefix_term(&window, &view, order, lengths, problem, step - 1);
+        cache.until = step - 1;
+        float before = prefix_term(&window, &view, order, lengths, problem, &cache, step - 1);
         int best = -1;
         float best_value = INFINITY;
         const int* slots = candidates->nodes + current * candidates->k;
@@ -416,7 +425,7 @@ static int smooth_walk(const mn_problem* problem, mn_buckets* buckets, const mn_
                     }
                     order[step + 1] = d;
                     lengths[step] = mn_cost_planar(mn_problem_node(problem, c), mn_problem_node(problem, d));
-                    next = mn_min(next, next_costs[m2] + (prefix_term(&window, &view, order, lengths, problem, step + 1) - before) * per_mm);
+                    next = mn_min(next, next_costs[m2] + (prefix_term(&window, &view, order, lengths, problem, &cache, step + 1) - before) * per_mm);
                 }
             }
             if (isinf(next) && next > 0) {
@@ -427,7 +436,7 @@ static int smooth_walk(const mn_problem* problem, mn_buckets* buckets, const mn_
                         goto done;
                     }
                 }
-                next = (prefix_term(&window, &view, order, lengths, problem, step) - before) * per_mm
+                next = (prefix_term(&window, &view, order, lengths, problem, &cache, step) - before) * per_mm
                     + (alive >= 0 ? mn_cost_lower_bound(mn_problem_node(problem, c), mn_problem_node(problem, alive)) : 0.0f);
             }
             visited[c] = 0;
@@ -447,9 +456,18 @@ static int smooth_walk(const mn_problem* problem, mn_buckets* buckets, const mn_
         lengths[step - 1] = mn_cost_planar(mn_problem_node(problem, current), mn_problem_node(problem, best));
         visited[best] = 1;
         buckets_remove(buckets, best);
+        cache.until = step;
+        if (step >= 2) {
+            mn_turn_cache_turn(&cache, problem->x, problem->y, order, step - 1);
+        }
         if (step >= 3) {
-            fined[order[step - 2]] = (uint8_t)mn_turn_fined(problem->x, problem->y, problem->grid.g.cell_size, step >= 4 ? order[step - 4] : -1, order[step - 3], order[step - 2],
-                order[step - 1], best);
+            mn_turn_cache_arc(&cache, problem->x, problem->y, problem->grid.g.cell_size, order, step - 3);
+        }
+        /* The walk has fixed the route up to `step`; statuses near its end are those of the prefix. */
+        mn_view_reset(&view, order, lengths, problem->x, problem->y, problem->grid.g.cell_size, &cache);
+        mn_view_add(&view, 0, step, 0);
+        for (int p = mn_maxi(1, step - MN_TURN_REACH - 1); p < step; p++) {
+            fined[order[p]] = (uint8_t)mn_view_fined(&view, p);
         }
         current = best;
     }
@@ -457,6 +475,9 @@ static int smooth_walk(const mn_problem* problem, mn_buckets* buckets, const mn_
 done:
     if (window_ready) {
         mn_window_free(&window);
+    }
+    if (cache_ready) {
+        mn_turn_cache_free(&cache);
     }
     free(visited);
     free(fined);
@@ -486,12 +507,15 @@ typedef struct mn_search {
     float* cache_values;
     int cache_mask;
     uint8_t* fined;
+    mn_turn_cache cache;
     mn_window window;
     mn_view current;
     mn_view moved;
-    int changed[MN_MAX_CHANGED];
-    int changed_nodes[MN_MAX_CHANGED];
+    int* changed;
+    int* changed_nodes;
     int changed_count;
+    int* stamp;
+    int stamp_id;
 } mn_search;
 
 static void push(mn_search* s, int node)
@@ -544,13 +568,21 @@ static int spend(mn_search* s)
     return 1;
 }
 
-static int fined_at(const mn_search* s, int k)
+static int fined_at(const mn_search* s, int k) { return mn_view_fined(&s->current, k); }
+
+/* The cached turns and arcs that a join after position e changes. */
+static void repair(mn_search* s, int e)
 {
-    if (!(k > 0 && k < s->n - 1)) {
-        return 0;
+    if (e < 0) {
+        return;
     }
-    return mn_turn_fined(s->problem->x, s->problem->y, s->problem->grid.g.cell_size, k >= 2 ? s->order[k - 2] : -1, s->order[k - 1], s->order[k], s->order[k + 1],
-        k + 2 < s->n ? s->order[k + 2] : -1);
+    const mn_problem* problem = s->problem;
+    for (int k = mn_maxi(e, 1); k <= mn_mini(e + 1, s->n - 2); k++) {
+        mn_turn_cache_turn(&s->cache, problem->x, problem->y, s->order, k);
+    }
+    for (int q = mn_maxi(e - 2, 0); q <= mn_mini(e, s->n - 4); q++) {
+        mn_turn_cache_arc(&s->cache, problem->x, problem->y, problem->grid.g.cell_size, s->order, q);
+    }
 }
 
 static void set_edge(mn_search* s, int k)
@@ -563,6 +595,9 @@ static void set_edge(mn_search* s, int k)
 
 static void reverse(mn_search* s, int l, int r)
 {
+    if (l < r) {
+        mn_turn_cache_reverse(&s->cache, l, r);
+    }
     while (l < r) {
         int swap = s->order[l];
         s->order[l] = s->order[r];
@@ -597,6 +632,9 @@ static void move_segment(mn_search* s, int i, int length, int t, int reversed)
         set_edge(s, i - 1);
         set_edge(s, t - length);
         set_edge(s, t);
+        repair(s, i - 1);
+        repair(s, t - length);
+        repair(s, t);
     } else {
         if (reversed) {
             reverse(s, t + 1, i - 1);
@@ -609,39 +647,83 @@ static void move_segment(mn_search* s, int i, int length, int t, int reversed)
         set_edge(s, t);
         set_edge(s, t + length);
         set_edge(s, last);
+        repair(s, t);
+        repair(s, t + length);
+        repair(s, last);
     }
 }
 
 static void add_changed(mn_search* s, int position)
 {
+    if (s->stamp[position] == s->stamp_id) {
+        return;
+    }
+    s->stamp[position] = s->stamp_id;
     s->changed[s->changed_count] = position;
     s->changed_nodes[s->changed_count] = s->order[position];
     s->changed_count++;
 }
 
-static void add_around(mn_search* s, int edge)
+/* Every turn within MN_TURN_REACH + 1 positions of first..last of the view: the turns whose compound
+ * search can reach there. */
+static void add_turns_near(mn_search* s, const mn_view* view, int first, int last)
 {
-    if (edge < 0) {
+    int to = mn_mini(last + MN_TURN_REACH + 1, view->count - 2);
+    for (int p = mn_maxi(first - MN_TURN_REACH - 1, 1); p <= to; p++) {
+        if (mn_view_turn_kind(view, p) != MN_TURN_NONE) {
+            add_changed(s, mn_view_base(view, p));
+        }
+    }
+}
+
+/* The nodes whose status can differ because of the join after position e of the view: the screen
+ * takes the two nodes on each side; the exact set takes both ends, every turn a compound search can
+ * reach from there, and every turn near a circular chain through the join, as far as the chain can
+ * decide a status. */
+static void add_join(mn_search* s, const mn_view* view, int e, int exact)
+{
+    if (e < 0) {
         return;
     }
-    for (int p = mn_maxi(edge - 1, 0); p <= mn_mini(edge + 2, s->n - 1); p++) {
-        add_changed(s, p);
+    if (!exact) {
+        for (int p = mn_maxi(e - 1, 0); p <= mn_mini(e + 2, view->count - 1); p++) {
+            add_changed(s, mn_view_base(view, p));
+        }
+        return;
+    }
+    add_changed(s, mn_view_base(view, e));
+    if (e + 1 < view->count) {
+        add_changed(s, mn_view_base(view, e + 1));
+    }
+    add_turns_near(s, view, e, e + 1);
+    for (int q = mn_maxi(e - 2, 0); q <= mn_mini(e, view->count - 4); q++) {
+        if (!mn_view_arc(view, q)) {
+            continue;
+        }
+        int a = q;
+        int b = q;
+        for (int step = 0; step <= MN_CHAIN_REACH && a - 1 >= 0 && mn_view_arc(view, a - 1); step++) {
+            a--;
+        }
+        for (int step = 0; step <= MN_CHAIN_REACH && b + 1 <= view->count - 4 && mn_view_arc(view, b + 1); step++) {
+            b++;
+        }
+        add_turns_near(s, view, a + 1, b + 2);
     }
 }
 
 /* Fine of the route in `moved` less the fine of the current route; the removed edges are given by
- * their positions in the current route (-1 for none), the added ones are the joins of `moved`. */
-static float fine_change(mn_search* s, int removed_a, int removed_b, int removed_c)
+ * their positions in the current route (-1 for none), the added ones are the joins of `moved`. The
+ * screen reads the nodes next to the joins; the exact change reads every node the move can change. */
+static float fine_change(mn_search* s, int exact, int removed_a, int removed_b, int removed_c)
 {
     s->changed_count = 0;
-    add_around(s, removed_a);
-    add_around(s, removed_b);
-    add_around(s, removed_c);
+    s->stamp_id++;
+    add_join(s, &s->current, removed_a, exact);
+    add_join(s, &s->current, removed_b, exact);
+    add_join(s, &s->current, removed_c, exact);
     for (int k = 0; k + 1 < s->moved.pieces; k++) {
-        int e = mn_view_piece_end(&s->moved, k);
-        for (int p = mn_maxi(e - 1, 0); p <= mn_mini(e + 2, s->n - 1); p++) {
-            add_changed(s, mn_view_base(&s->moved, p));
-        }
+        add_join(s, &s->moved, mn_view_piece_end(&s->moved, k), exact);
     }
     mn_window_prepare(&s->window, s->order, s->len, s->n, s->changed, s->changed_count);
     float after = mn_window_term(&s->window, &s->moved, 1);
@@ -651,19 +733,19 @@ static float fine_change(mn_search* s, int removed_a, int removed_b, int removed
 
 static void moved_reset(mn_search* s)
 {
-    mn_view_reset(&s->moved, s->order, s->len, s->problem->x, s->problem->y, s->problem->grid.g.cell_size);
+    mn_view_reset(&s->moved, s->order, s->len, s->problem->x, s->problem->y, s->problem->grid.g.cell_size, &s->cache);
 }
 
-static float reversal_fine(mn_search* s, int l, int r)
+static float reversal_fine(mn_search* s, int l, int r, int exact)
 {
     moved_reset(s);
     mn_view_add(&s->moved, 0, l - 1, 0);
     mn_view_add(&s->moved, l, r, 1);
     mn_view_add(&s->moved, r + 1, s->n - 1, 0);
-    return fine_change(s, l - 1, r + 1 < s->n ? r : -1, -1);
+    return fine_change(s, exact, l - 1, r + 1 < s->n ? r : -1, -1);
 }
 
-static float segment_fine(mn_search* s, int i, int length, int t, int reversed)
+static float segment_fine(mn_search* s, int i, int length, int t, int reversed, int exact)
 {
     int last = i + length - 1;
     moved_reset(s);
@@ -672,16 +754,17 @@ static float segment_fine(mn_search* s, int i, int length, int t, int reversed)
         mn_view_add(&s->moved, last + 1, t, 0);
         mn_view_add(&s->moved, i, last, reversed);
         mn_view_add(&s->moved, t + 1, s->n - 1, 0);
-        return fine_change(s, i - 1, last, t + 1 < s->n ? t : -1);
+        return fine_change(s, exact, i - 1, last, t + 1 < s->n ? t : -1);
     }
     mn_view_add(&s->moved, 0, t, 0);
     mn_view_add(&s->moved, i, last, reversed);
     mn_view_add(&s->moved, t + 1, i - 1, 0);
     mn_view_add(&s->moved, last + 1, s->n - 1, 0);
-    return fine_change(s, t, i - 1, last + 1 < s->n ? last : -1);
+    return fine_change(s, exact, t, i - 1, last + 1 < s->n ? last : -1);
 }
 
-/* After a move: the status of every node the last fine_change named, which is the move just done. */
+/* After a move: the status of every node the last (exact) fine_change named, which is the move just
+ * done. */
 static void refresh_fined(mn_search* s)
 {
     for (int k = 0; k < s->changed_count; k++) {
@@ -711,7 +794,7 @@ static int two_opt(mn_search* s, int a)
             int sn = s->order[i + 1];
             int has_next = j + 1 < s->n;
             float removed = s->edge[i] + (has_next ? s->edge[j] : 0.0f);
-            float fine = reversal_fine(s, i + 1, j);
+            float fine = reversal_fine(s, i + 1, j, 0);
             float added = 0.0f;
             if (has_next) {
                 int cn = s->order[j + 1];
@@ -720,10 +803,12 @@ static int two_opt(mn_search* s, int a)
                 }
                 added = cost(s, sn, cn);
             }
-            if (removed - dac - added - fine > MN_MIN_GAIN) {
+            if (removed - dac - added - fine > MN_MIN_GAIN && removed - dac - added - reversal_fine(s, i + 1, j, 1) > MN_MIN_GAIN) {
                 reverse(s, i + 1, j);
                 set_edge(s, i);
                 set_edge(s, j);
+                repair(s, i);
+                repair(s, j);
                 push(s, a);
                 push(s, sn);
                 push(s, c);
@@ -738,7 +823,7 @@ static int two_opt(mn_search* s, int a)
             int cs = s->order[j + 1];
             int has_next = i + 1 < s->n;
             float removed = s->edge[j] + (has_next ? s->edge[i] : 0.0f);
-            float fine = reversal_fine(s, j + 1, i);
+            float fine = reversal_fine(s, j + 1, i, 0);
             float added = 0.0f;
             if (has_next) {
                 int an = s->order[i + 1];
@@ -747,10 +832,12 @@ static int two_opt(mn_search* s, int a)
                 }
                 added = cost(s, cs, an);
             }
-            if (removed - dac - added - fine > MN_MIN_GAIN) {
+            if (removed - dac - added - fine > MN_MIN_GAIN && removed - dac - added - reversal_fine(s, j + 1, i, 1) > MN_MIN_GAIN) {
                 reverse(s, j + 1, i);
                 set_edge(s, j);
                 set_edge(s, i);
+                repair(s, j);
+                repair(s, i);
                 push(s, c);
                 push(s, cs);
                 push(s, a);
@@ -802,11 +889,12 @@ static int or_opt(mn_search* s, int a)
                     int has_cs = jc + 1 < s->n;
                     int cs = has_cs ? s->order[jc + 1] : -1;
                     float removed_c = has_cs ? s->edge[jc] : 0.0f;
-                    float fine = segment_fine(s, i, length, jc, end == 1);
+                    float fine = segment_fine(s, i, length, jc, end == 1, 0);
                     if (removed + removed_c - bridge_lower - dec - fine - (has_cs ? lower(s, other, cs) : 0.0f) > MN_MIN_GAIN) {
                         float bridge = has_next ? cost(s, p, nx) : 0.0f;
                         float tail = has_cs ? cost(s, other, cs) : 0.0f;
-                        if (removed + removed_c - bridge - dec - tail - fine > MN_MIN_GAIN) {
+                        if (removed + removed_c - bridge - dec - tail - fine > MN_MIN_GAIN
+                            && removed + removed_c - bridge - dec - tail - segment_fine(s, i, length, jc, end == 1, 1) > MN_MIN_GAIN) {
                             move_segment(s, i, length, jc, end == 1);
                             push(s, p);
                             push(s, c);
@@ -827,11 +915,12 @@ static int or_opt(mn_search* s, int a)
                     /* ..., cp, c, ... becomes ..., cp, other, ..., e, c, ... */
                     int cp = s->order[jc - 1];
                     float removed_c = s->edge[jc - 1];
-                    float fine = segment_fine(s, i, length, jc - 1, end == 0);
+                    float fine = segment_fine(s, i, length, jc - 1, end == 0, 0);
                     if (removed + removed_c - bridge_lower - dec - fine - lower(s, cp, other) > MN_MIN_GAIN) {
                         float bridge = has_next ? cost(s, p, nx) : 0.0f;
                         float head = cost(s, cp, other);
-                        if (removed + removed_c - bridge - dec - head - fine > MN_MIN_GAIN) {
+                        if (removed + removed_c - bridge - dec - head - fine > MN_MIN_GAIN
+                            && removed + removed_c - bridge - dec - head - segment_fine(s, i, length, jc - 1, end == 0, 1) > MN_MIN_GAIN) {
                             move_segment(s, i, length, jc - 1, end == 0);
                             push(s, p);
                             push(s, c);
@@ -862,6 +951,10 @@ static void search_free(mn_search* s)
     free(s->cache_keys);
     free(s->cache_values);
     free(s->fined);
+    free(s->changed);
+    free(s->changed_nodes);
+    free(s->stamp);
+    mn_turn_cache_free(&s->cache);
     mn_window_free(&s->window);
 }
 
@@ -895,12 +988,20 @@ static int local_search(const mn_problem* problem, const mn_candidates* candidat
     s.cache_keys = (int64_t*)mn_alloc((size_t)1 << bits, sizeof(int64_t));
     s.cache_values = (float*)mn_alloc((size_t)1 << bits, sizeof(float));
     s.fined = (uint8_t*)mn_alloc((size_t)n, 1);
+    s.changed = (int*)mn_alloc((size_t)n, sizeof(int));
+    s.changed_nodes = (int*)mn_alloc((size_t)n, sizeof(int));
+    s.stamp = (int*)mn_alloc((size_t)n, sizeof(int));
     s.cache_mask = (1 << bits) - 1;
-    if (s.pos == NULL || s.edge == NULL || s.len == NULL || s.queued == NULL || s.queue == NULL || s.cache_keys == NULL || s.cache_values == NULL || s.fined == NULL) {
+    s.cache.until = -1;
+    if (s.pos == NULL || s.edge == NULL || s.len == NULL || s.queued == NULL || s.queue == NULL || s.cache_keys == NULL || s.cache_values == NULL || s.fined == NULL
+        || s.changed == NULL || s.changed_nodes == NULL || s.stamp == NULL) {
         search_free(&s);
         return mn_fail(MN_ERR_MEMORY, "Out of memory for the local search of %d nodes.", n);
     }
-    int status = mn_window_init(&s.window, s.fined, MN_MAX_CHANGED);
+    int status = mn_turn_cache_init(&s.cache, n);
+    if (status == MN_OK) {
+        status = mn_window_init(&s.window, s.fined, n);
+    }
     if (status != MN_OK) {
         search_free(&s);
         return status;
@@ -908,7 +1009,7 @@ static int local_search(const mn_problem* problem, const mn_candidates* candidat
     for (int k = 0; k <= s.cache_mask; k++) {
         s.cache_keys[k] = -1;
     }
-    mn_view_reset(&s.current, order, s.len, problem->x, problem->y, problem->grid.g.cell_size);
+    mn_view_reset(&s.current, order, s.len, problem->x, problem->y, problem->grid.g.cell_size, &s.cache);
     mn_view_add(&s.current, 0, n - 1, 0);
     for (int k = 0; k < n; k++) {
         s.pos[order[k]] = k;
@@ -918,6 +1019,13 @@ static int local_search(const mn_problem* problem, const mn_candidates* candidat
         }
         push(&s, order[k]);
     }
+    for (int k = 1; k + 1 < n; k++) {
+        mn_turn_cache_turn(&s.cache, problem->x, problem->y, order, k);
+    }
+    for (int q = 0; q + 3 < n; q++) {
+        mn_turn_cache_arc(&s.cache, problem->x, problem->y, problem->grid.g.cell_size, order, q);
+    }
+    s.cache.until = n - 1;
     for (int k = 0; k < n; k++) {
         s.fined[order[k]] = (uint8_t)fined_at(&s, k);
     }

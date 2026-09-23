@@ -106,7 +106,37 @@ typedef struct mn_problem {
 
 static inline mn_v3 mn_problem_node(const mn_problem* p, int k) { return mn_v3_make(p->x[k], p->y[k], p->z[k]); }
 
-int mn_turn_fined(const float* x, const float* y, float cell_size, int p, int a, int b, int c, int d);
+/* TurnFine constants; the cosines are the floats the C# implementation computed in double. */
+static inline float mn_float_from_bits(uint32_t bits)
+{
+    float value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+#define MN_COS_SHARP mn_float_from_bits(0x3F51B3F3u)
+#define MN_COS_CIRCULAR_MAX mn_float_from_bits(0x248D3132u)
+#define MN_PER_SLOW_MILLIMETRE mn_float_from_bits(0x3F471C71u)
+#define MN_SLOW_ZONE 5.0f
+#define MN_MIN_CHORD 1e-5f
+#define MN_CIRCLE_TOLERANCE_CELLS 0.5f
+
+/* T-139: a circular section exempts its turns only from this path length on; its chain of arcs is
+ * followed at most MN_CHAIN_REACH arcs each way. A compound turn is up to MN_TURN_WINDOW soft turns
+ * within MN_TURN_REACH positions each way and less than MN_TURN_SPAN of path. Lengths are summed in
+ * double, which is exact for chord lengths, so the result does not depend on the direction. */
+#define MN_CIRCLE_MIN_LENGTH 10.0
+#define MN_CHAIN_REACH 16
+#define MN_TURN_WINDOW 4
+#define MN_TURN_REACH 8
+#define MN_TURN_SPAN 10.0
+
+/* Cosine and side (+1 left, -1 right, 0 straight or reversing) of the XY direction change at b; 0
+ * when a chord has no direction. Swapping a and c keeps the cosine and flips the side exactly. */
+int mn_turn_between(const float* x, const float* y, int a, int b, int c, float* cosine, int* side);
+/* Four consecutive nodes on one circle within the tolerance, turning the same way below 90 degrees
+ * at both inner nodes; the same answer for the reversed four. */
+int mn_arc_between(const float* x, const float* y, float tolerance, int q0, int q1, int q2, int q3);
 float mn_turn_slow(const float* x, const float* y, float cell_size, const int* order, int count);
 float mn_turn_overlap_of(int zones_a, int zones_b, float gap);
 int mn_solve(const mn_problem* problem, int start, int64_t allowance, const volatile int32_t* cancel, int* order, int64_t* evaluations);

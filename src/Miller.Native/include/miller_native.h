@@ -176,7 +176,8 @@ MN_API float mn_surface_trace(const mn_grid* grid, const float* floor, const flo
 MN_API float mn_route_exact(const mn_grid* grid, const float* floor, const float* a, const float* b);
 MN_API float mn_route_lower_bound(const float* a, const float* b);
 MN_API float mn_route_planar(const float* a, const float* b);
-MN_API int32_t mn_turn_is_fined(const float* x, const float* y, float cell_size, int32_t p, int32_t a, int32_t b, int32_t c, int32_t d);
+/* Whether the node at `position` of the route `order` is fined (TurnFine). */
+MN_API int32_t mn_turn_fined_at(const float* x, const float* y, float cell_size, const int32_t* order, int32_t count, int32_t position);
 MN_API float mn_turn_slow_length(const float* x, const float* y, float cell_size, const int32_t* order, int32_t count);
 MN_API float mn_turn_overlap(int32_t zones_a, int32_t zones_b, float gap);
 MN_API float mn_turn_fine(const float* x, const float* y, float cell_size, const int32_t* order, int32_t count);

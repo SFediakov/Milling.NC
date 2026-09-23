@@ -51,18 +51,32 @@ public sealed class RouteSolverTests
         var improvedCost = RouteSolver.PathCost(problem, improved);
         Assert.True(improvedCost <= greedyCost + 1e-3f, $"improved {improvedCost} > greedy {greedyCost}");
         Assert.True(budget.Used > 0);
-        // 400 lattice points 1 mm apart: a full boustrophedon needs 399 unit moves, 133 in XY time, and
-        // turns twice at each of its 19 row ends; the fined route costs no more than it.
-        var rows = new int[problem.Count];
-        for (var j = 0; j < 20; j++)
+        // 400 lattice points 1 mm apart: any route needs 399 unit moves, 133 in XY time. A serpentine
+        // from the start runs left along row 0, through rows 1 to 19 and back over the rest of row 0,
+        // turning twice at every row end; the fined route costs no more than it. (T-139: a boustrophedon
+        // from node 0 is not a route from node 7; the solver undercut it only while lattice arcs
+        // shorter than 10 mm were exempt.)
+        var serpentine = new List<int>();
+        for (var i = start; i >= 0; i--)
+        {
+            serpentine.Add(i);
+        }
+
+        for (var j = 1; j < 20; j++)
         {
             for (var i = 0; i < 20; i++)
             {
-                rows[j * 20 + i] = j * 20 + (j % 2 == 0 ? i : 19 - i);
+                serpentine.Add(j * 20 + (j % 2 == 1 ? i : 19 - i));
             }
         }
 
-        Assert.InRange(improvedCost, 399 / RouteCost.XySpeedFactor, RouteSolver.PathCost(problem, rows));
+        for (var i = start + 1; i < 20; i++)
+        {
+            serpentine.Add(i);
+        }
+
+        AssertPermutation(serpentine.ToArray(), problem.Count, start);
+        Assert.InRange(improvedCost, 399 / RouteCost.XySpeedFactor, RouteSolver.PathCost(problem, serpentine.ToArray()));
     }
 
     [Fact]

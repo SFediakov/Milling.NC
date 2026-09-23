@@ -16,7 +16,7 @@ Contents:
 7. Coding rules and definition of done
 8. Known pitfalls
 9. Milestones
-10. Task list (T-001 to T-136)
+10. Task list (T-001 to T-139)
 
 ---
 
@@ -390,17 +390,28 @@ Uncuttable classification (`UncuttableRegions`):
   intermediate nodes is the way around, and the cost of a move over an
   obstacle is its climb.
 - Turn fine (`TurnFine`): a turn is the change of the XY direction between the
-  chords into and out of a node. Above 35 degrees it is fined, unless the node
-  belongs to a real circular move: four consecutive nodes on one circle within
-  half a cell, turning the same way at both inner nodes, each turn below 90
-  degrees, so a square corner or a U-turn never is. A movement is the stretch
-  between two fined turns or a route end; its first and last 5 mm run at 0.3 of
-  the speed, so a fined turn slows the 5 mm before and after it, overlapping
-  zones count once and route ends clip them. The fine is charged on XY travel,
-  `(1 / 0.3 - 1) / 3` cost units per slow millimetre. On a lattice the solver
-  therefore runs straight and rounds corners with two 45 degree turns on one
-  lattice circle instead of turning 90 degrees. Once turns lie closer than one
-  zone, removing one frees nothing, which is why the start walk matters.
+  chords into and out of a node. A node is fined for a sharp turn (above 35
+  degrees) or as part of a compound turn (T-139): up to 4 consecutive smaller
+  turns, straight nodes between them skipped, at most 8 positions each way, that
+  change the direction by more than 35 degrees within less than 10 mm of path
+  (the angle between the chord into the first and the chord out of the last); a
+  sharp turn ends the search, so a small turn beside a corner does not stretch
+  its zone. Neither is fined on a real circular move: a chain of arcs, each four
+  consecutive nodes on one circle within half a cell turning the same way below
+  90 degrees at both inner nodes, at least 10 mm long from its first node to its
+  last (followed at most 16 arcs each way). A square corner, a U-turn, a short
+  arc and a corner split into small turns are therefore never circular. A
+  movement is the stretch between two fined turns or a route end; its first and
+  last 5 mm run at 0.3 of the speed, so a fined turn slows the 5 mm before and
+  after it, overlapping zones count once and route ends clip them. The fine is
+  charged on XY travel, `(1 / 0.3 - 1) / 3` cost units per slow millimetre. On a
+  3 mm lattice the solver runs straight and rounds corners with two 45 degree
+  turns on one lattice circle (10.2 mm) instead of turning 90 degrees. Once
+  turns lie closer than one zone, removing one frees nothing, which is why the
+  start walk matters. The status of a node depends on up to 26 positions of the
+  route, so the local search keeps the turn and arc of every position, screens a
+  move with the nodes next to its joins and applies it only when the exact fine
+  change, over every node the move can change, still leaves a gain.
 - "Z layer by layer": cave by cave. A cave is cut completely at its level, then
   the tool drops one level in place into the first child cave; a sibling is
   visited only when the whole subtree is done, nearest first. Every route is
@@ -1676,6 +1687,14 @@ check that decides done.
 - Input: user request (during the collision check, cells that are not the target shape and block the head change from "might be cut" to "should be cut", then the coordinates are defined again)
 - Output: third cell state in the head clearance loop (section 6.3), `PipelineResult.ShouldCut`; Z layer should-cut passes per cave and for the top band (section 6.4); `heart_grbl.nc` regenerated
 - Acceptance: on the box fixtures the should-cut stock is removed to its closing, the head-limited area is smaller than without feedback, zero gouges and zero simulated head collisions in both strategies; the top band pass runs; a project without blocking stock marks nothing and keeps the head limit of the loop without feedback; heart (default project) head-limited cells 1,460 to 1,260, rest material 305 to 235 mm3, zero head events, machining time 3.1 to 4.7 min; with an 8 mm cutter zero head events in every scope and strategy (the ball tip had 175 before)
+- Status: done
+
+#### T-139 Turn fine: short circular sections and compound turns
+- Depends on: T-133, T-134
+- Files: `src/Miller.Native/src/mn_route.c`, `src/Miller.Native/src/mn_window.c`, `src/Miller.Native/src/mn_window.h`, `src/Miller.Native/src/mn_solver.c`, `src/Miller.Native/src/mn_internal.h`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Solver/TurnFine.cs`, `src/Miller.Solver/Native/SolverNative.cs`, `tests/Miller.Tests/Solver/*`, `tests/Miller.Tests/Golden/heart_grbl.nc`
+- Input: user request (a circular section shorter than 10 mm does not exempt its turns over 35 degrees; other ways the solver could force an angular approach are fined as well)
+- Output: the rule of section 6.4 (circular chains of at least 10 mm, compound turns); `TurnFine.IsFined(problem, order, position)` replaces the five-node overload; the local search keeps turns and arcs per position, screens moves near the joins and checks every applied move exactly; `heart_grbl.nc` regenerated
+- Acceptance: octagon of 9.66 mm fined, 10.14 mm exempt; three 25 degree turns 1 mm apart fined (12 mm slow), 11 mm apart not; two 30 degree turns with 1.5 mm of straight nodes between fined, with 12 mm not; a 10 degree turn 2 mm after a right angle does not stretch its zone; a -5 degree wiggle does not hide a compound turn; reversed dense and curved routes give the same statuses; every exact fine change equals a full double recomputation (13,935 moves checked, largest difference 0.000016); zero head events and zero gouges on the heart and fixtures; route stage 1.6 times Build_1.0.93 (1,091 to 1,774 ms Z layer, 4,176 to 6,680 ms 3 axis freedom)
 - Status: done
 
 ### M8 Packaging and release

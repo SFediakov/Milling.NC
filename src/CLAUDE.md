@@ -398,3 +398,17 @@
 - The Linux side of the native build (gcc flags `-ffp-contract=off -fno-fast-math`, pthreads,
   `libmiller_native.so`) has not been compiled on this machine; the first Linux `bash build.sh`
   verifies it, and the golden export diff shows whether gcc keeps the MSVC float results.
+- Turn fine rules that look along the route (T-139: circular sections of 10 mm, compound turns) cannot
+  be priced by the old +-2 node window: a move changes statuses up to 26 positions from its joins. The
+  local search keeps the turn and the arc test of every position (carried through each reversal,
+  measured again only at the final joins), screens a move with the nodes next to its joins, and applies
+  it only after the exact change over every node it can reach. A fine lower bound for skipping moves was
+  measured first and was useless: 94 to 100 percent of fine evaluations have fined nodes within 25 mm.
+  A scratch build compared every exact change with a double recomputation of the whole route (13,935
+  moves, largest difference 0.000016) and every cached turn and arc after each move.
+- A route length summed in double over float chord lengths is exact and independent of the direction;
+  a float sum is not, and a status must be the same for a route and its reverse or the in-place
+  reversal of 2-opt corrupts the stored statuses.
+- RouteSolverTests compared a route from node 7 with a boustrophedon from node 0, which is not a route
+  from node 7. The solver undercut it only while lattice arcs shorter than 10 mm were exempt; the test
+  now compares with a serpentine from node 7 (solver 307.7, serpentines 317.4 and 318.1).
