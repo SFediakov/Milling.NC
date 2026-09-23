@@ -53,7 +53,7 @@ internal static unsafe class SolverNative
     public static extern float mn_route_planar(float* a, float* b);
 
     [DllImport(Library)]
-    public static extern int mn_turn_is_fined(float* x, float* y, float cellSize, int p, int a, int b, int c, int d);
+    public static extern int mn_turn_fined_at(float* x, float* y, float cellSize, int* order, int count, int position);
 
     [DllImport(Library)]
     public static extern float mn_turn_slow_length(float* x, float* y, float cellSize, int* order, int count);

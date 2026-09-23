@@ -1,26 +1,10 @@
-#include "mn_internal.h"
+#include "mn_window.h"
 
 /* Moves between route nodes: the surface polyline (SurfacePath), its cost (RouteCost) and the turn
  * fine (TurnFine). */
 
 /* SurfacePath.LineEpsilon: a coordinate this close to a grid line (in cells) counts as on it. */
 #define MN_LINE_EPSILON 1e-4f
-
-/* TurnFine constants; the cosines are the floats the C# implementation computed in double. */
-#define MN_SLOW_ZONE 5.0f
-#define MN_MIN_CHORD 1e-5f
-#define MN_CIRCLE_TOLERANCE_CELLS 0.5f
-
-static float float_from_bits(uint32_t bits)
-{
-    float value;
-    memcpy(&value, &bits, sizeof(value));
-    return value;
-}
-
-#define MN_COS_SHARP float_from_bits(0x3F51B3F3u)
-#define MN_COS_CIRCULAR_MAX float_from_bits(0x248D3132u)
-#define MN_PER_SLOW_MILLIMETRE float_from_bits(0x3F471C71u)
 
 int mn_points_push(mn_points* list, mn_v3 point)
 {
@@ -215,9 +199,7 @@ MN_API float mn_route_planar(const float* a, const float* b) { return mn_cost_pl
 
 /* ---- turn fine ---- */
 
-/* Cosine of the XY direction change at b and its side (+1 left, -1 right, 0 straight); 0 when a
- * chord has no direction. Swapping a and c keeps the cosine and flips the side exactly. */
-static int turn(const float* x, const float* y, int a, int b, int c, float* cosine, int* side)
+int mn_turn_between(const float* x, const float* y, int a, int b, int c, float* cosine, int* side)
 {
     float ux = x[b] - x[a];
     float uy = y[b] - y[a];
@@ -273,11 +255,11 @@ static int on_circle(const float* x, const float* y, int i, int j, int k, int te
     return fabs(sqrt(tx * tx + ty * ty) - radius) <= (double)tolerance;
 }
 
-static int arc(const float* x, const float* y, int q0, int q1, int q2, int q3, float tolerance)
+int mn_arc_between(const float* x, const float* y, float tolerance, int q0, int q1, int q2, int q3)
 {
     float cos1, cos2;
     int side1, side2;
-    if (!turn(x, y, q0, q1, q2, &cos1, &side1) || !turn(x, y, q1, q2, q3, &cos2, &side2)) {
+    if (!mn_turn_between(x, y, q0, q1, q2, &cos1, &side1) || !mn_turn_between(x, y, q1, q2, q3, &cos2, &side2)) {
         return 0;
     }
     if (side1 == 0 || side1 != side2 || !(cos1 > MN_COS_CIRCULAR_MAX) || !(cos2 > MN_COS_CIRCULAR_MAX)) {
@@ -286,23 +268,21 @@ static int arc(const float* x, const float* y, int q0, int q1, int q2, int q3, f
     return on_circle(x, y, q0, q1, q2, q3, tolerance) && on_circle(x, y, q1, q2, q3, q0, tolerance);
 }
 
-int mn_turn_fined(const float* x, const float* y, float cell_size, int p, int a, int b, int c, int d)
+/* A route order read as one forward piece, without a cache. */
+static void order_view(mn_view* view, const float* x, const float* y, float cell_size, const int* order, int count)
 {
-    float cosine;
-    int side;
-    if (!turn(x, y, a, b, c, &cosine, &side) || !(cosine < MN_COS_SHARP)) {
-        return 0;
-    }
-    if (!(cosine > MN_COS_CIRCULAR_MAX)) {
-        return 1;
-    }
-    float tolerance = MN_CIRCLE_TOLERANCE_CELLS * cell_size;
-    return !((p >= 0 && arc(x, y, p, a, b, c, tolerance)) || (d >= 0 && arc(x, y, a, b, c, d, tolerance)));
+    mn_view_reset(view, order, NULL, x, y, cell_size, NULL);
+    mn_view_add(view, 0, count - 1, 0);
 }
 
-MN_API int32_t mn_turn_is_fined(const float* x, const float* y, float cell_size, int32_t p, int32_t a, int32_t b, int32_t c, int32_t d)
+MN_API int32_t mn_turn_fined_at(const float* x, const float* y, float cell_size, const int32_t* order, int32_t count, int32_t position)
 {
-    return mn_turn_fined(x, y, cell_size, p, a, b, c, d);
+    if (count < 3 || position < 0 || position >= count) {
+        return 0;
+    }
+    mn_view view;
+    order_view(&view, x, y, cell_size, order, count);
+    return mn_view_fined(&view, position);
 }
 
 float mn_turn_overlap_of(int zones_a, int zones_b, float gap) { return mn_max(0.0f, MN_SLOW_ZONE * (float)(zones_a + zones_b) - gap); }
@@ -316,6 +296,8 @@ float mn_turn_slow(const float* x, const float* y, float cell_size, const int* o
     if (n < 3) {
         return 0.0f;
     }
+    mn_view view;
+    order_view(&view, x, y, cell_size, order, n);
     float s = 0.0f;
     float last_s = 0.0f;
     int last_zones = 0;
@@ -327,7 +309,7 @@ float mn_turn_slow(const float* x, const float* y, float cell_size, const int* o
         int zones;
         if (k == n - 1) {
             zones = 0;
-        } else if (mn_turn_fined(x, y, cell_size, k >= 2 ? order[k - 2] : -1, order[k - 1], order[k], order[k + 1], k + 2 < n ? order[k + 2] : -1)) {
+        } else if (mn_view_fined(&view, k)) {
             zones = 1;
         } else {
             continue;

@@ -18,8 +18,7 @@ public sealed class TurnFineTests
 
     private static float Slow(RouteProblem problem) => TurnFine.SlowLength(problem, InOrder(problem));
 
-    private static bool FinedAt(RouteProblem problem, int k)
-        => TurnFine.IsFined(problem, k >= 2 ? k - 2 : -1, k - 1, k, k + 1, k + 2 < problem.Count ? k + 2 : -1);
+    private static bool FinedAt(RouteProblem problem, int k) => TurnFine.IsFined(problem, InOrder(problem), k);
 
     private static (float X, float Y) Polar(float degrees, float length)
         => (length * MathF.Cos(degrees * MathF.PI / 180f), length * MathF.Sin(degrees * MathF.PI / 180f));
@@ -151,9 +150,7 @@ public sealed class TurnFineTests
             var backward = forward.Reverse().ToArray();
             for (var k = 1; k < count - 1; k++)
             {
-                var p = k >= 2 ? k - 2 : -1;
-                var d = k + 2 < count ? k + 2 : -1;
-                Assert.Equal(TurnFine.IsFined(problem, p, k - 1, k, k + 1, d), TurnFine.IsFined(problem, d, k + 1, k, k - 1, p));
+                Assert.Equal(TurnFine.IsFined(problem, forward, k), TurnFine.IsFined(problem, backward, count - 1 - k));
             }
 
             var there = TurnFine.SlowLength(problem, forward);
@@ -226,5 +223,127 @@ public sealed class TurnFineTests
         Assert.Equal(0f, slow);
         Assert.False(FinedAt(problem, 1));
         Assert.False(FinedAt(problem, 2));
+    }
+
+    // T-139: a path that starts at `start`, heading along +X, and walks the given chords, each turning
+    // by its angle (degrees, positive to the left) from the previous direction.
+    private static RouteProblem Walk((float X, float Y) start, params (float Turn, float Length)[] chords)
+    {
+        var points = new List<(float, float)> { start };
+        var heading = 0f;
+        var (x, y) = start;
+        foreach (var (turn, length) in chords)
+        {
+            heading += turn;
+            x += length * MathF.Cos(heading * MathF.PI / 180f);
+            y += length * MathF.Sin(heading * MathF.PI / 180f);
+            points.Add((x, y));
+        }
+
+        return Path(points.ToArray());
+    }
+
+    private static RouteProblem Octagon(float s)
+        => Path((0, 0), (s, 0), (2 * s, s), (2 * s, 2 * s), (s, 3 * s), (0, 3 * s), (-s, 2 * s), (-s, s), (0, 0.001f));
+
+    [Fact]
+    public void CircularSection_ShorterThan10Mm_IsFined()
+    {
+        // The octagon path is 9.66 s long: 9.66 mm at s = 1 fines its 45 degree turns, 10.14 mm at
+        // s = 1.05 is a real circular move.
+        Assert.Equal(TurnFine.CircularMinLength, 10f);
+        var shortLoop = Octagon(1f);
+        Assert.All(Enumerable.Range(1, shortLoop.Count - 2), k => Assert.True(FinedAt(shortLoop, k), $"node {k} not fined"));
+        Assert.True(Slow(shortLoop) > 0f);
+        var longLoop = Octagon(1.05f);
+        Assert.All(Enumerable.Range(1, longLoop.Count - 2), k => Assert.False(FinedAt(longLoop, k), $"node {k} fined"));
+        Assert.Equal(0f, Slow(longLoop));
+    }
+
+    [Fact]
+    public void SplitCorner_OfSmallTurns_IsACompoundTurn()
+    {
+        // 75 degrees in three 25 degree turns 1 mm apart: fined from 5 mm before the first to 5 mm
+        // after the last turn.
+        var split = Walk((-10, 0), (0, 10), (25, 1), (25, 1), (25, 10));
+        Assert.True(FinedAt(split, 1));
+        Assert.True(FinedAt(split, 2));
+        Assert.True(FinedAt(split, 3));
+        Assert.Equal(12f, Slow(split), 3);
+
+        // The same turns 11 mm apart: no two of them lie within 10 mm.
+        var spread = Walk((-10, 0), (0, 10), (25, 11), (25, 11), (25, 10));
+        Assert.Equal(0f, Slow(spread));
+    }
+
+    [Theory]
+    [InlineData(1.5f, 11.5f)]
+    [InlineData(12f, 0f)]
+    public void CompoundTurn_SkipsStraightNodes_WithinItsSpan(float straight, float slow)
+    {
+        // 30 degrees, three straight chords, 30 degrees: one 60 degree turn when the straight part
+        // is shorter than 10 mm.
+        var third = straight / 3f;
+        var problem = Walk((-10, 0), (0, 10), (30, third), (0, third), (0, third), (30, 10));
+        Assert.Equal(slow, Slow(problem), 3);
+    }
+
+    [Fact]
+    public void SmallTurn_NextToASharpCorner_DoesNotStretchItsZone()
+    {
+        var problem = Walk((0, 0), (0, 20), (90, 2), (10, 20));
+        Assert.True(FinedAt(problem, 1));
+        Assert.False(FinedAt(problem, 2));
+        Assert.Equal(10f, Slow(problem), 3);
+    }
+
+    [Fact]
+    public void OppositeWiggle_DoesNotHideACompoundTurn()
+    {
+        var problem = Walk((-10, 0), (0, 10), (30, 1), (-5, 1), (30, 10));
+        Assert.True(FinedAt(problem, 1));
+        Assert.True(FinedAt(problem, 2));
+        Assert.True(FinedAt(problem, 3));
+        Assert.Equal(12f, Slow(problem), 3);
+    }
+
+    [Fact]
+    public void GentlePolygon_IsNotFined()
+    {
+        // 10 degree turns 4 mm apart: any three span 8 mm and turn 30 degrees.
+        var chords = new List<(float, float)> { (0, 10) };
+        for (var k = 0; k < 12; k++)
+        {
+            chords.Add((10, k % 2 == 0 ? 4f : 4.3f));
+        }
+
+        Assert.Equal(0f, Slow(Walk((0, 0), chords.ToArray())));
+    }
+
+    [Fact]
+    public void ReversedDenseAndCurvedRoutes_HaveTheSameStatusesAndSlowLength()
+    {
+        var random = new Random(5150);
+        for (var trial = 0; trial < 200; trial++)
+        {
+            var count = random.Next(3, 40);
+            var points = new (float, float)[count];
+            for (var k = 0; k < count; k++)
+            {
+                points[k] = trial % 2 == 0
+                    ? (random.Next(0, 12) * 0.2f, random.Next(0, 12) * 0.2f)
+                    : ((float)(4 * Math.Cos(k * 0.4) + random.NextDouble() * 0.1), (float)(4 * Math.Sin(k * 0.4) + random.NextDouble() * 0.1));
+            }
+
+            var problem = Path(points);
+            var forward = InOrder(problem);
+            var backward = forward.Reverse().ToArray();
+            for (var k = 1; k < count - 1; k++)
+            {
+                Assert.Equal(TurnFine.IsFined(problem, forward, k), TurnFine.IsFined(problem, backward, count - 1 - k));
+            }
+
+            Assert.True(MathF.Abs(TurnFine.SlowLength(problem, forward) - TurnFine.SlowLength(problem, backward)) <= 1e-3f);
+        }
     }
 }

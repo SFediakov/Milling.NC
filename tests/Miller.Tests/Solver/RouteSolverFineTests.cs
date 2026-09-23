@@ -35,7 +35,7 @@ public sealed class RouteSolverFineTests
         var count = 0;
         for (var k = 1; k < order.Length - 1; k++)
         {
-            var isFined = TurnFine.IsFined(problem, k >= 2 ? order[k - 2] : -1, order[k - 1], order[k], order[k + 1], k + 2 < order.Length ? order[k + 2] : -1);
+            var isFined = TurnFine.IsFined(problem, order, k);
             var ux = problem.X[order[k]] - problem.X[order[k - 1]];
             var uy = problem.Y[order[k]] - problem.Y[order[k - 1]];
             var wx = problem.X[order[k + 1]] - problem.X[order[k]];
