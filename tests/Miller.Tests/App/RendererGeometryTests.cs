@@ -109,6 +109,48 @@ public sealed class RendererGeometryTests
         Assert.Equal(tool.HeadRadius, maxHeadRadius, 3);
     }
 
+    // T-135: a frustum from 10 mm to 20 mm over 8 mm, then the top cylinder for the display length.
+    [Fact]
+    public void Tool_FrustumHead_WidensFromTheBottomToTheTopDiameter()
+    {
+        var tool = new ToolDefinition { CutterDiameter = 6, CutterLength = 20, HeadDiameter = 10, HeadShape = HeadShape.Frustum, HeadTopDiameter = 20, HeadLength = 8 };
+        var data = ToolRenderer.Build(tool, Red, Green);
+        var side = ToolRenderer.Segments * 6;
+        var disc = ToolRenderer.Segments * 3;
+        Assert.Equal((side + disc + side + side + 2 * disc) * ToolRenderer.FloatsPerVertex, data.Length);
+
+        var headTop = tool.CutterLength + tool.HeadLength + ToolRenderer.HeadDisplayLength;
+        var maxZ = float.MinValue;
+        for (var o = 0; o < data.Length; o += ToolRenderer.FloatsPerVertex)
+        {
+            var p = new Vector3(data[o], data[o + 1], data[o + 2]);
+            var n = new Vector3(data[o + 3], data[o + 4], data[o + 5]);
+            var color = new Vector4(data[o + 6], data[o + 7], data[o + 8], data[o + 9]);
+            Assert.Equal(1f, n.Length(), 3);
+            maxZ = MathF.Max(maxZ, p.Z);
+            if (color != Green)
+            {
+                continue;
+            }
+
+            var radius = MathF.Sqrt(p.X * p.X + p.Y * p.Y);
+            Assert.InRange(p.Z, tool.CutterLength, headTop + 1e-4f);
+            if (p.Z < tool.CutterLength + tool.HeadLength - 1e-4f && radius > 1e-4f && n.Z != -1f)
+            {
+                // On the cone: the radius grows linearly with the height and the normal faces out and down.
+                var expected = 5f + 5f * (p.Z - tool.CutterLength) / tool.HeadLength;
+                Assert.Equal(expected, radius, 3);
+                Assert.True(n.Z < 0f);
+            }
+            else
+            {
+                Assert.True(radius <= 10f + 1e-3f);
+            }
+        }
+
+        Assert.Equal(headTop, maxZ, 4);
+    }
+
     [Fact]
     public void Tool_NullDefinition_ProducesNoGeometry()
     {

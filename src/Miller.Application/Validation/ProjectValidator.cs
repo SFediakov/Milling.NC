@@ -34,6 +34,24 @@ public static class ProjectValidator
                 $"Head diameter {F(tool.HeadDiameter)} must be larger than the cutter diameter {F(tool.CutterDiameter)}."));
         }
 
+        if (!Enum.IsDefined(tool.HeadShape))
+        {
+            errors.Add(new ValidationMessage("Tool.HeadShape", $"Unknown head shape {tool.HeadShape}."));
+        }
+        else if (tool.HeadShape == HeadShape.Frustum)
+        {
+            if (!(float.IsFinite(tool.HeadTopDiameter) && tool.HeadTopDiameter > tool.CutterDiameter))
+            {
+                errors.Add(new ValidationMessage("Tool.HeadTopDiameter",
+                    $"Head top diameter {F(tool.HeadTopDiameter)} must be larger than the cutter diameter {F(tool.CutterDiameter)}."));
+            }
+
+            if (!(float.IsFinite(tool.HeadLength) && tool.HeadLength > 0))
+            {
+                errors.Add(new ValidationMessage("Tool.HeadLength", $"Head length must be greater than 0, got {F(tool.HeadLength)}."));
+            }
+        }
+
         if (!project.Axes.IsPermutation)
         {
             errors.Add(new ValidationMessage("Axes.MapX",

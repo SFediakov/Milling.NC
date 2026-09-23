@@ -6,7 +6,8 @@ using Miller.Core.Toolpaths;
 namespace Miller.Core.Simulation;
 
 // Checks the current stock (not the model) at one tool position: a rapid whose footprint sits below
-// the stock surface, or stock under the head annulus higher than the cutter reaches.
+// the stock surface, or stock under the head annulus higher than the head underside there (the head
+// bottom plus the annulus Dz, which is 0 under a cylinder and rises along a widening frustum).
 public static class CollisionDetector
 {
     // Float slack so a tip resting exactly on a surface is not a collision.
@@ -34,10 +35,10 @@ public static class CollisionDetector
         foreach (var offset in profile.AnnulusOffsets)
         {
             var z = Cell(stock, ci + offset.Dx, cj + offset.Dy);
-            if (z > headBottom + Tolerance)
+            if (z > headBottom + offset.Dz + Tolerance)
             {
                 return new SimulationEvent(SimulationEventKind.HeadCollision, segmentIndex, tip,
-                    string.Create(CultureInfo.InvariantCulture, $"Head touches the stock in segment {segmentIndex} at {tip.X:0.###}, {tip.Y:0.###}, {tip.Z:0.###} (stock {z:0.###} above the head bottom {headBottom:0.###})."));
+                    string.Create(CultureInfo.InvariantCulture, $"Head touches the stock in segment {segmentIndex} at {tip.X:0.###}, {tip.Y:0.###}, {tip.Z:0.###} (stock {z:0.###} above the head underside {headBottom + offset.Dz:0.###})."));
             }
         }
 

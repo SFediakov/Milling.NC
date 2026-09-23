@@ -4,8 +4,9 @@ using Miller.Core.Setup;
 
 namespace Miller.App.Rendering;
 
-// Cutter cylinder (flat disc or ball tip) and the wider head cylinder, built around the tool tip
-// at the origin and drawn translated to the current tool position. Geometry building is static so
+// Cutter cylinder (flat disc or ball tip) and the head (a cylinder, or a frustum from the bottom to
+// the top diameter over HeadLength followed by a cylinder of the top diameter), built around the tool
+// tip at the origin and drawn translated to the current tool position. Geometry building is static so
 // tests cover it without a GL context.
 public sealed class ToolRenderer : IDisposable
 {
@@ -61,10 +62,20 @@ public sealed class ToolRenderer : IDisposable
             Disc(data, r, 0f, -1f, cutterColor);
         }
 
-        var headTop = tool.CutterLength + HeadDisplayLength;
-        Cylinder(data, tool.HeadRadius, tool.CutterLength, headTop, headColor);
-        Disc(data, tool.HeadRadius, tool.CutterLength, -1f, headColor);
-        Disc(data, tool.HeadRadius, headTop, 1f, headColor);
+        var headBottomRadius = tool.HeadDiameter / 2;
+        var headTopRadius = headBottomRadius;
+        var headBottom = tool.CutterLength;
+        if (tool.HeadShape == HeadShape.Frustum)
+        {
+            headTopRadius = tool.HeadTopDiameter / 2;
+            Cone(data, headBottomRadius, headTopRadius, headBottom, headBottom + tool.HeadLength, headColor);
+            headBottom += tool.HeadLength;
+        }
+
+        var headTop = headBottom + HeadDisplayLength;
+        Cylinder(data, headTopRadius, headBottom, headTop, headColor);
+        Disc(data, headBottomRadius, tool.CutterLength, -1f, headColor);
+        Disc(data, headTopRadius, headTop, 1f, headColor);
         return data.ToArray();
     }
 
@@ -80,6 +91,29 @@ public sealed class ToolRenderer : IDisposable
             var p01 = new Vector3(n0.X * radius, n0.Y * radius, z1);
             var p10 = new Vector3(n1.X * radius, n1.Y * radius, z0);
             var p11 = new Vector3(n1.X * radius, n1.Y * radius, z1);
+            Vertex(data, p00, n0, color); Vertex(data, p10, n1, color); Vertex(data, p11, n1, color);
+            Vertex(data, p00, n0, color); Vertex(data, p11, n1, color); Vertex(data, p01, n0, color);
+        }
+    }
+
+    // Side of a truncated cone from radius r0 at z0 up to r1 at z1 (z1 > z0), outward normals.
+    private static void Cone(List<float> data, float r0, float r1, float z0, float z1, Vector4 color)
+    {
+        var length = MathF.Sqrt((z1 - z0) * (z1 - z0) + (r0 - r1) * (r0 - r1));
+        var horizontal = (z1 - z0) / length;
+        var vertical = (r0 - r1) / length;
+        for (var k = 0; k < Segments; k++)
+        {
+            var a0 = 2 * MathF.PI * k / Segments;
+            var a1 = 2 * MathF.PI * (k + 1) / Segments;
+            var d0 = new Vector3(MathF.Cos(a0), MathF.Sin(a0), 0);
+            var d1 = new Vector3(MathF.Cos(a1), MathF.Sin(a1), 0);
+            var n0 = new Vector3(d0.X * horizontal, d0.Y * horizontal, vertical);
+            var n1 = new Vector3(d1.X * horizontal, d1.Y * horizontal, vertical);
+            var p00 = new Vector3(d0.X * r0, d0.Y * r0, z0);
+            var p01 = new Vector3(d0.X * r1, d0.Y * r1, z1);
+            var p10 = new Vector3(d1.X * r0, d1.Y * r0, z0);
+            var p11 = new Vector3(d1.X * r1, d1.Y * r1, z1);
             Vertex(data, p00, n0, color); Vertex(data, p10, n1, color); Vertex(data, p11, n1, color);
             Vertex(data, p00, n0, color); Vertex(data, p11, n1, color); Vertex(data, p01, n0, color);
         }

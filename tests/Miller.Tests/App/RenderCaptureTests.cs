@@ -39,6 +39,42 @@ public sealed class RenderCaptureTests
         }
     }
 
+    // T-135: the frustum fields appear only for the frustum head, and the schematic draws a trapezoid.
+    [AvaloniaFact]
+    public void ToolTab_FrustumHead_RendersToPng()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"miller-render-{Guid.NewGuid():N}");
+        var viewModel = TestServices.MainWindowViewModel(root);
+        var window = new MainWindow { DataContext = viewModel, Width = Width, Height = Height };
+        try
+        {
+            window.Show();
+            var tabs = window.FindControl<TabControl>("SettingsTabs")!;
+            tabs.SelectedItem = tabs.Items.OfType<TabItem>().Single(t => t.Name == "ToolTab");
+            window.UpdateLayout();
+            var fields = tabs.GetVisualDescendants().OfType<StackPanel>().Single(p => p.Name == "FrustumFields");
+            Assert.False(fields.IsEffectivelyVisible);
+
+            viewModel.Tool.HeadShape = Miller.Core.Setup.HeadShape.Frustum;
+            viewModel.Tool.HeadTopDiameter = 16f;
+            viewModel.Tool.HeadLength = 4f;
+            window.UpdateLayout();
+            Assert.True(fields.IsEffectivelyVisible);
+            var frame = window.CaptureRenderedFrame();
+            Assert.NotNull(frame);
+            Directory.CreateDirectory(CaptureDirectory);
+            frame.Save(Path.Combine(CaptureDirectory, "tab-ToolTab-frustum.png"), PngBitmapEncoderOptions.Default);
+        }
+        finally
+        {
+            window.Close();
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
+    }
+
     [AvaloniaFact]
     public async Task SettingsTabs_RenderToPng()
     {
