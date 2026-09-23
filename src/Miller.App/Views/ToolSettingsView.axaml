@@ -19,9 +19,22 @@
       <c:NumericBox Name="CutterLengthBox" Classes="numeric" Value="{Binding CutterLength}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding CutterLengthError}" IsVisible="{Binding CutterLengthError, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
-      <TextBlock Classes="label" Text="Head diameter (mm)" />
+      <TextBlock Classes="label" Text="Head shape" />
+      <ComboBox Name="HeadShapeBox" ItemsSource="{Binding HeadShapes}" SelectedItem="{Binding HeadShape}" Width="120" HorizontalAlignment="Left" />
+
+      <TextBlock Classes="label" Text="Head bottom diameter (mm)" />
       <c:NumericBox Name="HeadDiameterBox" Classes="numeric" Value="{Binding HeadDiameter}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding HeadDiameterError}" IsVisible="{Binding HeadDiameterError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+      <StackPanel Name="FrustumFields" Spacing="4" IsVisible="{Binding IsFrustum}">
+        <TextBlock Classes="label" Text="Head top diameter (mm)" />
+        <c:NumericBox Name="HeadTopDiameterBox" Classes="numeric" Value="{Binding HeadTopDiameter}" HorizontalAlignment="Left" />
+        <TextBlock Classes="validation" Text="{Binding HeadTopDiameterError}" IsVisible="{Binding HeadTopDiameterError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+        <TextBlock Classes="label" Text="Head length to the top diameter (mm)" />
+        <c:NumericBox Name="HeadLengthBox" Classes="numeric" Value="{Binding HeadLength}" HorizontalAlignment="Left" />
+        <TextBlock Classes="validation" Text="{Binding HeadLengthError}" IsVisible="{Binding HeadLengthError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      </StackPanel>
 
       <TextBlock Classes="label" Text="Tip" />
       <ComboBox Name="TipTypeBox" ItemsSource="{Binding TipTypes}" SelectedItem="{Binding TipType}" Width="120" HorizontalAlignment="Left" />
@@ -29,12 +42,9 @@
       <TextBlock Classes="header" Text="Schematic" />
       <Border Classes="panel" HorizontalAlignment="Left">
         <Canvas Name="Schematic" Width="{x:Static vm:ToolSettingsViewModel.SchematicWidth}" Height="{x:Static vm:ToolSettingsViewModel.SchematicHeight}">
-          <Rectangle Name="HeadShape"
-                     Canvas.Left="{Binding HeadLeft}"
-                     Canvas.Top="0"
-                     Width="{Binding HeadWidth}"
-                     Height="{x:Static vm:ToolSettingsViewModel.SchematicHeadHeight}"
-                     Fill="{DynamicResource ToolHeadBrush}" />
+          <Polygon Name="HeadOutlineShape"
+                   Points="{Binding HeadOutline}"
+                   Fill="{DynamicResource ToolHeadBrush}" />
           <Rectangle Name="CutterShape"
                      Canvas.Left="{Binding CutterLeft}"
                      Canvas.Top="{x:Static vm:ToolSettingsViewModel.SchematicHeadHeight}"

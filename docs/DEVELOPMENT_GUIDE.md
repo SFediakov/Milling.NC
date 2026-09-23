@@ -230,8 +230,21 @@ below the tip map by more than `Tolerance`.
 ```
 
 - `CutterLength` is the distance from the tip to the underside of the head.
+- `HeadShape` (T-135): `Cylinder` (the drawing above, diameter `HeadDiameter`) or
+  `Frustum`, a four-sided section in the side view: `HeadDiameter` at the bottom,
+  `HeadTopDiameter` after `HeadLength`, the top diameter above that. The frustum
+  fields are ignored for a cylinder. `HeadRadius` is the widest head radius.
 - The head must never touch material: at tip height `z`, every stock or model
-  height inside the head radius must be `<= z + CutterLength`.
+  height at lateral distance `d` inside the head radius must be
+  `<= z + CutterLength + dz(d)`, where `dz` is the height of the head underside
+  above the head bottom: 0 for a cylinder and inside the bottom radius of a
+  frustum; for a frustum that widens upward (`rt > rb`)
+  `dz(d) = HeadLength * (d - rb) / (rt - rb)` for `rb < d <= rt`. A frustum that
+  narrows upward has its widest part at the bottom and acts as the cylinder of
+  `HeadDiameter`.
+- The separation terraces (`SeparationRegion`) widen by the widest head radius,
+  so for a frustum they are those of the cylinder of its widest diameter (safe,
+  never narrower than the head needs).
 
 ### 6.3 Heightmaps
 
@@ -278,10 +291,11 @@ slot narrower than about 0.42 of the diameter) is cut away; a ball tip dimples a
 flat surface because the edge cells outvote the center. A footprint that is all
 model or all stock gives the drop-cutter value.
 
-Head limit (`HeadClearance`), annulus `r < d <= HeadDiameter/2`:
+Head limit (`HeadClearance`), annulus `r < d <= HeadRadius`, `dz` of the head
+underside from section 6.2 (0 for a cylinder):
 
 ```
-limit[i,j] = max over annulus of model[i+dx, j+dy]  -  CutterLength
+limit[i,j] = max over annulus of (model[i+dx, j+dy] - dz(dx,dy))  -  CutterLength
 effectiveTip[i,j] = max(tip[i,j], limit[i,j])
 headLimited[i,j] = limit[i,j] > tip[i,j] + Tolerance
 ```
@@ -452,6 +466,9 @@ M30
 | `CutterDiameter > 0` | Tool.CutterDiameter |
 | `CutterLength > 0` | Tool.CutterLength |
 | `HeadDiameter > CutterDiameter` | Tool.HeadDiameter |
+| `HeadShape` is `Cylinder` or `Frustum` | Tool.HeadShape |
+| Frustum only: `HeadTopDiameter > CutterDiameter`, finite | Tool.HeadTopDiameter |
+| Frustum only: `HeadLength > 0`, finite | Tool.HeadLength |
 | `0 < Stepover <= CutterDiameter` | Parameters.Stepover |
 | `0 < FinishingStepover <= CutterDiameter` | Parameters.FinishingStepover |
 | `Stepdown > 0` | Parameters.Stepdown |
@@ -1620,6 +1637,14 @@ check that decides done.
 - Input: user request (all toolpath generation executed from one built C library with no feature degradation, execution speed optimized; the first wording said C++, the user changed it to C)
 - Output: `miller_native` (C11, CMake, built on every `dotnet build`), `mn_generate` runs transform to statistics in one call, every stage exported on its own; the C# classes are facades with unchanged signatures; a persistent worker pool runs the reach map rows; `LocalSearch.cs`, `FineWindow.cs`, `SpatialBuckets.cs` removed; `build.sh` publishes the host RID
 - Acceptance: every map, mask, plan, segment and statistic bit-identical to the C# pipeline on 30 heart variants (both strategies, both scopes, flat and ball tip, rotated, mirrored, cylinder stock, reach percent, short cutter, 1.2 mm cutter); the 557 existing tests and the golden files unchanged and green; heart timings best of 3 (C# to native): z-layer 808 to 545 ms, separation 1,039 to 753 ms, 3 axis freedom 4,915 to 3,901 ms, 1.2 mm cutter at 0.1 mm cells 4,182 to 2,765 ms
+- Status: done
+
+#### T-135 Frustum head for the collision checks
+- Depends on: T-134
+- Files: `src/Miller.Core/Setup/ToolDefinition.cs`, `src/Miller.Native/src/mn_profile.c`, `src/Miller.Core/Simulation/CollisionDetector.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.App/ViewModels/ToolSettingsViewModel.cs`, `src/Miller.App/Views/ToolSettingsView.axaml`, `src/Miller.App/Rendering/ToolRenderer.cs`, tests
+- Input: user request (different head forms for the collision checks: a four-sided section with top and bottom diameter and a length)
+- Output: `HeadShape` Cylinder or Frustum with `HeadTopDiameter` and `HeadLength` (section 6.2); the tool profile gives every head ring cell the height of the head underside; the head limit and the simulation collision check subtract or add it; Tool tab shape selector with the frustum fields and a trapezoid schematic; the viewport draws the cone
+- Acceptance: hand-computed underside heights on the ring; a narrowing or straight frustum equals the cylinder of its bottom; a cylinder ignores the frustum fields; the head limit of a frustum lies between the cylinders of its two diameters; a column under the cone clears the frustum and hits the cylinder of the top diameter; validation and serializer rules; zero head collisions in the simulation of a frustum job
 - Status: done
 
 ### M8 Packaging and release

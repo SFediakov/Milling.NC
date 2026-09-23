@@ -42,6 +42,42 @@ public sealed class SettingsViewModelsTests : IDisposable
     }
 
     [Fact]
+    public void Tool_FrustumHead_WritesItsFieldsAndDrawsATrapezoid()
+    {
+        Assert.False(_vm.Tool.IsFrustum);
+        var cylinder = _vm.Tool.HeadOutline;
+        Assert.Equal(cylinder[0].X, cylinder[3].X);
+        Assert.Equal(cylinder[1].X, cylinder[2].X);
+
+        _vm.Tool.HeadShape = HeadShape.Frustum;
+        Assert.True(_vm.Tool.IsFrustum);
+        Assert.Equal(HeadShape.Frustum, _vm.Project.Current.Tool.HeadShape);
+        _vm.Tool.HeadTopDiameter = 16f;
+        _vm.Tool.HeadLength = 4f;
+        Assert.Equal(16f, _vm.Project.Current.Tool.HeadTopDiameter);
+        Assert.Equal(4f, _vm.Project.Current.Tool.HeadLength);
+        Assert.Null(_vm.Tool.HeadTopDiameterError);
+        Assert.Null(_vm.Tool.HeadLengthError);
+
+        // Bottom 10, top 16: the top edge is 1.6 times the bottom edge and as wide as the schematic head.
+        var outline = _vm.Tool.HeadOutline;
+        var bottom = outline[1].X - outline[0].X;
+        var top = outline[2].X - outline[3].X;
+        Assert.Equal(1.6, top / bottom, 6);
+        Assert.Equal(_vm.Tool.HeadWidth, top, 6);
+        Assert.Equal(ToolSettingsViewModel.SchematicHeadHeight, outline[0].Y);
+        Assert.Equal(0, outline[3].Y);
+
+        _vm.Tool.HeadTopDiameter = 5f;
+        Assert.NotNull(_vm.Tool.HeadTopDiameterError);
+        _vm.Tool.HeadLength = 0f;
+        Assert.NotNull(_vm.Tool.HeadLengthError);
+        _vm.Tool.HeadShape = HeadShape.Cylinder;
+        Assert.Null(_vm.Tool.HeadTopDiameterError);
+        Assert.Null(_vm.Tool.HeadLengthError);
+    }
+
+    [Fact]
     public void Stock_SwitchesShapeAndValidates()
     {
         _vm.Stock.Shape = StockShape.Cylinder;

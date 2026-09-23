@@ -50,6 +50,12 @@ int mn_profile_build(const mn_tool* tool, float cell_size, mn_profile* profile)
     if (!(tool->cutter_diameter > 0)) {
         return mn_fail(MN_ERR_ARGUMENT, "Cutter diameter must be positive, got %g.", (double)tool->cutter_diameter);
     }
+    if (tool->head_shape != MN_HEAD_CYLINDER && tool->head_shape != MN_HEAD_FRUSTUM) {
+        return mn_fail(MN_ERR_ARGUMENT, "Unknown head shape %d.", (int)tool->head_shape);
+    }
+    if (tool->head_shape == MN_HEAD_FRUSTUM && !(tool->head_top_diameter > 0 && tool->head_length > 0 && isfinite(tool->head_top_diameter) && isfinite(tool->head_length))) {
+        return mn_fail(MN_ERR_ARGUMENT, "A frustum head needs a finite positive top diameter and length, got %g and %g.", (double)tool->head_top_diameter, (double)tool->head_length);
+    }
 
     float r = tool->cutter_diameter / 2.0f;
     float head = mn_head_radius(tool);

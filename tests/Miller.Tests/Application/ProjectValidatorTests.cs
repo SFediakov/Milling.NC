@@ -70,6 +70,29 @@ public sealed class ProjectValidatorTests
     }
 
     [Fact]
+    public void FrustumHead_NeedsATopWiderThanTheCutterAndAPositiveLength()
+    {
+        AssertValid(p => p.Tool.HeadShape = HeadShape.Frustum);
+        AssertValid(p => { p.Tool.HeadShape = HeadShape.Frustum; p.Tool.HeadTopDiameter = 8; });
+        AssertSingleError(p => { p.Tool.HeadShape = HeadShape.Frustum; p.Tool.HeadTopDiameter = 6; }, "Tool.HeadTopDiameter");
+        AssertSingleError(p => { p.Tool.HeadShape = HeadShape.Frustum; p.Tool.HeadTopDiameter = float.NaN; }, "Tool.HeadTopDiameter");
+        AssertSingleError(p => { p.Tool.HeadShape = HeadShape.Frustum; p.Tool.HeadLength = 0; }, "Tool.HeadLength");
+        AssertSingleError(p => { p.Tool.HeadShape = HeadShape.Frustum; p.Tool.HeadLength = float.PositiveInfinity; }, "Tool.HeadLength");
+    }
+
+    [Fact]
+    public void CylinderHead_IgnoresTheFrustumFields()
+    {
+        AssertValid(p => { p.Tool.HeadTopDiameter = 0; p.Tool.HeadLength = -1; });
+    }
+
+    [Fact]
+    public void HeadShape_MustBeKnown()
+    {
+        AssertSingleError(p => p.Tool.HeadShape = (HeadShape)5, "Tool.HeadShape");
+    }
+
+    [Fact]
     public void Stepover_MustBeInZeroToCutterDiameter()
     {
         AssertSingleError(p => p.Parameters.Stepover = 0, "Parameters.Stepover");

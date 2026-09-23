@@ -161,6 +161,47 @@ public sealed class SimulationServiceTests
         Assert.DoesNotContain(service.Events, e => e.Kind == SimulationEventKind.HeadCollision);
     }
 
+    // T-135: the same fixture under a frustum head (4 mm bottom, 9 mm top over 2 mm): the planned
+    // path stays clear of the widening head, and the head limit never exceeds the one of a cylinder
+    // of the top diameter.
+    [Fact]
+    public void FrustumHeadBesideWalls_ProducesNoHeadCollision()
+    {
+        MillingProject Project(Action<ToolDefinition> head)
+        {
+            var project = MillingProject.Default();
+            project.Tool.CutterDiameter = 2;
+            project.Tool.HeadDiameter = 4;
+            project.Tool.CutterLength = 1.5f;
+            head(project.Tool);
+            project.Parameters.Stepover = 1;
+            project.Parameters.Stepdown = 1;
+            project.Stock.SizeX = 14;
+            project.Stock.SizeY = 14;
+            project.Stock.SizeZ = 5;
+            project.Parameters.CellSize = 0.5f;
+            project.Models.Add(new ModelPlacement { StlPath = "box.stl" });
+            return project;
+        }
+
+        var meshes = new[] { TestMeshes.Box(8, 8, 3) };
+        var frustum = new PipelineService().Run(Project(t => { t.HeadShape = HeadShape.Frustum; t.HeadTopDiameter = 9; t.HeadLength = 2; }), meshes, null, CancellationToken.None);
+        var wide = new PipelineService().Run(Project(t => t.HeadDiameter = 9), meshes, null, CancellationToken.None);
+        Assert.Contains(frustum.HeadLimitedMask.Cast<bool>(), limited => limited);
+        for (var j = 0; j < frustum.HeadLimit.Height; j++)
+        {
+            for (var i = 0; i < frustum.HeadLimit.Width; i++)
+            {
+                Assert.False(frustum.HeadLimit[i, j] > wide.HeadLimit[i, j], $"({i},{j})");
+            }
+        }
+
+        var service = new SimulationService();
+        service.Load(frustum);
+        service.RunToEnd();
+        Assert.DoesNotContain(service.Events, e => e.Kind == SimulationEventKind.HeadCollision);
+    }
+
     [Fact]
     public void SpeedFactor_IsForwardedAndClamped()
     {
