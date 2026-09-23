@@ -106,6 +106,49 @@ public sealed class RouteSolverFineTests
         }
     }
 
+    // T-139: statuses reach up to 26 positions from a join, so a move is applied only after its exact
+    // fine change; dense lattices and curves (compound turns, arc chains) must never raise the cost.
+    [Fact]
+    public void OneMoreEvaluation_NeverRaisesTheFinedCost_OnDenseLatticesAndCurves()
+    {
+        var random = new Random(139);
+        var problems = new List<RouteProblem>();
+        for (var trial = 0; trial < 2; trial++)
+        {
+            var seen = new HashSet<(float, float)>();
+            var points = new List<(float, float)>();
+            while (points.Count < 40)
+            {
+                var point = (random.Next(0, 12) * 0.2f, random.Next(0, 12) * 0.2f);
+                if (seen.Add(point))
+                {
+                    points.Add(point);
+                }
+            }
+
+            problems.Add(Points(0.2f, points.ToArray()));
+        }
+
+        var curve = new (float, float)[40];
+        for (var k = 0; k < curve.Length; k++)
+        {
+            var radius = 3 + (k % 7) * 0.4;
+            curve[k] = ((float)(radius * Math.Cos(k * 0.45)), (float)(radius * Math.Sin(k * 0.45)));
+        }
+
+        problems.Add(Points(0.2f, curve));
+        foreach (var problem in problems)
+        {
+            var previous = RouteSolver.PathCost(problem, Solve(problem, 0, 0));
+            for (var allowance = 1L; allowance <= 400; allowance++)
+            {
+                var cost = RouteSolver.PathCost(problem, Solve(problem, 0, allowance));
+                Assert.True(cost <= previous + 1e-3f, $"allowance {allowance}: {cost} after {previous}");
+                previous = cost;
+            }
+        }
+    }
+
     [Fact]
     public void TwoRows_AreCutAlong_InsteadOfZigzaggingAcross()
     {
