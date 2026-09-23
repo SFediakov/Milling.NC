@@ -136,6 +136,27 @@ public sealed class PipelineServiceTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new PipelineService().RunAsync(BoxProject(), new[] { Box() }, null, cts.Token));
     }
 
+    // T-134: the token reaches the native generation; cancelled from its own progress callback in the
+    // reach map, the run stops there and never reports the route.
+    [Fact]
+    public void Cancellation_DuringTheNativeRun_StopsAndThrows()
+    {
+        using var cts = new CancellationTokenSource();
+        var reports = new List<ProgressReport>();
+        var progress = new SynchronousProgress(report =>
+        {
+            reports.Add(report);
+            if (report.Stage == "reach map")
+            {
+                cts.Cancel();
+            }
+        });
+        var error = Assert.ThrowsAny<OperationCanceledException>(() => new PipelineService().Run(BoxProject(), new[] { Box() }, progress, cts.Token));
+        Assert.Equal(cts.Token, error.CancellationToken);
+        Assert.Contains(reports, r => r.Stage == "reach map");
+        Assert.DoesNotContain(reports, r => r.Stage == "route" || r.Stage == "done");
+    }
+
     [Fact]
     public async Task InvalidProject_ThrowsValidationExceptionNamingTheField()
     {
