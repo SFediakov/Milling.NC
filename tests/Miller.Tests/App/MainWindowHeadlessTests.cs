@@ -13,16 +13,18 @@ namespace Miller.Tests.App;
 
 public sealed class MainWindowHeadlessTests
 {
-    private static readonly string[] TopLevelMenus = { "FileMenu", "ToolpathMenu", "ViewMenu", "SimulationMenu", "HelpMenu" };
+    private static readonly string[] TopLevelMenus = { "FileMenu", "ToolpathMenu", "ViewMenu", "SimulationMenu", "MachineMenu", "HelpMenu" };
 
     private static readonly string[] MenuItems =
     {
         "OpenStlItem", "OpenProjectItem", "SaveProjectItem", "SaveProjectAsItem", "ExportNcItem", "ExitItem", "GenerateItem", "CancelGenerateItem",
         "ResetCameraItem", "ShowModelItem", "ShowStockItem", "ShowToolpathItem", "ShowToolItem",
         "PlayItem", "PauseItem", "StopItem", "RunToEndItem", "AboutItem",
+        "MachineConnectItem", "MachineDisconnectItem", "MachineStartItem", "MachinePauseItem", "MachineResumeItem", "MachineStopItem",
+        "MachineHomeItem", "MachineUnlockItem", "MachineResetItem",
     };
 
-    private static readonly string[] Tabs = { "PresetsTab", "ModelsTab", "ToolTab", "StockTab", "AxesTab", "CuttingTab", "StrategyTab", "SimulationTab", "AnalysisTab" };
+    private static readonly string[] Tabs = { "PresetsTab", "ModelsTab", "ToolTab", "StockTab", "AxesTab", "CuttingTab", "StrategyTab", "SimulationTab", "AnalysisTab", "MachineTab" };
 
     [AvaloniaFact]
     public void MainWindow_ShowsEveryMenuItemAndTab()

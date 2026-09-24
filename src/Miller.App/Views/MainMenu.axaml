@@ -34,6 +34,19 @@
       <MenuItem Header="_Stop" Name="StopItem" Command="{Binding SimulationPanel.StopCommand}" />
       <MenuItem Header="_Run To End" Name="RunToEndItem" Command="{Binding SimulationPanel.RunToEndCommand}" />
     </MenuItem>
+    <MenuItem Header="_Machine" Name="MachineMenu">
+      <MenuItem Header="_Connect" Name="MachineConnectItem" Command="{Binding Machine.ConnectCommand}" />
+      <MenuItem Header="_Disconnect" Name="MachineDisconnectItem" Command="{Binding Machine.DisconnectCommand}" />
+      <Separator />
+      <MenuItem Header="_Start Program" Name="MachineStartItem" Command="{Binding Machine.StartCommand}" />
+      <MenuItem Header="_Pause" Name="MachinePauseItem" Command="{Binding Machine.PauseCommand}" />
+      <MenuItem Header="_Resume" Name="MachineResumeItem" Command="{Binding Machine.ResumeCommand}" />
+      <MenuItem Header="S_top" Name="MachineStopItem" Command="{Binding Machine.StopCommand}" />
+      <Separator />
+      <MenuItem Header="_Home" Name="MachineHomeItem" Command="{Binding Machine.HomeCommand}" />
+      <MenuItem Header="_Unlock" Name="MachineUnlockItem" Command="{Binding Machine.UnlockCommand}" />
+      <MenuItem Header="Soft R_eset" Name="MachineResetItem" Command="{Binding Machine.ResetCommand}" />
+    </MenuItem>
     <MenuItem Header="_Help" Name="HelpMenu">
       <MenuItem Header="_About" Name="AboutItem" Command="{Binding ShowAboutCommand}" />
     </MenuItem>
