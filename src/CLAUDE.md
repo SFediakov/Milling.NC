@@ -38,6 +38,11 @@
 - Serial and TCP links are two transports for two kinds of controller, not a fallback: the user
   chooses one. A settings file written before T-143 has no machine section and loads the machine
   defaults, as a missing settings file loads all defaults.
+- The collision check (T-144) is a cluster without a project of its own: `CollisionRecorder` sits in
+  `Miller.Core/Simulation` and reuses `CollisionDetector` and `SimulationEngine` with the simulation
+  panel, so a defect there reaches both. Its gate `CollisionService` turns every failure except
+  cancellation into a failed `CollisionCheck`; the generated toolpath is kept and the summary names
+  the failure. A separate project would have duplicated the engine, which the no-dual-path rule forbids.
 - "Sent only after the previous command's execution is confirmed" is implemented as Grbl's
   send-response protocol: the next line goes after `ok`/`error`, which Grbl sends once it has
   executed the line (a move is then in its planner). Waiting for every move to stop would halt the
