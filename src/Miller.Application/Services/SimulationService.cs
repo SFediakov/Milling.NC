@@ -18,10 +18,9 @@ public sealed record SimulationSnapshot(
 public sealed class SimulationService
 {
     private readonly SimulationClock _clock = new();
-    private readonly List<SimulationEvent> _events = new();
     private readonly List<SimulationEvent> _pending = new();
-    private readonly HashSet<(int Segment, SimulationEventKind Kind)> _reported = new();
     private SimulationEngine? _engine;
+    private CollisionRecorder? _collisions;
 
     public PipelineResult? Result { get; private set; }
 
@@ -48,13 +47,14 @@ public sealed class SimulationService
         set => _clock.SpeedFactor = value;
     }
 
-    public IReadOnlyList<SimulationEvent> Events => _events;
+    public IReadOnlyList<SimulationEvent> Events => _collisions?.Events ?? Array.Empty<SimulationEvent>();
 
     public void Load(PipelineResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
         Result = result;
         _clock.Reset();
+        _collisions = new CollisionRecorder(result.Profile, result.Profile.Tool.CutterLength, result.Model, result.Floor);
         ClearEvents();
         Stock = result.Stock.Map.Clone();
         _engine = new SimulationEngine(result.Toolpath, Stock, result.Profile);
@@ -66,6 +66,7 @@ public sealed class SimulationService
         _clock.Reset();
         ClearEvents();
         _engine = null;
+        _collisions = null;
         Stock = null;
         Result = null;
     }
@@ -150,19 +151,15 @@ public sealed class SimulationService
 
     private void ClearEvents()
     {
-        _events.Clear();
+        _collisions?.Clear();
         _pending.Clear();
-        _reported.Clear();
     }
 
     // One event per segment and kind keeps the list readable for a rapid crossing many cells.
     private void OnSample(SimulationSample sample)
     {
-        var tool = Result!.Profile.Tool;
-        var found = CollisionDetector.Check(Stock!, Result.Profile, tool.CutterLength, sample.Tip, sample.Kind, sample.SegmentIndex);
-        if (found is not null && _reported.Add((found.SegmentIndex, found.Kind)))
+        if (_collisions!.Record(Stock!, sample) is { } found)
         {
-            _events.Add(found);
             _pending.Add(found);
         }
     }
