@@ -131,8 +131,8 @@ public sealed class SimulationEngine
         return new StepResult(ToolPosition, dirty, _index, IsFinished);
     }
 
-    // Whole toolpath, checking the token once per segment.
-    public StepResult RunToEnd(CancellationToken cancellation)
+    // Whole toolpath, checking the token and reporting Progress once per segment.
+    public StepResult RunToEnd(CancellationToken cancellation, IProgress<float>? progress = null)
     {
         var dirty = DirtyRect.Empty;
         var result = new StepResult(ToolPosition, dirty, _index, IsFinished);
@@ -143,6 +143,7 @@ public sealed class SimulationEngine
             var seconds = (segment.Length - _covered) / (segment.FeedRate / 60f);
             result = Step(seconds > 0 ? seconds : 1e-6);
             dirty = dirty.Union(result.Dirty);
+            progress?.Report(Progress);
         }
 
         return result with { Dirty = dirty };
