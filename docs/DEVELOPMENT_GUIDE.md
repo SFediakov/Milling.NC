@@ -16,7 +16,7 @@ Contents:
 7. Coding rules and definition of done
 8. Known pitfalls
 9. Milestones
-10. Task list (T-001 to T-139)
+10. Task list (T-001 to T-143)
 
 ---
 
@@ -83,6 +83,8 @@ samples/heart.miller.json    sample project for the fixture STL
 Milling_Heart_V2.STL         fixture (binary STL, 4050 triangles)
 src/Miller.Native/           native C library: the whole toolpath generation (CMake, include/miller_native.h, src/*.c)
 src/Miller.Solver/           route solver facades over the native library: surface polyline, costs, budget, turn fine (no domain types)
+src/Miller.Machine.Native/   native C library of the machine connection: serial ports (CMake, include/miller_serial.h, src/ms_serial.c)
+src/Miller.Machine/         machine cluster: links (serial, TCP), Grbl protocol, streaming controller (no domain types)
 src/Miller.Core/             domain: geometry, io, setup, heightmap, slicing, toolpath, gcode, simulation, analysis
 src/Miller.Application/      services, validation, progress
 src/Miller.App/              Avalonia UI: views, view models, rendering, ui services, styles, assets
@@ -515,6 +517,39 @@ M30
 | Stock dimensions > 0 | Stock.* |
 | Model bounds inside the stock box in machine space (`ModelLayout.StockBoundsMachine`; warning, not error) | Stock.Placement |
 | Grid size `Width * Height <= 4_000_000` cells | Parameters.CellSize |
+
+### 6.8 Machine connection (Grbl)
+
+- Links: a serial port through the native library `miller_serial` (8N1, no flow control, DTR and
+  RTS on; the rates 9600 to 921600 every system accepts, Grbl uses 115200) or a raw TCP stream to a
+  network controller (port 23 for FluidNC and grblHAL). One I/O thread reads and writes the link,
+  because a synchronous Windows handle serializes reads and writes anyway.
+- Identification: an Arduino restarts when its port opens and prints `Grbl 1.1h ['$' for help]`;
+  the controller waits 2.5 s for that line, then asks `?`; the welcome line or a status report
+  identifies it, nothing after 5 s closes the connection.
+- Streaming is send-response: a line is written only after the controller answered the previous
+  one with `ok` or `error:N`, so it never holds more than one unconfirmed line. Grbl's `ok` means
+  the line was executed; a move is then in its planner, which keeps motion continuous. A program job
+  ends with `G4 P0`, whose `ok` comes only when every move has finished; the job is done then.
+- Realtime bytes leave outside the line queue within one read timeout (10 ms): `?` status (polled at
+  5 Hz), `!` hold, `~` resume, 0x18 soft reset, 0x85 jog cancel, 0x90 to 0x9D overrides.
+- Preparation (`GrblProgram`): comments, spaces, blank lines and `%` removed, upper case, at most 79
+  characters per line. A line holding `?`, `!`, `~`, 0x18 or any byte from 0x80 is refused with its
+  number, because Grbl would execute that character as a realtime command.
+- Errors: `error:N` in a program holds the machine, waits for Hold:0 and resets (position kept,
+  spindle off); in check mode it resets out of check mode; in manual commands the remaining lines
+  are dropped. `ALARM:N` ends the job. Codes are shown with the Grbl v1.1 texts.
+- Stop: feed hold, then the soft reset once the status shows the machine at rest (Hold:0, Idle) or
+  after 5 s. A line in flight stays in flight until the welcome line after the reset.
+- Lost link: an I/O error closes the connection at once; a controller that answers no status query
+  for 3 s is closed as well. The running job fails with the reason.
+- Commands: jog `$J=G91 G21 <axis><step> F<feed>`, zero `G10 L20 P0` (active work system, kept over
+  a reset), go to `G90 G0 X0 Y0`, touch-plate probe `G21 G91 G38.2 Z-<travel> F<feed>`, then
+  `G10 L20 P0 Z<plate>`, `G0 Z<lift>`, `G90`, the outline as rapids round the program's XY bounds at
+  the current height, home `$H`, unlock `$X`, check mode `$C` around the program.
+- Positions: `WPos = MPos - WCO`; Grbl sends one of the two ($10) and the offset and overrides only
+  every 10 to 30 reports, so both are carried over. Values are in the controller's unit ($13); the
+  commands themselves are in millimetres.
 
 ## 7. Coding rules and definition of done
 
@@ -1695,6 +1730,38 @@ check that decides done.
 - Input: user request (a circular section shorter than 10 mm does not exempt its turns over 35 degrees; other ways the solver could force an angular approach are fined as well)
 - Output: the rule of section 6.4 (circular chains of at least 10 mm, compound turns); `TurnFine.IsFined(problem, order, position)` replaces the five-node overload; the local search keeps turns and arcs per position, screens moves near the joins and checks every applied move exactly; `heart_grbl.nc` regenerated
 - Acceptance: octagon of 9.66 mm fined, 10.14 mm exempt; three 25 degree turns 1 mm apart fined (12 mm slow), 11 mm apart not; two 30 degree turns with 1.5 mm of straight nodes between fined, with 12 mm not; a 10 degree turn 2 mm after a right angle does not stretch its zone; a -5 degree wiggle does not hide a compound turn; reversed dense and curved routes give the same statuses; every exact fine change equals a full double recomputation (13,935 moves checked, largest difference 0.000016); zero head events and zero gouges on the heart and fixtures; route stage 1.6 times Build_1.0.93 (1,091 to 1,774 ms Z layer, 4,176 to 6,680 ms 3 axis freedom)
+- Status: done
+
+#### T-140 Machine connection links
+- Depends on: T-004
+- Files: `src/Miller.Machine.Native/*`, `src/Miller.Machine/Miller.Machine.csproj`, `src/Miller.Machine/Links/*`, `src/Miller.Machine/Native/SerialNative.cs`, `Miller.sln`, `tests/Miller.Tests/Machine/MachineLinkTests.cs`
+- Input: user request (connect to the CNC and execute the prepared .nc file)
+- Output: new cluster "Machine": the native library `miller_serial` (Win32 comm API or POSIX termios, chosen when compiled) and `SerialLink`, `TcpLink` behind `IMachineLink` (section 6.8)
+- Acceptance: port list without error; a missing port reported with its name; bad arguments refused; TCP bytes both ways, 0 on a read timeout, a closed or unreachable controller as `MachineLinkException`
+- Status: done (the Linux branch of `miller_serial` is not compiled on this machine)
+
+#### T-141 Grbl streaming controller
+- Depends on: T-140
+- Files: `src/Miller.Machine/MachineController.cs`, `src/Miller.Machine/MachineJob.cs`, `src/Miller.Machine/MachineSnapshot.cs`, `src/Miller.Machine/MachineLog.cs`, `src/Miller.Machine/MachineTiming.cs`, `src/Miller.Machine/Grbl/*`, `tests/Miller.Tests/Machine/*`, `tests/Miller.Tests/Fixtures/FakeGrblLink.cs`
+- Input: user request (commands are sent only after the controller confirmed the previous one)
+- Output: send-response streaming, status polling, identification, error and alarm handling, stop sequence, watchdog (section 6.8)
+- Acceptance: 1,500 lines with at most one unanswered (a mutation that sends without waiting fails the test); done only on the `G4 P0` answer; an error stops at its line with the Grbl text, holds and resets; an alarm sends nothing more; hold and resume leave while a line waits; stop holds, waits for Hold:0, resets and sends no further line; a failed link closes within 1 s; a silent controller is closed by the watchdog; check mode enters and leaves; realtime characters inside a line are refused with the line number; the same program over a loopback TCP server arrives complete and in order
+- Status: done
+
+#### T-142 Machine commands and the machine service
+- Depends on: T-141
+- Files: `src/Miller.Machine/Grbl/GrblCommands.cs`, `src/Miller.Machine/Grbl/GrblBounds.cs`, `src/Miller.Application/Services/MachineService.cs`, `src/Miller.Application/Services/SettingsService.cs`, `tests/Miller.Tests/Machine/GrblCommandsTests.cs`, `tests/Miller.Tests/Application/MachineServiceTests.cs`, `tests/Miller.Tests/Application/SettingsServiceTests.cs`
+- Input: research of the features of Grbl senders (UGS, gSender, CNCjs, bCNC, Candle, OpenBuilds CONTROL)
+- Output: jog, zero, go to zero, touch-plate probe, outline, home, unlock, overrides, console; `MachineService` as the gate (link from the settings, programs from the generated toolpath with the line to segment map or from a file); `MachinePreferences` in the settings file
+- Acceptance: every command as its documented line; refused while disconnected or while a job runs, overrides and hold still accepted; the square toolpath maps its answered lines to segments; a bad file line refused with its number; disconnecting during a program holds and resets; the console history survives a reconnection
+- Status: done
+
+#### T-143 Machine tab and menu
+- Depends on: T-142
+- Files: `src/Miller.App/ViewModels/MachineViewModel.cs`, `src/Miller.App/ViewModels/MachineViewModel.Commands.cs`, `src/Miller.App/Views/MachineView.axaml`, `src/Miller.App/Views/MainMenu.axaml`, `src/Miller.App/Views/MainWindow.axaml`, `src/Miller.App/ViewModels/ViewportViewModel.cs`, `src/Miller.App/Rendering/SceneRenderer.cs`, `src/Miller.App/Services/ConfirmDialogService.cs`, `src/Miller.App/App.axaml.cs`, tests
+- Input: user request (integrate without overloading the interface)
+- Output: one Machine tab (connection and program open; jog and zero with probe, overrides and console folded) and one Machine menu; refreshed at 10 Hz from the controller snapshot; the viewport tool marker follows the machine's work position and draws the answered part of the generated toolpath as done
+- Acceptance: connect needs a port or a host; position, state and version shown; start asks first and runs only from Idle; every command that moves the machine disabled during a job; progress, the failing line and a lost link shown; console traffic; fields saved; the tab fits 360 px without horizontal scroll (render captures)
 - Status: done
 
 ### M8 Packaging and release

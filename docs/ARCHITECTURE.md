@@ -21,6 +21,7 @@ list that implements it is in `docs/DEVELOPMENT_GUIDE.md`.
 | G10 | Simulation preview of head movement and material removal, speed 0.1x to 1000x | `src/Miller.Core/Simulation/SimulationEngine.cs`, `src/Miller.Core/Simulation/MaterialRemover.cs`, `src/Miller.Core/Simulation/SimulationClock.cs`, `src/Miller.App/Rendering/HeightMapRenderer.cs`, `src/Miller.App/Rendering/ToolRenderer.cs`, `src/Miller.App/Views/SimulationControlsView.axaml` |
 | G11 | Preview of the final cut model including inaccuracy and uncuttable areas | `src/Miller.Core/Analysis/FinalModelAnalyzer.cs`, `src/Miller.Core/Analysis/UncuttableRegions.cs`, `src/Miller.App/Views/AnalysisView.axaml` |
 | G12 | Modular, exchangeable routing algorithms | `src/Miller.Core/Toolpath/IToolpathStrategy.cs`, `src/Miller.Core/Toolpath/StrategyRegistry.cs`, `src/Miller.Core/Toolpath/Strategies/ZLayerByLayerStrategy.cs`, `src/Miller.Core/Toolpath/Strategies/ThreeAxisFreedomStrategy.cs` |
+| G13 | Connect to the CNC and run the prepared program, each command only after the previous one is confirmed | `src/Miller.Machine/MachineController.cs`, `src/Miller.Application/Services/MachineService.cs`, `src/Miller.App/Views/MachineView.axaml` |
 
 Project rules that constrain the design (root `CLAUDE.md`):
 
@@ -96,12 +97,19 @@ three decimals.
 +---------------------------------------------------------------+
 | Miller.Application   Services, Validation, Persistence         |  Application
 +---------------------------------------------------------------+
-        | references
-        v
-+---------------------------------------------------------------+
-| Miller.Core   Geometry, Io, Setup, HeightMap, Slicing,         |  Domain
-|               Toolpath, GCode, Simulation, Analysis            |
-+---------------------------------------------------------------+
+        | references                         | references
+        v                                    v
++-------------------------------------+ +-------------------------+
+| Miller.Core   Geometry, Io, Setup,  | | Miller.Machine          |  Domain / Machine
+|   HeightMap, Slicing, Toolpath,     | |   links, Grbl protocol, |
+|   GCode, Simulation, Analysis       | |   streaming controller  |
++-------------------------------------+ +-------------------------+
+                                                     | P/Invoke
+                                                     v
+                                          +-------------------------+
+                                          | Miller.Machine.Native   |  Native
+                                          |   miller_serial (C11)   |
+                                          +-------------------------+
         | references
         v
 +---------------------------------------------------------------+
@@ -114,7 +122,7 @@ three decimals.
 |                 the whole toolpath generation                  |
 +---------------------------------------------------------------+
 
-Miller.Tests references all four .NET projects.
+Miller.Tests references all five .NET projects.
 ```
 
 Rules:
@@ -143,7 +151,15 @@ Rules:
 - `Miller.Core` references `Miller.Solver` and no package. It has no file
   dialogs, no threads of its own, no timers. It is deterministic: same input,
   same output, on every OS.
-- `Miller.Application` references `Miller.Core` only. It owns long-running
+- `Miller.Machine` (T-140 to T-142) is the machine connection cluster and references nothing
+  managed: links (`SerialLink` over the native library `miller_serial`, `TcpLink` over sockets),
+  the Grbl protocol (`GrblProgram`, `GrblStatus`, `GrblCodes`, `GrblCommands`, `GrblBounds`) and
+  `MachineController`, which alone touches the link, on one thread, and publishes immutable
+  snapshots. `miller_serial` chooses the Win32 comm API or POSIX termios when it is compiled, like
+  the thread code of `miller_native`; the .NET side has no OS branch. No package was added: the
+  serial port is not `System.IO.Ports`.
+- `Miller.Application` references `Miller.Core` and `Miller.Machine`; `MachineService` is the gate
+  between the two. It owns long-running
   orchestration (`IProgress<T>`, `CancellationToken`), file I/O for projects and
   exports, and user settings. It has no Avalonia reference, so any UI type used
   here fails to compile.
@@ -233,6 +249,18 @@ placeholder; the task that implements it is written in the placeholder header.
 | Analysis | `FinalModelAnalyzer.cs` | Builds `DeviationMap` from the final stock; statistics (rest volume, gouge volume, area fractions) |
 | Analysis | `UncuttableRegions.cs` | Masks: Overhang (downward-facing surface below the top surface), HeadLimited (from `HeadClearance`), CornerLimited (tip-derived surface above model by more than tolerance) |
 
+### 4.1a src/Miller.Machine
+
+| Folder | File | Responsibility |
+|---|---|---|
+| Links | `IMachineLink.cs`, `SerialLink.cs`, `TcpLink.cs`, `MachineLinkException.cs` | Byte streams to a controller; read with a timeout, write, a failed link throws |
+| Native | `SerialNative.cs` | P/Invoke of `miller_serial` (`ms_list`, `ms_open`, `ms_read`, `ms_write`, `ms_close`, `ms_last_error`) |
+| Grbl | `GrblProgram.cs` | Program preparation and refusal of realtime characters (guide 6.8) |
+| Grbl | `GrblStatus.cs`, `GrblCodes.cs`, `GrblRealtime.cs` | Status report parsing (WPos, MPos, WCO, overrides, hold sub-state), error and alarm texts, realtime bytes |
+| Grbl | `GrblCommands.cs`, `GrblBounds.cs` | Jog, zero, go to zero, touch-plate probe, outline lines; XY bounds of a program |
+| root | `MachineController.cs` | Send-response streaming on one I/O thread: identification, status polling, jobs, error and alarm handling, stop sequence, watchdog |
+| root | `MachineJob.cs`, `MachineSnapshot.cs`, `MachineLog.cs`, `MachineTiming.cs` | Program, check and command jobs; published state; console log; timing |
+
 ### 4.2 src/Miller.Application
 
 | File | Responsibility |
@@ -243,6 +271,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | `Services/ExportService.cs` | Toolpath + project -> post-processor -> `.nc` file |
 | `Services/SimulationService.cs` | Owns `SimulationEngine`, `SimulationClock`, `MaterialRemover`, `CollisionDetector`; `Advance(realSeconds)`; `SeekTo(fraction)` (forward sweeps in place, backward replays from a fresh stock); exposes snapshot (tool position, dirty rectangle, events) |
 | `Services/AnalysisService.cs` | Runs `FinalModelAnalyzer` and `UncuttableRegions` on demand |
+| `Services/MachineService.cs` | Gate to the machine cluster: link from `MachineConnectionSettings`, one `MachineController` per connection, one console log per session, programs from the generated toolpath (post-processor into memory, answered lines mapped to toolpath segments) or from a file, every machine command |
 | `Services/SettingsService.cs` | User preferences JSON in the per-user application data folder: last folders, window size, last speed factor |
 | `Services/PresetService.cs` | Named `MillingPreset`s in one `presets.json` next to the executable (`AppContext.BaseDirectory`); `Load`, `Save` (replace by name, case-insensitive), `Delete`; a corrupt file throws |
 | `Services/LogService.cs` | Append-only text log in `logs/miller.log` next to the executable; exception formatting |
@@ -259,7 +288,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | Styles | `Colors.axaml` | The only file with color literals |
 | Styles | `Theme.axaml` | Control styles referencing `Colors.axaml` resources |
 | Views | `MainWindow.axaml(.cs)` | Menu bar, left settings tabs, central viewport, bottom status bar with progress |
-| Views | `MainMenu.axaml` | File (Open STL, Open Project, Save Project, Save Project As, Export NC, Exit), Toolpath (Generate, Cancel), View (Reset Camera; Show Model, Stock, Toolpath, Tool as check items bound two-way to the viewport flags), Simulation (Play, Pause, Stop, Run To End), Help (About) |
+| Views | `MainMenu.axaml` | File (Open STL, Open Project, Save Project, Save Project As, Export NC, Exit), Toolpath (Generate, Cancel), View (Reset Camera; Show Model, Stock, Toolpath, Tool as check items bound two-way to the viewport flags), Simulation (Play, Pause, Stop, Run To End), Machine (Connect, Disconnect, Start Program, Pause, Resume, Stop, Home, Unlock, Soft Reset), Help (About) |
 | Views | `ToolSettingsView.axaml` | Cutter diameter, cutter length, head diameter, tip type |
 | Views | `StockSettingsView.axaml` | Shape, dimensions, placement, margin, fit button |
 | Views | `AxisSettingsView.axaml` | Axis mapping, directions, rotations, origin mode |
@@ -268,13 +297,14 @@ placeholder; the task that implements it is written in the placeholder header.
 | Views | `CuttingParametersView.axaml` | Feed, plunge, rapid, spindle, stepover, stepdown, safe height, cell size, direction |
 | Views | `StrategySelectionView.axaml` | Routing strategy, cut scope, minimum island volume, reach percent, post-processor, Generate button, statistics |
 | Views | `SimulationControlsView.axaml` | Play, pause, stop, step, run-to-end, logarithmic speed slider 0.1 to 1000 with numeric entry, progress bar (a press seeks to that fraction), simulated time, collision counter |
+| Views | `MachineView.axaml` | Machine tab: connection (serial port and baud or host and port), state and position, Home, Unlock, Reset; program (use toolpath, open file, check, outline, start, pause, resume, stop, progress); folded: jog and zero with the touch-plate probe, overrides, console |
 | Views | `AnalysisView.axaml` | Final-model mode toggle, legend (Ok, RestMaterial, Gouge, Overhang, HeadLimited, CornerLimited), statistics |
 | Views | `AboutWindow.axaml` | Version, licenses pointer |
 | Views | `Viewport3DControl.cs` | `OpenGlControlBase` subclass: init, render, deinit; right drag orbits, wheel drag pans, wheel zooms, double click fits, left press picks a model and drags it in X and Y (ray-plane at the hit height); delegates to `SceneRenderer` |
 | Controls | `NumericBox.cs` | `TextBox` subclass with a float `Value`: typed text is kept as typed, valid text is committed per keystroke, invalid text sets a data validation error, the text is rewritten only on an outside `Value` change |
 | ViewModels | `ViewModelBase.cs` | `ObservableObject` base with validation helpers |
 | ViewModels | `MainWindowViewModel.cs` | Commands for the menu, owns child view models, status text |
-| ViewModels | `ToolSettingsViewModel.cs`, `StockSettingsViewModel.cs`, `AxisSettingsViewModel.cs`, `CuttingParametersViewModel.cs`, `StrategySelectionViewModel.cs`, `ModelsViewModel.cs`, `PresetsViewModel.cs`, `SimulationViewModel.cs`, `AnalysisViewModel.cs`, `ViewportViewModel.cs` | One per view; bind to the project through `ProjectService`; validation messages from `ProjectValidator`; `ViewportViewModel` also owns the pick and the drag (`BeginDrag`, `DragTo`, `ModelDragged`), hidden models are not hit |
+| ViewModels | `ToolSettingsViewModel.cs`, `StockSettingsViewModel.cs`, `AxisSettingsViewModel.cs`, `CuttingParametersViewModel.cs`, `StrategySelectionViewModel.cs`, `ModelsViewModel.cs`, `PresetsViewModel.cs`, `SimulationViewModel.cs`, `AnalysisViewModel.cs`, `MachineViewModel.cs`, `ViewportViewModel.cs` | One per view (`MachineViewModel` copies the controller snapshot 10 times a second and moves the viewport tool marker to the machine's work position); bind to the project through `ProjectService`; validation messages from `ProjectValidator`; `ViewportViewModel` also owns the pick and the drag (`BeginDrag`, `DragTo`, `ModelDragged`), hidden models are not hit |
 | Rendering | `GlConstants.cs` | GL enum values not exposed by Avalonia's `GlInterface` |
 | Rendering | `GlFunctions.cs` | Delegates obtained via `GlInterface.GetProcAddress` for VAO, buffer and uniform functions missing from `GlInterface` |
 | Rendering | `GlShaders.cs` | GLSL sources; version preamble selected from `GlVersion` (`#version 300 es` + precision, or `#version 330 core`) |
@@ -375,6 +405,16 @@ FinalModelAnalyzer: deviation = stock - model (where model exists)
    dev  < -Tolerance   -> Gouge (should never happen; indicates a strategy bug)
 UncuttableRegions: Overhang (surface hidden from +Z), HeadLimited, CornerLimited
 HeightMapRenderer colors cells by category using Colors.axaml resources.
+```
+
+### 5.4 Machine connection (MachineService, MachineController)
+
+```
+Machine tab -> MachineService (gate) -> MachineController (I/O thread) -> IMachineLink -> controller
+   line: written only after the answer (ok / error) to the previous line
+   realtime: ? every 200 ms, hold, resume, reset, jog cancel, overrides, outside the line queue
+   answers -> snapshot (state, positions, job progress) + console log
+MachineViewModel.Refresh (10 Hz) -> tab properties, command enable rules, viewport tool marker
 ```
 
 ## 6. Extension points
