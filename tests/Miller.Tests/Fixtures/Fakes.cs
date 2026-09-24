@@ -47,6 +47,16 @@ public sealed class FakeConfirmDialogService : IConfirmDialogService
         Asked++;
         return Task.FromResult(Answers.Count > 0 ? Answers.Dequeue() : SaveDecision.Cancel);
     }
+
+    public Queue<bool> Confirmations { get; } = new();
+
+    public List<string> Questions { get; } = new();
+
+    public Task<bool> ConfirmAsync(string question)
+    {
+        Questions.Add(question);
+        return Task.FromResult(Confirmations.Count > 0 && Confirmations.Dequeue());
+    }
 }
 
 // Real services rooted in a temporary directory, with fake dialogs.
@@ -54,7 +64,7 @@ public static class TestServices
 {
     public const string Version = "Build_0.0.0";
 
-    public static MainWindowViewModel MainWindowViewModel(string tempRoot, FakeFileDialogService? dialogs = null, FakeErrorDialogService? errors = null, FakeConfirmDialogService? confirm = null)
+    public static MainWindowViewModel MainWindowViewModel(string tempRoot, FakeFileDialogService? dialogs = null, FakeErrorDialogService? errors = null, FakeConfirmDialogService? confirm = null, MachineService? machine = null)
         => new(
             new ProjectService(),
             new MeshImportService(),
@@ -62,6 +72,7 @@ public static class TestServices
             new ExportService(),
             new SimulationService(),
             new AnalysisService(),
+            machine ?? new MachineService(),
             new SettingsService(Path.Combine(tempRoot, "settings")),
             new PresetService(Path.Combine(tempRoot, "presets")),
             dialogs ?? new FakeFileDialogService(),

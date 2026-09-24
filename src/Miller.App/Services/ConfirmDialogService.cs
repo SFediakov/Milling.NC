@@ -15,14 +15,17 @@ public enum SaveDecision
 public interface IConfirmDialogService
 {
     Task<SaveDecision> AskSaveChangesAsync();
+
+    // Yes / No; closing the dialog with the window button is No.
+    Task<bool> ConfirmAsync(string question);
 }
 
-// Modal Save / Discard / Cancel question bound to the main window.
+// Modal questions bound to the main window: Save / Discard / Cancel for unsaved changes, Yes / No
+// before an action on the machine.
 public sealed class ConfirmDialogService : IConfirmDialogService
 {
     public const string Question = "The project has unsaved changes. Save them?";
     private const double DialogWidth = 420;
-    private const double DialogHeight = 150;
 
     private readonly Func<Window?> _owner;
 
@@ -31,22 +34,31 @@ public sealed class ConfirmDialogService : IConfirmDialogService
         _owner = owner ?? throw new ArgumentNullException(nameof(owner));
     }
 
-    public async Task<SaveDecision> AskSaveChangesAsync()
+    public Task<SaveDecision> AskSaveChangesAsync()
+        => AskAsync(Question, new[] { ("Save", SaveDecision.Save), ("Discard", SaveDecision.Discard), ("Cancel", SaveDecision.Cancel) }, SaveDecision.Save, SaveDecision.Cancel);
+
+    public async Task<bool> ConfirmAsync(string question)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(question);
+        return await AskAsync(question, new[] { ("Yes", true), ("No", false) }, true, false);
+    }
+
+    private async Task<T> AskAsync<T>(string question, (string Label, T Value)[] answers, T accept, T cancel)
     {
         var owner = _owner() ?? throw new InvalidOperationException("The main window is not available for the confirm dialog.");
         var dialog = new Window
         {
             Title = App.WindowTitle,
             Width = DialogWidth,
-            Height = DialogHeight,
+            SizeToContent = SizeToContent.Height,
             CanResize = false,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
         };
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
-        foreach (var (label, decision) in new[] { ("Save", SaveDecision.Save), ("Discard", SaveDecision.Discard), ("Cancel", SaveDecision.Cancel) })
+        foreach (var (label, value) in answers)
         {
-            var button = new Button { Content = label, IsDefault = decision == SaveDecision.Save, IsCancel = decision == SaveDecision.Cancel };
-            button.Click += (_, _) => dialog.Close(decision);
+            var button = new Button { Content = label, IsDefault = Equals(value, accept), IsCancel = Equals(value, cancel) };
+            button.Click += (_, _) => dialog.Close(value);
             buttons.Children.Add(button);
         }
 
@@ -54,8 +66,9 @@ public sealed class ConfirmDialogService : IConfirmDialogService
         {
             Margin = new Thickness(12),
             Spacing = 12,
-            Children = { new TextBlock { Text = Question }, buttons },
+            Children = { new TextBlock { Text = question, TextWrapping = Avalonia.Media.TextWrapping.Wrap }, buttons },
         };
-        return await dialog.ShowDialog<SaveDecision>(owner);
+        // The window button closes with default(T), the cancel answer of both questions (Cancel, No).
+        return await dialog.ShowDialog<T>(owner);
     }
 }

@@ -70,6 +70,9 @@
       <TabItem Header="Analysis" Name="AnalysisTab">
         <views:AnalysisView DataContext="{Binding Analysis}" />
       </TabItem>
+      <TabItem Header="Machine" Name="MachineTab">
+        <views:MachineView DataContext="{Binding Machine}" />
+      </TabItem>
     </TabControl>
 
     <Border Name="ViewportHost" Background="{DynamicResource ViewportBackgroundBrush}">

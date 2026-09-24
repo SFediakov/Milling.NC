@@ -42,6 +42,7 @@ public partial class MainWindow : Window
     protected override void OnClosing(WindowClosingEventArgs e)
     {
         base.OnClosing(e);
+        _viewModel?.Machine.Close();
         var size = ClientSize;
         var measured = double.IsFinite(size.Width) && size.Width > 0 && double.IsFinite(size.Height) && size.Height > 0;
         if (_viewModel is not null && WindowState == WindowState.Normal && measured)
