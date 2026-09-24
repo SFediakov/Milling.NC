@@ -29,6 +29,19 @@
   error text.
 - `RouteSolver` builds two start walks and keeps the cheaper one; both always run, so it is a
   multi-start, not a fallback or a switch.
+- The machine connection (T-140 to T-143) is a cluster of its own: `src/Miller.Machine` plus the
+  native library `src/Miller.Machine.Native` (`miller_serial`), separate from `miller_native`.
+  `System.IO.Ports` is not vendored and would need a download, so the serial port is C code with a
+  compile-time OS split, like `mn_thread.c`. Its insulation has the same limit as the generation
+  library: a fault inside C ends the process; every export returns a status with a message.
+  `Miller.Application` now references `Miller.Machine`; `MachineService` is the gate.
+- Serial and TCP links are two transports for two kinds of controller, not a fallback: the user
+  chooses one. A settings file written before T-143 has no machine section and loads the machine
+  defaults, as a missing settings file loads all defaults.
+- "Sent only after the previous command's execution is confirmed" is implemented as Grbl's
+  send-response protocol: the next line goes after `ok`/`error`, which Grbl sends once it has
+  executed the line (a move is then in its planner). Waiting for every move to stop would halt the
+  machine at every vertex; the physical end is confirmed once, by `G4 P0` at the end of a program.
 
 ## Placeholder convention (architecture delivered without implementation)
 
@@ -409,6 +422,22 @@
 - A route length summed in double over float chord lengths is exact and independent of the direction;
   a float sum is not, and a status must be the same for a route and its reverse or the in-place
   reversal of 2-opt corrupts the stored statuses.
+- `dotnet sln add` adds Debug configurations to `Miller.sln`, which must list Release only; add a
+  project by hand (Project entry, three Release platform rows, the src folder nesting).
+- A synchronous Windows serial handle serializes ReadFile and WriteFile, so one thread must do
+  both; `MachineController` reads with a 10 ms timeout (ReadIntervalTimeout MAXDWORD with multiplier
+  MAXDWORD returns at the first byte) and writes between reads, which bounds realtime latency.
+- Grbl executes `?`, `!`, `~`, 0x18 and every byte from 0x80 wherever they arrive, also inside a
+  line: `GrblProgram` refuses such a line instead of streaming it (a comment is removed first, so the
+  characters are allowed there).
+- A fake link must behave like a stream (at most the buffer per read); returning more made the
+  controller close the link with an internal fault, which the insulation handled but the test
+  misread as a controller defect.
+- A test that waits on the controller snapshot and then reads view-model properties must refresh
+  the view model once more after the condition holds: the snapshot can be one step ahead.
+- No serial controller is attached to this machine: the serial read and write paths are verified
+  by the Windows build and the open errors only; the protocol runs over the same interface with a
+  fake controller and a loopback TCP server. The Linux branch of `miller_serial` has not been compiled.
 - RouteSolverTests compared a route from node 7 with a boustrophedon from node 0, which is not a route
   from node 7. The solver undercut it only while lattice arcs shorter than 10 mm were exempt; the test
   now compares with a serpentine from node 7 (solver 307.7, serpentines 317.4 and 318.1).
