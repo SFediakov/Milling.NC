@@ -39,6 +39,101 @@ public sealed class RenderCaptureTests
         }
     }
 
+    // T-135: the frustum fields appear only for the frustum head, and the schematic draws a trapezoid.
+    [AvaloniaFact]
+    public void ToolTab_FrustumHead_RendersToPng()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"miller-render-{Guid.NewGuid():N}");
+        var viewModel = TestServices.MainWindowViewModel(root);
+        var window = new MainWindow { DataContext = viewModel, Width = Width, Height = Height };
+        try
+        {
+            window.Show();
+            var tabs = window.FindControl<TabControl>("SettingsTabs")!;
+            tabs.SelectedItem = tabs.Items.OfType<TabItem>().Single(t => t.Name == "ToolTab");
+            window.UpdateLayout();
+            var fields = tabs.GetVisualDescendants().OfType<StackPanel>().Single(p => p.Name == "FrustumFields");
+            Assert.False(fields.IsEffectivelyVisible);
+
+            viewModel.Tool.HeadShape = Miller.Core.Setup.HeadShape.Frustum;
+            viewModel.Tool.HeadTopDiameter = 16f;
+            viewModel.Tool.HeadLength = 4f;
+            window.UpdateLayout();
+            Assert.True(fields.IsEffectivelyVisible);
+            var frame = window.CaptureRenderedFrame();
+            Assert.NotNull(frame);
+            Directory.CreateDirectory(CaptureDirectory);
+            frame.Save(Path.Combine(CaptureDirectory, "tab-ToolTab-frustum.png"), PngBitmapEncoderOptions.Default);
+        }
+        finally
+        {
+            window.Close();
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
+    }
+
+    // T-143: the machine tab connected to a fake Grbl with every section open, top and end of the panel.
+    [AvaloniaFact]
+    public async Task MachineTab_Connected_RendersToPng()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"miller-render-{Guid.NewGuid():N}");
+        var timing = new Miller.Machine.MachineTiming(ReadTimeoutMs: 5, PollMs: 10, BannerWaitMs: 50);
+        var machine = new Miller.Application.Services.MachineService(_ => new FakeGrblLink(), timing);
+        var viewModel = TestServices.MainWindowViewModel(root, machine: machine);
+        viewModel.Machine.SerialPort = "COM3";
+        await viewModel.Machine.ConnectCommand.ExecuteAsync(null);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        while (viewModel.Machine.StateText != "Idle" && watch.ElapsedMilliseconds < 5000)
+        {
+            await Task.Delay(5, TestContext.Current.CancellationToken);
+            viewModel.Machine.Refresh();
+        }
+
+        Assert.Equal("Idle", viewModel.Machine.StateText);
+        machine.Send("$I");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+        viewModel.Machine.Refresh();
+        var window = new MainWindow { DataContext = viewModel, Width = Width, Height = Height };
+        try
+        {
+            window.Show();
+            var tabs = window.FindControl<TabControl>("SettingsTabs")!;
+            tabs.SelectedItem = tabs.Items.OfType<TabItem>().Single(t => t.Name == "MachineTab");
+            window.UpdateLayout();
+            foreach (var expander in tabs.GetVisualDescendants().OfType<Expander>())
+            {
+                expander.IsExpanded = true;
+            }
+
+            window.UpdateLayout();
+            var panel = tabs.GetVisualDescendants().OfType<Miller.App.Views.MachineView>().Single();
+            Assert.True(panel.Bounds.Width <= tabs.Bounds.Width);
+            Directory.CreateDirectory(CaptureDirectory);
+            window.CaptureRenderedFrame()!.Save(Path.Combine(CaptureDirectory, "tab-MachineTab-connected.png"), PngBitmapEncoderOptions.Default);
+            var scroll = panel.GetVisualDescendants().OfType<ScrollViewer>().First();
+            Assert.Equal(0, scroll.Extent.Width - scroll.Viewport.Width, 1);
+            var jogPad = panel.GetVisualDescendants().OfType<Grid>().Single(g => g.Name == "JogPad");
+            jogPad.BringIntoView();
+            window.UpdateLayout();
+            window.CaptureRenderedFrame()!.Save(Path.Combine(CaptureDirectory, "tab-MachineTab-connected-jog.png"), PngBitmapEncoderOptions.Default);
+            scroll.ScrollToEnd();
+            window.UpdateLayout();
+            window.CaptureRenderedFrame()!.Save(Path.Combine(CaptureDirectory, "tab-MachineTab-connected-end.png"), PngBitmapEncoderOptions.Default);
+        }
+        finally
+        {
+            window.Close();
+            viewModel.Machine.Close();
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
+    }
+
     [AvaloniaFact]
     public async Task SettingsTabs_RenderToPng()
     {

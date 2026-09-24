@@ -42,6 +42,7 @@ public sealed class SceneRenderer : IDisposable
     private bool _showTool = true;
     private int _progressIndex;
     private Vector3 _toolPosition;
+    private bool _machineLive;
 
     // The camera belongs to the control so input works without a GL context.
     public SceneRenderer(GlInterface gl, GlVersion version, Camera camera)
@@ -93,6 +94,7 @@ public sealed class SceneRenderer : IDisposable
         _showTool = viewModel.ShowTool;
         _progressIndex = viewModel.ToolpathProgressIndex;
         _toolPosition = viewModel.ToolPosition;
+        _machineLive = viewModel.MachineLive;
         if (viewModel.ToolpathVersion != _toolpathVersion)
         {
             _toolpathVersion = viewModel.ToolpathVersion;
@@ -197,7 +199,7 @@ public sealed class SceneRenderer : IDisposable
             _stockMap.Draw();
         }
 
-        if (_showTool && _toolpath.SegmentCount > 0 && _tool.HasGeometry)
+        if (_showTool && (_toolpath.SegmentCount > 0 || _machineLive) && _tool.HasGeometry)
         {
             _tool.Draw(_lit, _litMvp, viewProjection, _toolPosition);
         }

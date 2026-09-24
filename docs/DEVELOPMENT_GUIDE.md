@@ -16,7 +16,7 @@ Contents:
 7. Coding rules and definition of done
 8. Known pitfalls
 9. Milestones
-10. Task list (T-001 to T-130)
+10. Task list (T-001 to T-143)
 
 ---
 
@@ -57,7 +57,8 @@ fails; do not invent an alternative.
 | Math | `System.Numerics.Vector3`, `Matrix4x4` (float) |
 | Serialization | `System.Text.Json` |
 | Package source | `third_party/nuget/` only; `NuGet.config` clears every other source. The `.nupkg` files are git-ignored: run `bash scripts/vendor-packages.sh` once per clone (online), every later restore is offline |
-| Linux build | `bash build.sh` on a Linux machine with the .NET 10 SDK; no container, no network after the one-time vendoring (packages come from `third_party/nuget/`) |
+| Native library | `src/Miller.Native`, C11, CMake 3.20 or newer; MSVC (Visual Studio Build Tools, static C runtime) on Windows, gcc on Linux. The build of `Miller.Solver` runs CMake, so `dotnet build` needs both on the PATH |
+| Linux build | `bash build.sh` on a Linux machine with the .NET 10 SDK, CMake and gcc; no container, no network after the one-time vendoring (packages come from `third_party/nuget/`) |
 | Shell for scripts | bash (Git Bash on Windows). No PowerShell scripts; the one `.cmd` file is the root `Miller.cmd` start file for Explorer |
 
 No other package may be added. If a task seems to need one, the task is wrong;
@@ -72,7 +73,7 @@ Directory.Packages.props     central pinned package versions
 NuGet.config                 single local source
 global.json                  SDK pin
 .editorconfig
-build.sh                     restore, build, test, publish (both RIDs), assemble dist/
+build.sh                     restore, build, test, publish (host RID), assemble dist/
 Miller.sh                    root start file for Linux and Git Bash: runs dist/<rid>/Miller with the arguments
 Miller.cmd                   root start file for Windows Explorer and cmd: starts dist\win-x64\Miller.exe detached, waits only for -- commands
 launchers/Miller.sh          Linux start file (copied to dist/linux-x64/)
@@ -80,7 +81,10 @@ scripts/vendor-packages.sh   one-time online download of packages into third_par
 third_party/nuget/           vendored .nupkg files (git-ignored; only README.md is tracked)
 samples/heart.miller.json    sample project for the fixture STL
 Milling_Heart_V2.STL         fixture (binary STL, 4050 triangles)
-src/Miller.Solver/           route solver over flat arrays: surface polyline, costs, budget, 2-opt and Or-opt (no domain types)
+src/Miller.Native/           native C library: the whole toolpath generation (CMake, include/miller_native.h, src/*.c)
+src/Miller.Solver/           route solver facades over the native library: surface polyline, costs, budget, turn fine (no domain types)
+src/Miller.Machine.Native/   native C library of the machine connection: serial ports (CMake, include/miller_serial.h, src/ms_serial.c)
+src/Miller.Machine/         machine cluster: links (serial, TCP), Grbl protocol, streaming controller (no domain types)
 src/Miller.Core/             domain: geometry, io, setup, heightmap, slicing, toolpath, gcode, simulation, analysis
 src/Miller.Application/      services, validation, progress
 src/Miller.App/              Avalonia UI: views, view models, rendering, ui services, styles, assets
@@ -97,7 +101,7 @@ Build output directories are limited to `bin/`, `obj/`, `build/`, `out/`,
 Identical commands on Windows (Git Bash) and Linux:
 
 ```bash
-bash build.sh                 # restore, build Release, test, publish win-x64 + linux-x64, assemble dist/
+bash build.sh                 # restore, build Release, test, publish the host RID, assemble dist/
 bash build.sh --no-publish    # restore, build, test only (used during tasks)
 bash build.sh --no-test       # restore, build, publish
 ```
@@ -105,11 +109,10 @@ bash build.sh --no-test       # restore, build, publish
 What `build.sh` does, in order:
 
 1. `dotnet restore Miller.sln` (sources come from `NuGet.config`, so this is offline; a fresh clone runs `bash scripts/vendor-packages.sh` once before).
-2. `dotnet build Miller.sln -c Release --no-restore`.
+2. `dotnet build Miller.sln -c Release --no-restore`; the `BuildMillerNative` target of `Miller.Solver` runs `cmake -S src/Miller.Native -B src/Miller.Native/build` and `cmake --build` first, and the library is copied next to every assembly that references `Miller.Solver`.
 3. `dotnet test Miller.sln -c Release --no-build` unless `--no-test`.
-4. `rm -rf dist/win-x64`, then `dotnet publish src/Miller.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o dist/win-x64`.
-5. `rm -rf dist/linux-x64`, then `dotnet publish src/Miller.App -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -o dist/linux-x64`.
-6. `cp launchers/Miller.sh dist/linux-x64/Miller.sh && chmod +x dist/linux-x64/Miller.sh dist/linux-x64/Miller`.
+4. `rm -rf dist`, then for the host RID only (`win-x64` under Git Bash for Windows, `linux-x64` on Linux): `dotnet publish src/Miller.App -c Release -r <rid> --self-contained -p:PublishSingleFile=true -o dist/<rid>`.
+5. On Linux: `cp launchers/Miller.sh dist/linux-x64/Miller.sh && chmod +x dist/linux-x64/Miller.sh dist/linux-x64/Miller`.
 
 Start files:
 
@@ -126,9 +129,10 @@ Start files:
   Settings > Display > Graphics creates), effective from the next start. The Linux
   launchers export `DRI_PRIME=1`.
 
-Linux build: the same `bash build.sh` on a Linux machine with the .NET 10 SDK
-installed. Both RIDs are produced there as well; cross-publishing `win-x64`
-from Linux is supported by the .NET SDK. No network is needed after the one-time
+Linux build: the same `bash build.sh` on a Linux machine with the .NET 10 SDK,
+CMake and gcc installed. It produces `linux-x64` only: the native library is
+compiled by the host's C compiler, and the Windows package comes from a Windows
+build. No network is needed after the one-time
 `bash scripts/vendor-packages.sh` because `NuGet.config` restores from `third_party/nuget/` only.
 
 Output size: `Release` is the only configuration (`Miller.sln` defines no `Debug`,
@@ -136,7 +140,7 @@ Output size: `Release` is the only configuration (`Miller.sln` defines no `Debug
 `dotnet build`/`dotnet test` writes the same `bin/Release` tree. The
 `TrimPackageNativeAssets` target in `Directory.Build.props` keeps only the native
 libraries of `win-x64` and `linux-x64` and drops the native `.pdb` symbols that
-SkiaSharp and HarfBuzzSharp ship; each publish starts from an empty `dist/<rid>`.
+SkiaSharp and HarfBuzzSharp ship; each publish starts from an empty `dist/`.
 
 Headless verification of a Linux binary without a display:
 
@@ -228,8 +232,21 @@ below the tip map by more than `Tolerance`.
 ```
 
 - `CutterLength` is the distance from the tip to the underside of the head.
+- `HeadShape` (T-135): `Cylinder` (the drawing above, diameter `HeadDiameter`) or
+  `Frustum`, a four-sided section in the side view: `HeadDiameter` at the bottom,
+  `HeadTopDiameter` after `HeadLength`, the top diameter above that. The frustum
+  fields are ignored for a cylinder. `HeadRadius` is the widest head radius.
 - The head must never touch material: at tip height `z`, every stock or model
-  height inside the head radius must be `<= z + CutterLength`.
+  height at lateral distance `d` inside the head radius must be
+  `<= z + CutterLength + dz(d)`, where `dz` is the height of the head underside
+  above the head bottom: 0 for a cylinder and inside the bottom radius of a
+  frustum; for a frustum that widens upward (`rt > rb`)
+  `dz(d) = HeadLength * (d - rb) / (rt - rb)` for `rb < d <= rt`. A frustum that
+  narrows upward has its widest part at the bottom and acts as the cylinder of
+  `HeadDiameter`.
+- The separation terraces (`SeparationRegion`) widen by the widest head radius,
+  so for a frustum they are those of the cylinder of its widest diameter (safe,
+  never narrower than the head needs).
 
 ### 6.3 Heightmaps
 
@@ -276,13 +293,29 @@ slot narrower than about 0.42 of the diameter) is cut away; a ball tip dimples a
 flat surface because the edge cells outvote the center. A footprint that is all
 model or all stock gives the drop-cutter value.
 
-Head limit (`HeadClearance`), annulus `r < d <= HeadDiameter/2`:
+Head limit (`HeadClearance`), annulus `r < d <= HeadRadius`, `dz` of the head
+underside from section 6.2 (0 for a cylinder):
 
 ```
-limit[i,j] = max over annulus of model[i+dx, j+dy]  -  CutterLength
+limit[i,j] = max over annulus of (model[i+dx, j+dy] - dz(dx,dy))  -  CutterLength
 effectiveTip[i,j] = max(tip[i,j], limit[i,j])
 headLimited[i,j] = limit[i,j] > tip[i,j] + Tolerance
 ```
+
+In the pipeline the head limit is taken over the material the cutter leaves, not
+the model: `closing = min over the footprint of effectiveTip + dz`, rounded up
+to the level it stands at (`CeilToLevel`), iterated from the tip map until the
+effective tip settles (at most 8 rounds). Collision feedback (T-136): every cell
+is shouldn't be cut (the model), might be cut (stock above the model) or should
+be cut. At a head-limited position a ring cell whose rounded-up material blocks
+the head, stands above `model + Tolerance` and could be cut lower
+(`closing + Tolerance < rounded - Tolerance`) becomes should be cut, when marking
+the blocking cells of the position lowers its limit at all. A should-cut cell
+counts with `closing + Tolerance` instead of the rounded-up value (the
+simplified path may run `Tolerance` above the planned tip), and the round is
+repeated. Marks only grow; the loop ends when the effective tip is stable and
+nothing new was marked, or after 8 rounds. The strategies cut every should-cut
+cell to its closing before the tool goes deeper beside it (section 6.4).
 
 Material removal (`MaterialRemover`), one sample of the tool at tip `(x, y, z)`:
 
@@ -348,19 +381,52 @@ Uncuttable classification (`UncuttableRegions`):
   times faster than Z), the Z part being the vertical travel of the surface
   polyline between the two nodes (`SurfacePath`: every cell-edge crossing lifted
   to the highest plateau touching it, never below the straight line between the
-  ends, rise and descent in place at the ends). `RouteSolver` walks nearest
-  neighbour over candidate lists (10 planar-nearest) and improves with 2-opt and
-  Or-opt until nothing improves or the program's budget of 40,000,000 evaluated
-  candidate moves (`RouteBudget.MaxEvaluations`, shared in proportion to node
-  counts) is spent. Going around an obstacle is not a separate search: the
-  tour through the intermediate nodes is the way around, and the cost of a move
-  over an obstacle is its climb.
+  ends, rise and descent in place at the ends), plus the turn fine below.
+  `RouteSolver` starts from the cheaper of two walks over candidate lists (10
+  planar-nearest): the nearest-neighbour walk and a smooth walk that scores
+  each step together with the cheapest step after it, fine included. It
+  improves with 2-opt and Or-opt until nothing improves or the program's budget
+  of 40,000,000 evaluated candidate moves (`RouteBudget.MaxEvaluations`, shared
+  in proportion to node counts) is spent; the fine of every move is exact.
+  Going around an obstacle is not a separate search: the tour through the
+  intermediate nodes is the way around, and the cost of a move over an
+  obstacle is its climb.
+- Turn fine (`TurnFine`): a turn is the change of the XY direction between the
+  chords into and out of a node. A node is fined for a sharp turn (above 35
+  degrees) or as part of a compound turn (T-139): up to 4 consecutive smaller
+  turns, straight nodes between them skipped, at most 8 positions each way, that
+  change the direction by more than 35 degrees within less than 10 mm of path
+  (the angle between the chord into the first and the chord out of the last); a
+  sharp turn ends the search, so a small turn beside a corner does not stretch
+  its zone. Neither is fined on a real circular move: a chain of arcs, each four
+  consecutive nodes on one circle within half a cell turning the same way below
+  90 degrees at both inner nodes, at least 10 mm long from its first node to its
+  last (followed at most 16 arcs each way). A square corner, a U-turn, a short
+  arc and a corner split into small turns are therefore never circular. A
+  movement is the stretch between two fined turns or a route end; its first and
+  last 5 mm run at 0.3 of the speed, so a fined turn slows the 5 mm before and
+  after it, overlapping zones count once and route ends clip them. The fine is
+  charged on XY travel, `(1 / 0.3 - 1) / 3` cost units per slow millimetre. On a
+  3 mm lattice the solver runs straight and rounds corners with two 45 degree
+  turns on one lattice circle (10.2 mm) instead of turning 90 degrees. Once
+  turns lie closer than one zone, removing one frees nothing, which is why the
+  start walk matters. The status of a node depends on up to 26 positions of the
+  route, so the local search keeps the turn and arc of every position, screens a
+  move with the nodes next to its joins and applies it only when the exact fine
+  change, over every node the move can change, still leaves a gain.
 - "Z layer by layer": cave by cave. A cave is cut completely at its level, then
   the tool drops one level in place into the first child cave; a sibling is
   visited only when the whole subtree is done, nearest first. Every route is
   solved over the material as it stands at that moment (the cave's cells at the
   level, everything else at what the previous routes left), so a move that
   leaves the cave climbs the standing material instead of slotting through it.
+  Should-cut passes (T-136): after the level route of a cave, one route visits
+  every cave cell whose footprint holds a should-cut cell and whose tip lies
+  between this level and the next at its tip; the band between the stock top and
+  the first level, which is in no cave, gets such a route before the first cave.
+  Every such cell is a node (a lattice at the finishing stepover left the stock
+  higher than the head limit counts on). Without should-cut cells the strategy is
+  unchanged.
 - "3 axis freedom": one free route per level of the plan. At level L the nodes
   are the coverage cells whose tip lies below the previous level (the stock top
   for the first), each at `max(tip, L)`, and the moves follow the surface
@@ -368,7 +434,8 @@ Uncuttable classification (`UncuttableRegions`):
   `Stepdown` into the material the previous level left and a wall is descended
   level by level. A cell whose tip lies between two levels is visited last at its
   tip, so the surface is followed without level quantization. The program starts
-  with a plunge from safe Z at the first node.
+  with a plunge from safe Z at the first node. It needs no should-cut pass
+  (T-136) for the same reason.
 - Segments (`RouteWriter`): level, rising and gently descending parts of the
   polyline are feeds; a descent steeper than `MaxRampSlope` (2, about 63
   degrees) is a feed over the lower point and a plunge. A travel between two
@@ -435,6 +502,9 @@ M30
 | `CutterDiameter > 0` | Tool.CutterDiameter |
 | `CutterLength > 0` | Tool.CutterLength |
 | `HeadDiameter > CutterDiameter` | Tool.HeadDiameter |
+| `HeadShape` is `Cylinder` or `Frustum` | Tool.HeadShape |
+| Frustum only: `HeadTopDiameter > CutterDiameter`, finite | Tool.HeadTopDiameter |
+| Frustum only: `HeadLength > 0`, finite | Tool.HeadLength |
 | `0 < Stepover <= CutterDiameter` | Parameters.Stepover |
 | `0 < FinishingStepover <= CutterDiameter` | Parameters.FinishingStepover |
 | `Stepdown > 0` | Parameters.Stepdown |
@@ -447,6 +517,39 @@ M30
 | Stock dimensions > 0 | Stock.* |
 | Model bounds inside the stock box in machine space (`ModelLayout.StockBoundsMachine`; warning, not error) | Stock.Placement |
 | Grid size `Width * Height <= 4_000_000` cells | Parameters.CellSize |
+
+### 6.8 Machine connection (Grbl)
+
+- Links: a serial port through the native library `miller_serial` (8N1, no flow control, DTR and
+  RTS on; the rates 9600 to 921600 every system accepts, Grbl uses 115200) or a raw TCP stream to a
+  network controller (port 23 for FluidNC and grblHAL). One I/O thread reads and writes the link,
+  because a synchronous Windows handle serializes reads and writes anyway.
+- Identification: an Arduino restarts when its port opens and prints `Grbl 1.1h ['$' for help]`;
+  the controller waits 2.5 s for that line, then asks `?`; the welcome line or a status report
+  identifies it, nothing after 5 s closes the connection.
+- Streaming is send-response: a line is written only after the controller answered the previous
+  one with `ok` or `error:N`, so it never holds more than one unconfirmed line. Grbl's `ok` means
+  the line was executed; a move is then in its planner, which keeps motion continuous. A program job
+  ends with `G4 P0`, whose `ok` comes only when every move has finished; the job is done then.
+- Realtime bytes leave outside the line queue within one read timeout (10 ms): `?` status (polled at
+  5 Hz), `!` hold, `~` resume, 0x18 soft reset, 0x85 jog cancel, 0x90 to 0x9D overrides.
+- Preparation (`GrblProgram`): comments, spaces, blank lines and `%` removed, upper case, at most 79
+  characters per line. A line holding `?`, `!`, `~`, 0x18 or any byte from 0x80 is refused with its
+  number, because Grbl would execute that character as a realtime command.
+- Errors: `error:N` in a program holds the machine, waits for Hold:0 and resets (position kept,
+  spindle off); in check mode it resets out of check mode; in manual commands the remaining lines
+  are dropped. `ALARM:N` ends the job. Codes are shown with the Grbl v1.1 texts.
+- Stop: feed hold, then the soft reset once the status shows the machine at rest (Hold:0, Idle) or
+  after 5 s. A line in flight stays in flight until the welcome line after the reset.
+- Lost link: an I/O error closes the connection at once; a controller that answers no status query
+  for 3 s is closed as well. The running job fails with the reason.
+- Commands: jog `$J=G91 G21 <axis><step> F<feed>`, zero `G10 L20 P0` (active work system, kept over
+  a reset), go to `G90 G0 X0 Y0`, touch-plate probe `G21 G91 G38.2 Z-<travel> F<feed>`, then
+  `G10 L20 P0 Z<plate>`, `G0 Z<lift>`, `G90`, the outline as rapids round the program's XY bounds at
+  the current height, home `$H`, unlock `$X`, check mode `$C` around the program.
+- Positions: `WPos = MPos - WCO`; Grbl sends one of the two ($10) and the offset and overrides only
+  every 10 to 30 reports, so both are carried over. Values are in the controller's unit ($13); the
+  commands themselves are in millimetres.
 
 ## 7. Coding rules and definition of done
 
@@ -1587,6 +1690,78 @@ check that decides done.
 - Input: user request (negative values must be allowed everywhere coordinates are typed); reproduced: a valid keystroke in a Models offset field republished the model name list, the list box reset its selection, the field was disabled for an instant and lost the keyboard focus, so "-12.5" ended as -1; a lone "-" was flagged as an error
 - Output: `ModelsViewModel.Names` is cached and republished only when the names differ; `NumericBox.IsIncomplete` treats a sign or decimal-point prefix as input in progress (no error, no value); headless tests type "-12.5" one character at a time into the Models offsets, the Axes custom zero and the Stock explicit origin
 - Acceptance: every character reaches the project, the field keeps the focus, `SelectedIndex` and the viewport selection do not change during a value edit; "" and "abc" remain errors; suite green
+- Status: done
+
+#### T-133 Turn fine in the route solver
+- Depends on: T-118
+- Files: `src/Miller.Solver/TurnFine.cs`, `src/Miller.Solver/FineWindow.cs`, `src/Miller.Solver/RouteSolver.cs`, `src/Miller.Solver/LocalSearch.cs`, `tests/Miller.Tests/Solver/*`, `tests/Miller.Tests/Golden/heart_grbl.nc`
+- Input: user request (a turn of more than 35 degrees slows the first and last 5 mm of the movement to 0.3 of the speed, except a real circular move; circular movements preferred to moves from one axis to another)
+- Output: `TurnFine` (section 6.4), `PathCost` = travel + fine, the smooth start walk, exact fine deltas in 2-opt and Or-opt (`FineWindow`: stretches between changed nodes walked once, shared by the current and the moved route); `heart_grbl.nc` regenerated
+- Acceptance: one right angle between long chords fines 10 mm; exactly 35 degrees is not fined; zones run across short chords and overlap once; the lattice octagon and a hexagon arc are circular, square corners, U-turns and staircases are not; reversed routes cost the same; one more evaluation never raises the fined cost; on a 12 x 8 lattice fewer fined turns than the row pattern and more circular than fined turns; the user's heart (15 routes, 4,866 nodes) fined cost 2,083 to 1,945 (fine -13 percent, travel +5 percent), 3 axis freedom 11,307 to 9,482; route time 0.02 s to 0.65 s and 0.24 s to 5.4 s
+- Status: done
+
+#### T-134 Toolpath generation in one native C library
+- Depends on: T-133
+- Files: `src/Miller.Native/**`, `src/Miller.Solver/Miller.Solver.csproj`, `src/Miller.Solver/Native/SolverNative.cs`, `src/Miller.Solver/*.cs`, `src/Miller.Core/Native/CoreNative.cs`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Core/HeightMap/*.cs`, `src/Miller.Core/Slicing/*.cs`, `src/Miller.Core/Toolpath/**/*.cs`, `src/Miller.Core/Simulation/StockModel.cs`, `src/Miller.Core/Geometry/Mesh.cs`, `src/Miller.Application/Services/PipelineService.cs`, `build.sh`
+- Input: user request (all toolpath generation executed from one built C library with no feature degradation, execution speed optimized; the first wording said C++, the user changed it to C)
+- Output: `miller_native` (C11, CMake, built on every `dotnet build`), `mn_generate` runs transform to statistics in one call, every stage exported on its own; the C# classes are facades with unchanged signatures; a persistent worker pool runs the reach map rows; `LocalSearch.cs`, `FineWindow.cs`, `SpatialBuckets.cs` removed; `build.sh` publishes the host RID
+- Acceptance: every map, mask, plan, segment and statistic bit-identical to the C# pipeline on 30 heart variants (both strategies, both scopes, flat and ball tip, rotated, mirrored, cylinder stock, reach percent, short cutter, 1.2 mm cutter); the 557 existing tests and the golden files unchanged and green; heart timings best of 3 (C# to native): z-layer 808 to 545 ms, separation 1,039 to 753 ms, 3 axis freedom 4,915 to 3,901 ms, 1.2 mm cutter at 0.1 mm cells 4,182 to 2,765 ms
+- Status: done
+
+#### T-135 Frustum head for the collision checks
+- Depends on: T-134
+- Files: `src/Miller.Core/Setup/ToolDefinition.cs`, `src/Miller.Native/src/mn_profile.c`, `src/Miller.Core/Simulation/CollisionDetector.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.App/ViewModels/ToolSettingsViewModel.cs`, `src/Miller.App/Views/ToolSettingsView.axaml`, `src/Miller.App/Rendering/ToolRenderer.cs`, tests
+- Input: user request (different head forms for the collision checks: a four-sided section with top and bottom diameter and a length)
+- Output: `HeadShape` Cylinder or Frustum with `HeadTopDiameter` and `HeadLength` (section 6.2); the tool profile gives every head ring cell the height of the head underside; the head limit and the simulation collision check subtract or add it; Tool tab shape selector with the frustum fields and a trapezoid schematic; the viewport draws the cone
+- Acceptance: hand-computed underside heights on the ring; a narrowing or straight frustum equals the cylinder of its bottom; a cylinder ignores the frustum fields; the head limit of a frustum lies between the cylinders of its two diameters; a column under the cone clears the frustum and hits the cylinder of the top diameter; validation and serializer rules; zero head collisions in the simulation of a frustum job
+- Status: done
+
+#### T-136 Collision feedback: should-cut cells
+- Depends on: T-134, T-135
+- Files: `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/src/mn_maps.c`, `src/Miller.Native/src/mn_strategies.c`, `tests/Miller.Tests/Application/ShouldCutTests.cs`, `tests/Miller.Tests/Golden/heart_grbl.nc`
+- Input: user request (during the collision check, cells that are not the target shape and block the head change from "might be cut" to "should be cut", then the coordinates are defined again)
+- Output: third cell state in the head clearance loop (section 6.3), `PipelineResult.ShouldCut`; Z layer should-cut passes per cave and for the top band (section 6.4); `heart_grbl.nc` regenerated
+- Acceptance: on the box fixtures the should-cut stock is removed to its closing, the head-limited area is smaller than without feedback, zero gouges and zero simulated head collisions in both strategies; the top band pass runs; a project without blocking stock marks nothing and keeps the head limit of the loop without feedback; heart (default project) head-limited cells 1,460 to 1,260, rest material 305 to 235 mm3, zero head events, machining time 3.1 to 4.7 min; with an 8 mm cutter zero head events in every scope and strategy (the ball tip had 175 before)
+- Status: done
+
+#### T-139 Turn fine: short circular sections and compound turns
+- Depends on: T-133, T-134
+- Files: `src/Miller.Native/src/mn_route.c`, `src/Miller.Native/src/mn_window.c`, `src/Miller.Native/src/mn_window.h`, `src/Miller.Native/src/mn_solver.c`, `src/Miller.Native/src/mn_internal.h`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Solver/TurnFine.cs`, `src/Miller.Solver/Native/SolverNative.cs`, `tests/Miller.Tests/Solver/*`, `tests/Miller.Tests/Golden/heart_grbl.nc`
+- Input: user request (a circular section shorter than 10 mm does not exempt its turns over 35 degrees; other ways the solver could force an angular approach are fined as well)
+- Output: the rule of section 6.4 (circular chains of at least 10 mm, compound turns); `TurnFine.IsFined(problem, order, position)` replaces the five-node overload; the local search keeps turns and arcs per position, screens moves near the joins and checks every applied move exactly; `heart_grbl.nc` regenerated
+- Acceptance: octagon of 9.66 mm fined, 10.14 mm exempt; three 25 degree turns 1 mm apart fined (12 mm slow), 11 mm apart not; two 30 degree turns with 1.5 mm of straight nodes between fined, with 12 mm not; a 10 degree turn 2 mm after a right angle does not stretch its zone; a -5 degree wiggle does not hide a compound turn; reversed dense and curved routes give the same statuses; every exact fine change equals a full double recomputation (13,935 moves checked, largest difference 0.000016); zero head events and zero gouges on the heart and fixtures; route stage 1.6 times Build_1.0.93 (1,091 to 1,774 ms Z layer, 4,176 to 6,680 ms 3 axis freedom)
+- Status: done
+
+#### T-140 Machine connection links
+- Depends on: T-004
+- Files: `src/Miller.Machine.Native/*`, `src/Miller.Machine/Miller.Machine.csproj`, `src/Miller.Machine/Links/*`, `src/Miller.Machine/Native/SerialNative.cs`, `Miller.sln`, `tests/Miller.Tests/Machine/MachineLinkTests.cs`
+- Input: user request (connect to the CNC and execute the prepared .nc file)
+- Output: new cluster "Machine": the native library `miller_serial` (Win32 comm API or POSIX termios, chosen when compiled) and `SerialLink`, `TcpLink` behind `IMachineLink` (section 6.8)
+- Acceptance: port list without error; a missing port reported with its name; bad arguments refused; TCP bytes both ways, 0 on a read timeout, a closed or unreachable controller as `MachineLinkException`
+- Status: done (the Linux branch of `miller_serial` is not compiled on this machine)
+
+#### T-141 Grbl streaming controller
+- Depends on: T-140
+- Files: `src/Miller.Machine/MachineController.cs`, `src/Miller.Machine/MachineJob.cs`, `src/Miller.Machine/MachineSnapshot.cs`, `src/Miller.Machine/MachineLog.cs`, `src/Miller.Machine/MachineTiming.cs`, `src/Miller.Machine/Grbl/*`, `tests/Miller.Tests/Machine/*`, `tests/Miller.Tests/Fixtures/FakeGrblLink.cs`
+- Input: user request (commands are sent only after the controller confirmed the previous one)
+- Output: send-response streaming, status polling, identification, error and alarm handling, stop sequence, watchdog (section 6.8)
+- Acceptance: 1,500 lines with at most one unanswered (a mutation that sends without waiting fails the test); done only on the `G4 P0` answer; an error stops at its line with the Grbl text, holds and resets; an alarm sends nothing more; hold and resume leave while a line waits; stop holds, waits for Hold:0, resets and sends no further line; a failed link closes within 1 s; a silent controller is closed by the watchdog; check mode enters and leaves; realtime characters inside a line are refused with the line number; the same program over a loopback TCP server arrives complete and in order
+- Status: done
+
+#### T-142 Machine commands and the machine service
+- Depends on: T-141
+- Files: `src/Miller.Machine/Grbl/GrblCommands.cs`, `src/Miller.Machine/Grbl/GrblBounds.cs`, `src/Miller.Application/Services/MachineService.cs`, `src/Miller.Application/Services/SettingsService.cs`, `tests/Miller.Tests/Machine/GrblCommandsTests.cs`, `tests/Miller.Tests/Application/MachineServiceTests.cs`, `tests/Miller.Tests/Application/SettingsServiceTests.cs`
+- Input: research of the features of Grbl senders (UGS, gSender, CNCjs, bCNC, Candle, OpenBuilds CONTROL)
+- Output: jog, zero, go to zero, touch-plate probe, outline, home, unlock, overrides, console; `MachineService` as the gate (link from the settings, programs from the generated toolpath with the line to segment map or from a file); `MachinePreferences` in the settings file
+- Acceptance: every command as its documented line; refused while disconnected or while a job runs, overrides and hold still accepted; the square toolpath maps its answered lines to segments; a bad file line refused with its number; disconnecting during a program holds and resets; the console history survives a reconnection
+- Status: done
+
+#### T-143 Machine tab and menu
+- Depends on: T-142
+- Files: `src/Miller.App/ViewModels/MachineViewModel.cs`, `src/Miller.App/ViewModels/MachineViewModel.Commands.cs`, `src/Miller.App/Views/MachineView.axaml`, `src/Miller.App/Views/MainMenu.axaml`, `src/Miller.App/Views/MainWindow.axaml`, `src/Miller.App/ViewModels/ViewportViewModel.cs`, `src/Miller.App/Rendering/SceneRenderer.cs`, `src/Miller.App/Services/ConfirmDialogService.cs`, `src/Miller.App/App.axaml.cs`, tests
+- Input: user request (integrate without overloading the interface)
+- Output: one Machine tab (connection and program open; jog and zero with probe, overrides and console folded) and one Machine menu; refreshed at 10 Hz from the controller snapshot; the viewport tool marker follows the machine's work position and draws the answered part of the generated toolpath as done
+- Acceptance: connect needs a port or a host; position, state and version shown; start asks first and runs only from Idle; every command that moves the machine disabled during a job; progress, the failing line and a lost link shown; console traffic; fields saved; the tab fits 360 px without horizontal scroll (render captures)
 - Status: done
 
 ### M8 Packaging and release

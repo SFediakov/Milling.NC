@@ -21,6 +21,7 @@ list that implements it is in `docs/DEVELOPMENT_GUIDE.md`.
 | G10 | Simulation preview of head movement and material removal, speed 0.1x to 1000x | `src/Miller.Core/Simulation/SimulationEngine.cs`, `src/Miller.Core/Simulation/MaterialRemover.cs`, `src/Miller.Core/Simulation/SimulationClock.cs`, `src/Miller.App/Rendering/HeightMapRenderer.cs`, `src/Miller.App/Rendering/ToolRenderer.cs`, `src/Miller.App/Views/SimulationControlsView.axaml` |
 | G11 | Preview of the final cut model including inaccuracy and uncuttable areas | `src/Miller.Core/Analysis/FinalModelAnalyzer.cs`, `src/Miller.Core/Analysis/UncuttableRegions.cs`, `src/Miller.App/Views/AnalysisView.axaml` |
 | G12 | Modular, exchangeable routing algorithms | `src/Miller.Core/Toolpath/IToolpathStrategy.cs`, `src/Miller.Core/Toolpath/StrategyRegistry.cs`, `src/Miller.Core/Toolpath/Strategies/ZLayerByLayerStrategy.cs`, `src/Miller.Core/Toolpath/Strategies/ThreeAxisFreedomStrategy.cs` |
+| G13 | Connect to the CNC and run the prepared program, each command only after the previous one is confirmed | `src/Miller.Machine/MachineController.cs`, `src/Miller.Application/Services/MachineService.cs`, `src/Miller.App/Views/MachineView.axaml` |
 
 Project rules that constrain the design (root `CLAUDE.md`):
 
@@ -96,31 +97,69 @@ three decimals.
 +---------------------------------------------------------------+
 | Miller.Application   Services, Validation, Persistence         |  Application
 +---------------------------------------------------------------+
+        | references                         | references
+        v                                    v
++-------------------------------------+ +-------------------------+
+| Miller.Core   Geometry, Io, Setup,  | | Miller.Machine          |  Domain / Machine
+|   HeightMap, Slicing, Toolpath,     | |   links, Grbl protocol, |
+|   GCode, Simulation, Analysis       | |   streaming controller  |
++-------------------------------------+ +-------------------------+
+                                                     | P/Invoke
+                                                     v
+                                          +-------------------------+
+                                          | Miller.Machine.Native   |  Native
+                                          |   miller_serial (C11)   |
+                                          +-------------------------+
         | references
         v
 +---------------------------------------------------------------+
-| Miller.Core   Geometry, Io, Setup, HeightMap, Slicing,         |  Domain
-|               Toolpath, GCode, Simulation, Analysis            |
+| Miller.Solver   Route solver facades (no domain types)         |  Numeric
 +---------------------------------------------------------------+
-        | references
+        | P/Invoke (both Core and Solver)
         v
 +---------------------------------------------------------------+
-| Miller.Solver   Route solver over flat arrays (no domain types)|  Numeric
+| Miller.Native   miller_native.dll / libmiller_native.so (C11)  |  Native
+|                 the whole toolpath generation                  |
 +---------------------------------------------------------------+
 
-Miller.Tests references all four.
+Miller.Tests references all five .NET projects.
 ```
 
 Rules:
 
-- `Miller.Solver` references nothing. It holds the hot numeric loops of the
-  routing (surface polyline, pair costs, nearest-neighbour walk, 2-opt and
-  Or-opt local search) over flat `float[]` arrays and knows no domain type, so
-  the same assembly boundary is where a native implementation would go.
+- `Miller.Native` is the native C library that runs the whole toolpath
+  generation (T-134): mesh transform, rasterizing, stock, reach map, head
+  clearance, slicing, separation, islands, both strategies with lattice, cave
+  tree and route solver, route writer, gouge check, simplifier and statistics.
+  `mn_generate` runs the complete pipeline in one call; every stage is also
+  exported on its own. It is C11 with no dependency but the C runtime and the
+  thread API of the system, reproduces the former C# float results bit for bit
+  (MathF.Max NaN rules, ties-to-even rounding, saturating conversions, the fused
+  multiply-add of `Vector3.Transform`) and is built by CMake from the
+  `Miller.Solver` project on every build. Errors come back as status codes with
+  a thread-local message; the facades turn them into the same .NET exceptions
+  as before.
+- `Miller.Solver` references nothing managed. It holds the P/Invoke facades of
+  the routing (surface polyline, pair costs, turn fine, route solver, budget)
+  and knows no domain type.
+- The C# classes of the generation (`ReachMap`, `HeadClearance`, `Slicer`,
+  `SeparationRegion`, the strategies, `RouteWriter`, `GougeChecker`,
+  `ToolpathSimplifier`, `ToolpathStatistics` and the rest) keep their public
+  signatures and forward to the native library (`Miller.Core/Native/CoreNative.cs`);
+  they hold no algorithm of their own any more. `ToolpathGeneration.Run` builds
+  the job for `mn_generate` and reads every map, mask, plan and segment back.
 - `Miller.Core` references `Miller.Solver` and no package. It has no file
   dialogs, no threads of its own, no timers. It is deterministic: same input,
   same output, on every OS.
-- `Miller.Application` references `Miller.Core` only. It owns long-running
+- `Miller.Machine` (T-140 to T-142) is the machine connection cluster and references nothing
+  managed: links (`SerialLink` over the native library `miller_serial`, `TcpLink` over sockets),
+  the Grbl protocol (`GrblProgram`, `GrblStatus`, `GrblCodes`, `GrblCommands`, `GrblBounds`) and
+  `MachineController`, which alone touches the link, on one thread, and publishes immutable
+  snapshots. `miller_serial` chooses the Win32 comm API or POSIX termios when it is compiled, like
+  the thread code of `miller_native`; the .NET side has no OS branch. No package was added: the
+  serial port is not `System.IO.Ports`.
+- `Miller.Application` references `Miller.Core` and `Miller.Machine`; `MachineService` is the gate
+  between the two. It owns long-running
   orchestration (`IProgress<T>`, `CancellationToken`), file I/O for projects and
   exports, and user settings. It has no Avalonia reference, so any UI type used
   here fails to compile.
@@ -193,8 +232,10 @@ placeholder; the task that implements it is written in the placeholder header.
 | `RouteCost.cs` | `XySpeedFactor = 3`, `ZSpeedFactor = 1`; exact cost = XY / 3 + climb of the polyline; lower bound = XY / 3 + height difference |
 | `RouteBudget.cs` | `MaxEvaluations = 40,000,000` candidate moves per program, shared by all route instances in proportion to their nodes |
 | `SpatialBuckets.cs` | Uniform buckets for k-nearest and nearest-unvisited ring searches |
-| `RouteSolver.cs` | `Solve(problem, start, budget, allowance, cancellation)`: candidate lists (10 planar-nearest with exact costs), nearest-neighbour walk, then `LocalSearch`; deterministic; `PathCost` |
-| `LocalSearch.cs` | 2-opt and Or-opt (segments of 1 to 3) on an open path with a fixed first node, don't-look bits, current edge costs kept, free edges bounded from below before an exact trace, a direct-mapped pair-cost cache, segment moves as two or three reversals |
+| `RouteSolver.cs` | `Solve(problem, start, budget, allowance, cancellation)`: candidate lists (10 planar-nearest with exact costs), the cheaper of the nearest-neighbour walk and the smooth walk (each step scored with the cheapest next step, turn fine included), then `LocalSearch`; deterministic; `PathCost` = travel + turn fine |
+| `LocalSearch.cs` | 2-opt and Or-opt (segments of 1 to 3) on an open path with a fixed first node, don't-look bits, current edge costs and XY lengths kept, the fined status of every node kept current, the exact fine change of every move, free edges bounded from below before an exact trace, a direct-mapped pair-cost cache, segment moves as two or three reversals |
+| `TurnFine.cs` | Turn fine: XY turn above 35 degrees fined unless four consecutive nodes form a real arc (one circle within half a cell, same side, both turns below 90 degrees); 5 mm before and after at 0.3 of the speed, overlaps once, route ends clip; `IsFined`, `SlowLength`, `Fine` |
+| `FineWindow.cs` | `PathView` (a route as up to four forward or reversed pieces of a base order) and `FineWindow` (the part of the slow length that depends on the changed nodes; stretches between them walked once up to 10 mm and shared by every view) |
 | GCode | `IPostProcessor.cs` | `Id`, `DisplayName`, `FileExtension`, `Write(Toolpath, MillingProject, TextWriter)` |
 | GCode | `PostProcessorRegistry.cs` | Explicit static list; `GetById`, `All` |
 | GCode | `GrblPostProcessor.cs` | Id `grbl`, extension `.nc`. Header comments, `G21 G90 G94 G17`, `S.. M3`, `G0`/`G1` with `F`, `M5`, `M30` |
@@ -208,6 +249,18 @@ placeholder; the task that implements it is written in the placeholder header.
 | Analysis | `FinalModelAnalyzer.cs` | Builds `DeviationMap` from the final stock; statistics (rest volume, gouge volume, area fractions) |
 | Analysis | `UncuttableRegions.cs` | Masks: Overhang (downward-facing surface below the top surface), HeadLimited (from `HeadClearance`), CornerLimited (tip-derived surface above model by more than tolerance) |
 
+### 4.1a src/Miller.Machine
+
+| Folder | File | Responsibility |
+|---|---|---|
+| Links | `IMachineLink.cs`, `SerialLink.cs`, `TcpLink.cs`, `MachineLinkException.cs` | Byte streams to a controller; read with a timeout, write, a failed link throws |
+| Native | `SerialNative.cs` | P/Invoke of `miller_serial` (`ms_list`, `ms_open`, `ms_read`, `ms_write`, `ms_close`, `ms_last_error`) |
+| Grbl | `GrblProgram.cs` | Program preparation and refusal of realtime characters (guide 6.8) |
+| Grbl | `GrblStatus.cs`, `GrblCodes.cs`, `GrblRealtime.cs` | Status report parsing (WPos, MPos, WCO, overrides, hold sub-state), error and alarm texts, realtime bytes |
+| Grbl | `GrblCommands.cs`, `GrblBounds.cs` | Jog, zero, go to zero, touch-plate probe, outline lines; XY bounds of a program |
+| root | `MachineController.cs` | Send-response streaming on one I/O thread: identification, status polling, jobs, error and alarm handling, stop sequence, watchdog |
+| root | `MachineJob.cs`, `MachineSnapshot.cs`, `MachineLog.cs`, `MachineTiming.cs` | Program, check and command jobs; published state; console log; timing |
+
 ### 4.2 src/Miller.Application
 
 | File | Responsibility |
@@ -218,6 +271,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | `Services/ExportService.cs` | Toolpath + project -> post-processor -> `.nc` file |
 | `Services/SimulationService.cs` | Owns `SimulationEngine`, `SimulationClock`, `MaterialRemover`, `CollisionDetector`; `Advance(realSeconds)`; `SeekTo(fraction)` (forward sweeps in place, backward replays from a fresh stock); exposes snapshot (tool position, dirty rectangle, events) |
 | `Services/AnalysisService.cs` | Runs `FinalModelAnalyzer` and `UncuttableRegions` on demand |
+| `Services/MachineService.cs` | Gate to the machine cluster: link from `MachineConnectionSettings`, one `MachineController` per connection, one console log per session, programs from the generated toolpath (post-processor into memory, answered lines mapped to toolpath segments) or from a file, every machine command |
 | `Services/SettingsService.cs` | User preferences JSON in the per-user application data folder: last folders, window size, last speed factor |
 | `Services/PresetService.cs` | Named `MillingPreset`s in one `presets.json` next to the executable (`AppContext.BaseDirectory`); `Load`, `Save` (replace by name, case-insensitive), `Delete`; a corrupt file throws |
 | `Services/LogService.cs` | Append-only text log in `logs/miller.log` next to the executable; exception formatting |
@@ -234,7 +288,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | Styles | `Colors.axaml` | The only file with color literals |
 | Styles | `Theme.axaml` | Control styles referencing `Colors.axaml` resources |
 | Views | `MainWindow.axaml(.cs)` | Menu bar, left settings tabs, central viewport, bottom status bar with progress |
-| Views | `MainMenu.axaml` | File (Open STL, Open Project, Save Project, Save Project As, Export NC, Exit), Toolpath (Generate, Cancel), View (Reset Camera; Show Model, Stock, Toolpath, Tool as check items bound two-way to the viewport flags), Simulation (Play, Pause, Stop, Run To End), Help (About) |
+| Views | `MainMenu.axaml` | File (Open STL, Open Project, Save Project, Save Project As, Export NC, Exit), Toolpath (Generate, Cancel), View (Reset Camera; Show Model, Stock, Toolpath, Tool as check items bound two-way to the viewport flags), Simulation (Play, Pause, Stop, Run To End), Machine (Connect, Disconnect, Start Program, Pause, Resume, Stop, Home, Unlock, Soft Reset), Help (About) |
 | Views | `ToolSettingsView.axaml` | Cutter diameter, cutter length, head diameter, tip type |
 | Views | `StockSettingsView.axaml` | Shape, dimensions, placement, margin, fit button |
 | Views | `AxisSettingsView.axaml` | Axis mapping, directions, rotations, origin mode |
@@ -243,13 +297,14 @@ placeholder; the task that implements it is written in the placeholder header.
 | Views | `CuttingParametersView.axaml` | Feed, plunge, rapid, spindle, stepover, stepdown, safe height, cell size, direction |
 | Views | `StrategySelectionView.axaml` | Routing strategy, cut scope, minimum island volume, reach percent, post-processor, Generate button, statistics |
 | Views | `SimulationControlsView.axaml` | Play, pause, stop, step, run-to-end, logarithmic speed slider 0.1 to 1000 with numeric entry, progress bar (a press seeks to that fraction), simulated time, collision counter |
+| Views | `MachineView.axaml` | Machine tab: connection (serial port and baud or host and port), state and position, Home, Unlock, Reset; program (use toolpath, open file, check, outline, start, pause, resume, stop, progress); folded: jog and zero with the touch-plate probe, overrides, console |
 | Views | `AnalysisView.axaml` | Final-model mode toggle, legend (Ok, RestMaterial, Gouge, Overhang, HeadLimited, CornerLimited), statistics |
 | Views | `AboutWindow.axaml` | Version, licenses pointer |
 | Views | `Viewport3DControl.cs` | `OpenGlControlBase` subclass: init, render, deinit; right drag orbits, wheel drag pans, wheel zooms, double click fits, left press picks a model and drags it in X and Y (ray-plane at the hit height); delegates to `SceneRenderer` |
 | Controls | `NumericBox.cs` | `TextBox` subclass with a float `Value`: typed text is kept as typed, valid text is committed per keystroke, invalid text sets a data validation error, the text is rewritten only on an outside `Value` change |
 | ViewModels | `ViewModelBase.cs` | `ObservableObject` base with validation helpers |
 | ViewModels | `MainWindowViewModel.cs` | Commands for the menu, owns child view models, status text |
-| ViewModels | `ToolSettingsViewModel.cs`, `StockSettingsViewModel.cs`, `AxisSettingsViewModel.cs`, `CuttingParametersViewModel.cs`, `StrategySelectionViewModel.cs`, `ModelsViewModel.cs`, `PresetsViewModel.cs`, `SimulationViewModel.cs`, `AnalysisViewModel.cs`, `ViewportViewModel.cs` | One per view; bind to the project through `ProjectService`; validation messages from `ProjectValidator`; `ViewportViewModel` also owns the pick and the drag (`BeginDrag`, `DragTo`, `ModelDragged`), hidden models are not hit |
+| ViewModels | `ToolSettingsViewModel.cs`, `StockSettingsViewModel.cs`, `AxisSettingsViewModel.cs`, `CuttingParametersViewModel.cs`, `StrategySelectionViewModel.cs`, `ModelsViewModel.cs`, `PresetsViewModel.cs`, `SimulationViewModel.cs`, `AnalysisViewModel.cs`, `MachineViewModel.cs`, `ViewportViewModel.cs` | One per view (`MachineViewModel` copies the controller snapshot 10 times a second and moves the viewport tool marker to the machine's work position); bind to the project through `ProjectService`; validation messages from `ProjectValidator`; `ViewportViewModel` also owns the pick and the drag (`BeginDrag`, `DragTo`, `ModelDragged`), hidden models are not hit |
 | Rendering | `GlConstants.cs` | GL enum values not exposed by Avalonia's `GlInterface` |
 | Rendering | `GlFunctions.cs` | Delegates obtained via `GlInterface.GetProcAddress` for VAO, buffer and uniform functions missing from `GlInterface` |
 | Rendering | `GlShaders.cs` | GLSL sources; version preamble selected from `GlVersion` (`#version 300 es` + precision, or `#version 330 core`) |
@@ -281,7 +336,8 @@ Mirrors the source tree: `Core/<Folder>/<Type>Tests.cs`,
 
 | Path | Purpose |
 |---|---|
-| `build.sh` | The only build script. Restore, build, test, publish for `win-x64` and `linux-x64`, assemble `dist/`. Runs on Linux and on Git Bash for Windows |
+| `build.sh` | The only build script. Restore, build, test, publish the host runtime (`win-x64` on Windows, `linux-x64` on Linux), assemble `dist/`. Runs on Linux and on Git Bash for Windows |
+| `src/Miller.Native/` | The native C library of the toolpath generation: `CMakeLists.txt`, `include/miller_native.h` (the exported API), `src/*.c`; built into `src/Miller.Native/build/out` |
 | `launchers/Miller.sh` | Copied to `dist/linux-x64/Miller.sh`; `cd` to its own directory and `exec ./Miller "$@"` |
 | `scripts/vendor-packages.sh` | One-time, online: downloads every package in `Directory.Packages.props` with dependencies into `third_party/nuget/` |
 | `third_party/nuget/` | Vendored `.nupkg` files; the only NuGet source. Git-ignored, filled once per clone by `scripts/vendor-packages.sh` |
@@ -291,6 +347,12 @@ Mirrors the source tree: `Core/<Folder>/<Type>Tests.cs`,
 ## 5. Data flow
 
 ### 5.1 Toolpath pipeline (PipelineService)
+
+Every step from the transform to the statistics runs inside the native library
+in one `mn_generate` call (`ToolpathGeneration.Run`); the names below are the
+facades that expose the same step on its own. The head clearance step feeds back
+(T-136): stock above the model that blocks the head becomes should be cut, the
+tip is defined again, and the strategies receive the should-cut mask.
 
 ```
 STL file
@@ -345,6 +407,16 @@ UncuttableRegions: Overhang (surface hidden from +Z), HeadLimited, CornerLimited
 HeightMapRenderer colors cells by category using Colors.axaml resources.
 ```
 
+### 5.4 Machine connection (MachineService, MachineController)
+
+```
+Machine tab -> MachineService (gate) -> MachineController (I/O thread) -> IMachineLink -> controller
+   line: written only after the answer (ok / error) to the previous line
+   realtime: ? every 200 ms, hold, resume, reset, jog cancel, overrides, outside the line queue
+   answers -> snapshot (state, positions, job progress) + console log
+MachineViewModel.Refresh (10 Hz) -> tab properties, command enable rules, viewport tool marker
+```
+
 ## 6. Extension points
 
 ### 6.1 Adding a toolpath strategy
@@ -373,9 +445,13 @@ file test in `tests/Miller.Tests/Golden/`.
 ## 7. Cross-platform build and launchers
 
 - Source is identical for both systems. `build.sh` runs
-  `dotnet publish src/Miller.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true`
-  and the same with `-r linux-x64`, then copies `launchers/Miller.sh` into
-  `dist/linux-x64/`.
+  `dotnet publish src/Miller.App -c Release -r <rid> --self-contained -p:PublishSingleFile=true`
+  for the runtime of the host: `win-x64` on Windows, `linux-x64` on Linux (then it
+  copies `launchers/Miller.sh` into `dist/linux-x64/`). The native library is
+  compiled by the host's C compiler (MSVC with the static C runtime on Windows, gcc
+  on Linux), so a system cannot publish the other one without a cross compiler.
+- Build requirements besides the .NET 10 SDK: CMake 3.20 or newer and a C11
+  compiler (Visual Studio Build Tools on Windows, `gcc` and `make` on Linux).
 - Windows start file: `dist/win-x64/Miller.exe`.
 - Linux start file: `dist/linux-x64/Miller.sh` (executable bit set by `build.sh`).
 - Root launchers `Miller.cmd` (Windows) and `Miller.sh` (Linux, Git Bash) run the published

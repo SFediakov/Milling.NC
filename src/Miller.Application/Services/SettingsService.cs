@@ -1,9 +1,11 @@
 using System.Text.Json;
+using Miller.Machine.Links;
 
 namespace Miller.Application.Services;
 
 // User preferences as JSON in the per-user application data folder. A missing file means first run
-// and yields the defaults; a corrupt file throws, there is no fallback to defaults.
+// and yields the defaults; a corrupt file throws, there is no fallback to defaults. A file written
+// before the machine panel existed has no machine section and gets the machine defaults.
 public sealed class SettingsService
 {
     public const string FolderName = "Miller";
@@ -37,6 +39,8 @@ public sealed class SettingsService
 
     public float SpeedFactor { get; set; } = DefaultSpeedFactor;
 
+    public MachinePreferences Machine { get; set; } = MachinePreferences.Default;
+
     public static string DefaultDirectory()
         => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), FolderName);
 
@@ -55,6 +59,7 @@ public sealed class SettingsService
         WindowWidth = document.WindowWidth;
         WindowHeight = document.WindowHeight;
         SpeedFactor = document.SpeedFactor;
+        Machine = document.Machine ?? MachinePreferences.Default;
     }
 
     public void Save()
@@ -65,7 +70,8 @@ public sealed class SettingsService
         }
 
         System.IO.Directory.CreateDirectory(Directory);
-        var document = new SettingsDocument(LastStlDirectory, LastProjectDirectory, LastExportDirectory, WindowWidth, WindowHeight, SpeedFactor);
+        ArgumentNullException.ThrowIfNull(Machine);
+        var document = new SettingsDocument(LastStlDirectory, LastProjectDirectory, LastExportDirectory, WindowWidth, WindowHeight, SpeedFactor, Machine);
         File.WriteAllText(FilePath, JsonSerializer.Serialize(document, Options));
     }
 
@@ -75,5 +81,24 @@ public sealed class SettingsService
         string? LastExportDirectory,
         double WindowWidth,
         double WindowHeight,
-        float SpeedFactor);
+        float SpeedFactor,
+        MachinePreferences? Machine);
+}
+
+// The machine panel's connection and the values of its jog and probe fields.
+public sealed record MachinePreferences(
+    MachineConnectionKind Connection,
+    string SerialPort,
+    int BaudRate,
+    string Host,
+    int NetworkPort,
+    float JogStep,
+    float JogFeed,
+    float ProbeThickness,
+    float ProbeTravel,
+    float ProbeFeed,
+    float ProbeRetract)
+{
+    public static readonly MachinePreferences Default = new(
+        MachineConnectionKind.Serial, string.Empty, SerialLink.DefaultBaudRate, string.Empty, TcpLink.DefaultPort, 1f, 1000f, 0f, 20f, 50f, 2f);
 }

@@ -1,3 +1,4 @@
+using Miller.Core.Native;
 using Miller.Core.Slicing;
 
 namespace Miller.Core.Toolpaths;
@@ -24,11 +25,11 @@ public sealed class Cave
     public List<Cave> Children { get; } = new();
 }
 
-// The level masks of a plan as a forest of caves. The masks are nested (a lower level is reachable
-// only where the level above is), so every component of a level lies inside one component of the
-// level above and becomes its child; a component with no cell in the level above starts a root.
-// Cutting a cave completely at its level, then its children one by one, and only then rising
-// for the next sibling is the order the layer strategy follows.
+// The level masks of a plan as a forest of caves (native mn_caves). The masks are nested (a lower
+// level is reachable only where the level above is), so every component of a level lies inside one
+// component of the level above and becomes its child; a component with no cell in the level above
+// starts a root. Cutting a cave completely at its level, then its children one by one, and only then
+// rising for the next sibling is the order the layer strategy follows.
 public sealed class CaveTree
 {
     private CaveTree(IReadOnlyList<Cave> roots, int[][] labels, int width, int height)
@@ -48,7 +49,7 @@ public sealed class CaveTree
 
     public int Height { get; }
 
-    public static CaveTree Build(IReadOnlyList<MillingStep> steps)
+    public static unsafe CaveTree Build(IReadOnlyList<MillingStep> steps)
     {
         ArgumentNullException.ThrowIfNull(steps);
         if (steps.Count == 0)
@@ -58,9 +59,8 @@ public sealed class CaveTree
 
         var width = steps[0].Width;
         var height = steps[0].Height;
-        var labels = new int[steps.Count][];
-        var caves = new List<Cave>[steps.Count];
-        var roots = new List<Cave>();
+        var cells = width * height;
+        var masks = new byte[steps.Count * cells];
         for (var k = 0; k < steps.Count; k++)
         {
             if (steps[k].Width != width || steps[k].Height != height)
@@ -68,81 +68,89 @@ public sealed class CaveTree
                 throw new ArgumentException("Every step must share the same grid.", nameof(steps));
             }
 
-            labels[k] = Label(steps[k].Mask, width, height, out var components);
-            caves[k] = new List<Cave>(components.Count);
-            for (var id = 0; id < components.Count; id++)
-            {
-                var cave = new Cave(k, id, components[id]);
-                caves[k].Add(cave);
-                var parent = k > 0 ? labels[k - 1][cave.Cells[0]] : -1;
-                if (parent >= 0)
-                {
-                    caves[k - 1][parent].Children.Add(cave);
-                }
-                else
-                {
-                    roots.Add(cave);
-                }
-            }
+            CoreNative.Bytes(steps[k].Mask).CopyTo(masks, k * cells);
         }
 
-        return new CaveTree(roots, labels, width, height);
+        var labels = new int[steps.Count * cells];
+        int* levels = null, ids = null, caveCells = null, cellOffsets = null, children = null, childOffsets = null, roots = null;
+        int caveCount, rootCount;
+        fixed (byte* m = masks)
+        fixed (int* l = labels)
+        {
+            CoreNative.Check(CoreNative.mn_caves(m, steps.Count, width, height, l, &levels, &ids, &caveCells, &cellOffsets, &children, &childOffsets, &roots, &caveCount, &rootCount));
+        }
+
+        try
+        {
+            var caves = new Cave[caveCount];
+            for (var c = 0; c < caveCount; c++)
+            {
+                caves[c] = new Cave(levels[c], ids[c], new ReadOnlySpan<int>(caveCells + cellOffsets[c], cellOffsets[c + 1] - cellOffsets[c]).ToArray());
+            }
+
+            for (var c = 0; c < caveCount; c++)
+            {
+                for (var m = childOffsets[c]; m < childOffsets[c + 1]; m++)
+                {
+                    caves[c].Children.Add(caves[children[m]]);
+                }
+            }
+
+            var rootList = new List<Cave>(rootCount);
+            for (var r = 0; r < rootCount; r++)
+            {
+                rootList.Add(caves[roots[r]]);
+            }
+
+            var perLevel = new int[steps.Count][];
+            for (var k = 0; k < steps.Count; k++)
+            {
+                perLevel[k] = labels.AsSpan(k * cells, cells).ToArray();
+            }
+
+            return new CaveTree(rootList, perLevel, width, height);
+        }
+        finally
+        {
+            CoreNative.mn_free(levels);
+            CoreNative.mn_free(ids);
+            CoreNative.mn_free(caveCells);
+            CoreNative.mn_free(cellOffsets);
+            CoreNative.mn_free(children);
+            CoreNative.mn_free(childOffsets);
+            CoreNative.mn_free(roots);
+        }
     }
 
     // 8-connected components of the mask, in order of their first cell in row-major scan.
-    public static int[] Label(bool[,] mask, int width, int height, out List<int[]> components)
+    public static unsafe int[] Label(bool[,] mask, int width, int height, out List<int[]> components)
     {
         ArgumentNullException.ThrowIfNull(mask);
-        var labels = new int[width * height];
-        Array.Fill(labels, -1);
-        components = new List<int[]>();
-        var queue = new Queue<int>();
-        var cells = new List<int>();
-        for (var j = 0; j < height; j++)
+        var bytes = CoreNative.Bytes(mask);
+        var labels = new int[Math.Max(width * height, 1)];
+        int* cells = null;
+        int* offsets = null;
+        int count;
+        fixed (byte* m = bytes)
+        fixed (int* l = labels)
         {
-            for (var i = 0; i < width; i++)
-            {
-                var seed = j * width + i;
-                if (!mask[i, j] || labels[seed] >= 0)
-                {
-                    continue;
-                }
-
-                var id = components.Count;
-                labels[seed] = id;
-                queue.Enqueue(seed);
-                cells.Clear();
-                while (queue.Count > 0)
-                {
-                    var c = queue.Dequeue();
-                    cells.Add(c);
-                    var ci = c % width;
-                    var cj = c / width;
-                    for (var dj = -1; dj <= 1; dj++)
-                    {
-                        for (var di = -1; di <= 1; di++)
-                        {
-                            var ii = ci + di;
-                            var jj = cj + dj;
-                            if (ii < 0 || ii >= width || jj < 0 || jj >= height || !mask[ii, jj])
-                            {
-                                continue;
-                            }
-
-                            var n = jj * width + ii;
-                            if (labels[n] < 0)
-                            {
-                                labels[n] = id;
-                                queue.Enqueue(n);
-                            }
-                        }
-                    }
-                }
-
-                components.Add(cells.ToArray());
-            }
+            CoreNative.Check(CoreNative.mn_label(m, width, height, l, &cells, &offsets, &count));
         }
 
-        return labels;
+        try
+        {
+            components = new List<int[]>(count);
+            for (var c = 0; c < count; c++)
+            {
+                components.Add(new ReadOnlySpan<int>(cells + offsets[c], offsets[c + 1] - offsets[c]).ToArray());
+            }
+        }
+        finally
+        {
+            CoreNative.mn_free(cells);
+            CoreNative.mn_free(offsets);
+        }
+
+        return width * height == 0 ? Array.Empty<int>() : labels;
     }
 }

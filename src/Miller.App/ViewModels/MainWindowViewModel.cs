@@ -44,6 +44,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         ExportService export,
         SimulationService simulation,
         AnalysisService analysis,
+        MachineService machine,
         SettingsService settings,
         PresetService presets,
         IFileDialogService dialogs,
@@ -59,6 +60,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Export = export ?? throw new ArgumentNullException(nameof(export));
         Simulation = simulation ?? throw new ArgumentNullException(nameof(simulation));
         AnalysisRunner = analysis ?? throw new ArgumentNullException(nameof(analysis));
+        ArgumentNullException.ThrowIfNull(machine);
         Settings = settings ?? throw new ArgumentNullException(nameof(settings));
         PresetStore = presets ?? throw new ArgumentNullException(nameof(presets));
         Dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
@@ -93,6 +95,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Viewport.PlayPauseRequested += (_, _) => SimulationPanel.TogglePlayPause();
         Analysis = new AnalysisViewModel(AnalysisRunner, Viewport, Simulation);
         SimulationPanel.PlaybackStarted += (_, _) => Analysis.ShowFinalModel = false;
+        Machine = new MachineViewModel(machine, Settings, Viewport, Dialogs, Confirm, () => LastResult?.Toolpath, () => Project.Current,
+            () => Simulation.IsPlaying, AppVersion);
+        Machine.StatusChanged += (_, status) => StatusText = status;
         Models.SelectionChanged += (_, _) => Viewport.Select(Models.SelectedIndex);
         Viewport.SelectionChanged += (_, _) => Models.SelectedIndex = Viewport.SelectedModelIndex;
         Viewport.ModelDragged += (_, delta) => Models.MoveSelected(delta);
@@ -156,6 +161,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public ViewportViewModel Viewport { get; }
 
+    public MachineViewModel Machine { get; }
+
     public PipelineResult? LastResult
     {
         get => _lastResult;
@@ -164,6 +171,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             if (SetProperty(ref _lastResult, value))
             {
                 ExportNcCommand.NotifyCanExecuteChanged();
+                Machine.Refresh();
             }
         }
     }

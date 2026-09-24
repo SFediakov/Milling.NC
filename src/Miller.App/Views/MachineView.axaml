@@ -1,0 +1,162 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Miller.App.ViewModels"
+             xmlns:c="using:Miller.App.Controls"
+             x:Class="Miller.App.Views.MachineView"
+             x:DataType="vm:MachineViewModel">
+  <!-- Connection and program are open; jog, overrides and console stay folded until needed. -->
+  <ScrollViewer>
+    <StackPanel Margin="8" Spacing="4">
+      <TextBlock Classes="header" Text="Machine" />
+      <TextBlock Name="StateText" Classes="machine-state" Text="{Binding StateText}" />
+      <TextBlock Name="ConnectionText" Text="{Binding ConnectionText}" TextWrapping="Wrap" />
+      <TextBlock Name="MessageText" Classes="warning" Text="{Binding Message}" IsVisible="{Binding HasMessage}" />
+
+      <Expander Name="ConnectionSection" Header="Connection" IsExpanded="True" HorizontalAlignment="Stretch">
+        <StackPanel Spacing="4">
+          <ComboBox Name="ConnectionKindBox" ItemsSource="{x:Static vm:MachineViewModel.ConnectionKinds}" SelectedIndex="{Binding ConnectionIndex}" Width="160" />
+          <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="6" RowSpacing="4" IsVisible="{Binding IsSerial}">
+            <TextBlock Classes="label" Text="Port" />
+            <ComboBox Grid.Column="1" Name="PortBox" IsEditable="True" ItemsSource="{Binding Ports}" Text="{Binding SerialPort}" HorizontalAlignment="Stretch" />
+            <Button Grid.Column="2" Name="RefreshPortsButton" Content="Refresh" Command="{Binding RefreshPortsCommand}" />
+            <TextBlock Grid.Row="1" Classes="label" Text="Baud" />
+            <ComboBox Grid.Row="1" Grid.Column="1" Name="BaudBox" ItemsSource="{x:Static vm:MachineViewModel.BaudRates}" SelectedItem="{Binding BaudRate}" HorizontalAlignment="Stretch" />
+          </Grid>
+          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="6" RowSpacing="4" IsVisible="{Binding IsNetwork}">
+            <TextBlock Classes="label" Text="Host" />
+            <TextBox Grid.Column="1" Name="HostBox" Text="{Binding Host}" />
+            <TextBlock Grid.Row="1" Classes="label" Text="Port" />
+            <c:NumericBox Grid.Row="1" Grid.Column="1" Name="NetworkPortBox" Classes="numeric" Value="{Binding NetworkPort}" HorizontalAlignment="Left" />
+          </Grid>
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Button Name="ConnectButton" Content="Connect" Command="{Binding ConnectCommand}" />
+            <Button Name="DisconnectButton" Content="Disconnect" Command="{Binding DisconnectCommand}" />
+          </StackPanel>
+        </StackPanel>
+      </Expander>
+
+      <Grid Name="PositionGrid" ColumnDefinitions="Auto,*,*,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="6" RowSpacing="2" Margin="0,4,0,0">
+        <TextBlock Grid.Column="1" Classes="label" Text="X" />
+        <TextBlock Grid.Column="2" Classes="label" Text="Y" />
+        <TextBlock Grid.Column="3" Classes="label" Text="Z" />
+        <TextBlock Grid.Row="1" Classes="label" Text="Work" />
+        <TextBlock Grid.Row="1" Grid.Column="1" Name="WorkXText" Classes="position" Text="{Binding WorkX}" />
+        <TextBlock Grid.Row="1" Grid.Column="2" Name="WorkYText" Classes="position" Text="{Binding WorkY}" />
+        <TextBlock Grid.Row="1" Grid.Column="3" Name="WorkZText" Classes="position" Text="{Binding WorkZ}" />
+        <TextBlock Grid.Row="2" Classes="label" Text="Machine" />
+        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding MachineX}" />
+        <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding MachineY}" />
+        <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding MachineZ}" />
+        <TextBlock Grid.Row="3" Classes="label" Text="Feed" />
+        <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Name="FeedSpindleText">
+          <Run Text="{Binding FeedText}" />
+          <Run Text="  " />
+          <Run Text="{Binding SpindleText}" />
+        </TextBlock>
+      </Grid>
+      <StackPanel Orientation="Horizontal" Spacing="6">
+        <Button Name="HomeButton" Content="Home" Command="{Binding HomeCommand}" />
+        <Button Name="UnlockButton" Content="Unlock" Command="{Binding UnlockCommand}" />
+        <Button Name="ResetButton" Content="Reset" Command="{Binding ResetCommand}" />
+      </StackPanel>
+
+      <Expander Name="ProgramSection" Header="Program" IsExpanded="True" HorizontalAlignment="Stretch">
+        <StackPanel Spacing="4">
+          <TextBlock Name="ProgramText" Text="{Binding ProgramText}" TextWrapping="Wrap" />
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Button Name="UseToolpathButton" Content="Use toolpath" Command="{Binding UseToolpathCommand}" />
+            <Button Name="OpenFileButton" Content="Open file" Command="{Binding OpenFileCommand}" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Button Name="CheckButton" Content="Check" Command="{Binding CheckCommand}" />
+            <Button Name="OutlineButton" Content="Outline" Command="{Binding OutlineCommand}" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Button Name="StartButton" Content="Start" Command="{Binding StartCommand}" />
+            <Button Name="PauseButton" Content="Pause" Command="{Binding PauseCommand}" />
+            <Button Name="ResumeButton" Content="Resume" Command="{Binding ResumeCommand}" />
+            <Button Name="StopButton" Content="Stop" Command="{Binding StopCommand}" />
+          </StackPanel>
+          <ProgressBar Name="JobProgress" Minimum="0" Maximum="1" Value="{Binding Progress}" Height="14" />
+          <TextBlock Name="ProgressText" Text="{Binding ProgressText}" TextWrapping="Wrap" IsVisible="{Binding ProgressText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+          <TextBlock Name="TimeText" Text="{Binding TimeText}" IsVisible="{Binding TimeText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+          <TextBlock Name="JobText" Text="{Binding JobText}" TextWrapping="Wrap" Classes.warning="{Binding JobFailed}" IsVisible="{Binding JobText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        </StackPanel>
+      </Expander>
+
+      <Expander Name="JogSection" Header="Jog and zero" HorizontalAlignment="Stretch">
+        <StackPanel Spacing="4">
+          <Grid ColumnDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="6">
+            <TextBlock Classes="label" Text="Step" />
+            <ComboBox Grid.Column="1" Name="JogStepBox" ItemsSource="{x:Static vm:MachineViewModel.JogSteps}" SelectedItem="{Binding JogStep}" MinWidth="80" />
+            <TextBlock Grid.Column="2" Classes="label" Text="Feed" />
+            <c:NumericBox Grid.Column="3" Name="JogFeedBox" Classes="numeric" Value="{Binding JogFeed}" />
+          </Grid>
+          <Grid Name="JogPad" Classes="jog" ColumnDefinitions="52,52,52,16,52" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="4" RowSpacing="4">
+            <Button Grid.Column="1" Name="JogYPlusButton" Content="Y+" Command="{Binding JogCommand}" CommandParameter="Y+" HorizontalAlignment="Stretch" />
+            <Button Grid.Row="1" Name="JogXMinusButton" Content="X-" Command="{Binding JogCommand}" CommandParameter="X-" HorizontalAlignment="Stretch" />
+            <Button Grid.Row="1" Grid.Column="2" Name="JogXPlusButton" Content="X+" Command="{Binding JogCommand}" CommandParameter="X+" HorizontalAlignment="Stretch" />
+            <Button Grid.Row="2" Grid.Column="1" Name="JogYMinusButton" Content="Y-" Command="{Binding JogCommand}" CommandParameter="Y-" HorizontalAlignment="Stretch" />
+            <Button Grid.Column="4" Name="JogZPlusButton" Content="Z+" Command="{Binding JogCommand}" CommandParameter="Z+" HorizontalAlignment="Stretch" />
+            <Button Grid.Row="2" Grid.Column="4" Name="JogZMinusButton" Content="Z-" Command="{Binding JogCommand}" CommandParameter="Z-" HorizontalAlignment="Stretch" />
+            <Button Grid.Row="1" Grid.Column="4" Name="CancelJogButton" Content="Halt" Command="{Binding CancelJogCommand}" HorizontalAlignment="Stretch" />
+          </Grid>
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Classes="label" Text="Zero" />
+            <Button Name="ZeroXButton" Content="X" Command="{Binding ZeroCommand}" CommandParameter="X" />
+            <Button Name="ZeroYButton" Content="Y" Command="{Binding ZeroCommand}" CommandParameter="Y" />
+            <Button Name="ZeroZButton" Content="Z" Command="{Binding ZeroCommand}" CommandParameter="Z" />
+            <Button Name="ZeroAllButton" Content="All" Command="{Binding ZeroCommand}" CommandParameter="XYZ" />
+          </StackPanel>
+          <Button Name="GoToZeroButton" Content="Go to XY zero" Command="{Binding GoToZeroCommand}" />
+          <TextBlock Classes="label" Text="Probe Z with a touch plate (mm, mm/min)" />
+          <Grid ColumnDefinitions="Auto,Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="6" RowSpacing="4">
+            <TextBlock Classes="label" Text="Plate" />
+            <c:NumericBox Grid.Column="1" Name="ProbeThicknessBox" Classes="numeric" Value="{Binding ProbeThickness}" />
+            <TextBlock Grid.Column="2" Classes="label" Text="Travel" />
+            <c:NumericBox Grid.Column="3" Name="ProbeTravelBox" Classes="numeric" Value="{Binding ProbeTravel}" />
+            <TextBlock Grid.Row="1" Classes="label" Text="Feed" />
+            <c:NumericBox Grid.Row="1" Grid.Column="1" Name="ProbeFeedBox" Classes="numeric" Value="{Binding ProbeFeed}" />
+            <TextBlock Grid.Row="1" Grid.Column="2" Classes="label" Text="Lift" />
+            <c:NumericBox Grid.Row="1" Grid.Column="3" Name="ProbeRetractBox" Classes="numeric" Value="{Binding ProbeRetract}" />
+          </Grid>
+          <Button Name="ProbeButton" Content="Probe Z" Command="{Binding ProbeCommand}" />
+        </StackPanel>
+      </Expander>
+
+      <Expander Name="OverridesSection" Header="Overrides" HorizontalAlignment="Stretch">
+        <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="6" RowSpacing="4">
+          <TextBlock Classes="label" Text="Feed" />
+          <Button Grid.Column="1" Content="-10" Command="{Binding OverrideCommand}" CommandParameter="F-" />
+          <Button Grid.Column="2" Content="100%" Command="{Binding OverrideCommand}" CommandParameter="F0" />
+          <Button Grid.Column="3" Content="+10" Command="{Binding OverrideCommand}" CommandParameter="F+" />
+          <TextBlock Grid.Column="4" Name="FeedOverrideText" Text="{Binding FeedOverrideText}" VerticalAlignment="Center" />
+          <TextBlock Grid.Row="1" Classes="label" Text="Rapid" />
+          <Button Grid.Row="1" Grid.Column="1" Content="25%" Command="{Binding OverrideCommand}" CommandParameter="R25" />
+          <Button Grid.Row="1" Grid.Column="2" Content="50%" Command="{Binding OverrideCommand}" CommandParameter="R50" />
+          <Button Grid.Row="1" Grid.Column="3" Content="100%" Command="{Binding OverrideCommand}" CommandParameter="R100" />
+          <TextBlock Grid.Row="1" Grid.Column="4" Text="{Binding RapidOverrideText}" VerticalAlignment="Center" />
+          <TextBlock Grid.Row="2" Classes="label" Text="Spindle" />
+          <Button Grid.Row="2" Grid.Column="1" Content="-10" Command="{Binding OverrideCommand}" CommandParameter="S-" />
+          <Button Grid.Row="2" Grid.Column="2" Content="100%" Command="{Binding OverrideCommand}" CommandParameter="S0" />
+          <Button Grid.Row="2" Grid.Column="3" Content="+10" Command="{Binding OverrideCommand}" CommandParameter="S+" />
+          <TextBlock Grid.Row="2" Grid.Column="4" Text="{Binding SpindleOverrideText}" VerticalAlignment="Center" />
+        </Grid>
+      </Expander>
+
+      <Expander Name="ConsoleSection" Header="Console" HorizontalAlignment="Stretch">
+        <StackPanel Spacing="4">
+          <ListBox Name="ConsoleList" ItemsSource="{Binding ConsoleLines}" Height="180" Classes="console" />
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+            <TextBox Name="ConsoleInputBox" Text="{Binding ConsoleInput}">
+              <TextBox.KeyBindings>
+                <KeyBinding Gesture="Enter" Command="{Binding SendCommand}" />
+              </TextBox.KeyBindings>
+            </TextBox>
+            <Button Grid.Column="1" Name="SendButton" Content="Send" Command="{Binding SendCommand}" />
+          </Grid>
+        </StackPanel>
+      </Expander>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

@@ -63,6 +63,9 @@ public sealed partial class ViewportViewModel : ViewModelBase
 
     public Vector3 ToolPosition { get; private set; }
 
+    // The tool marker follows a connected machine (its work position), with or without a toolpath.
+    public bool MachineLive { get; private set; }
+
     public ToolDefinition? Tool { get; private set; }
 
     public int ToolVersion { get; private set; }
@@ -300,6 +303,26 @@ public sealed partial class ViewportViewModel : ViewModelBase
         ToolpathProgressIndex = progressIndex;
         ToolPosition = toolPosition;
         Invalidate();
+    }
+
+    public void SetMachinePosition(int progressIndex, Vector3 toolPosition)
+    {
+        if (MachineLive && progressIndex == ToolpathProgressIndex && toolPosition == ToolPosition)
+        {
+            return;
+        }
+
+        MachineLive = true;
+        SetToolProgress(progressIndex, toolPosition);
+    }
+
+    public void ClearMachine()
+    {
+        if (MachineLive)
+        {
+            MachineLive = false;
+            Invalidate();
+        }
     }
 
     // Raised from the render thread path of the control; consumers marshal as needed.

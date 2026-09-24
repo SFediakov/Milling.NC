@@ -51,8 +51,32 @@ public sealed class RouteSolverTests
         var improvedCost = RouteSolver.PathCost(problem, improved);
         Assert.True(improvedCost <= greedyCost + 1e-3f, $"improved {improvedCost} > greedy {greedyCost}");
         Assert.True(budget.Used > 0);
-        // 400 lattice points 1 mm apart: a full boustrophedon needs 399 unit moves, 133 in XY time.
-        Assert.InRange(improvedCost, 399 / RouteCost.XySpeedFactor, 1.15f * 399 / RouteCost.XySpeedFactor);
+        // 400 lattice points 1 mm apart: any route needs 399 unit moves, 133 in XY time. A serpentine
+        // from the start runs left along row 0, through rows 1 to 19 and back over the rest of row 0,
+        // turning twice at every row end; the fined route costs no more than it. (T-139: a boustrophedon
+        // from node 0 is not a route from node 7; the solver undercut it only while lattice arcs
+        // shorter than 10 mm were exempt.)
+        var serpentine = new List<int>();
+        for (var i = start; i >= 0; i--)
+        {
+            serpentine.Add(i);
+        }
+
+        for (var j = 1; j < 20; j++)
+        {
+            for (var i = 0; i < 20; i++)
+            {
+                serpentine.Add(j * 20 + (j % 2 == 1 ? i : 19 - i));
+            }
+        }
+
+        for (var i = start + 1; i < 20; i++)
+        {
+            serpentine.Add(i);
+        }
+
+        AssertPermutation(serpentine.ToArray(), problem.Count, start);
+        Assert.InRange(improvedCost, 399 / RouteCost.XySpeedFactor, RouteSolver.PathCost(problem, serpentine.ToArray()));
     }
 
     [Fact]
@@ -103,9 +127,10 @@ public sealed class RouteSolverTests
 
         var problem = new RouteProblem(grid, xs.ToArray(), ys.ToArray(), new float[xs.Count]);
         var order = RouteSolver.Solve(problem, 0, new RouteBudget(1_000_000), 1_000_000, TestContext.Current.CancellationToken);
-        var cost = RouteSolver.PathCost(problem, order);
-        // Row 0 left to right (18 mm), through the gap (2 mm), row 2 right to left (18 mm).
-        Assert.InRange(cost, 38 / RouteCost.XySpeedFactor, 1.1f * 38 / RouteCost.XySpeedFactor);
+        var travel = Enumerable.Range(1, order.Length - 1).Sum(k => RouteCost.Exact(grid, problem.Node(order[k - 1]), problem.Node(order[k])));
+        // Row 0 left to right (18 mm), through the gap (2 mm), row 2 right to left (18 mm); the turn fine
+        // of the U-turn comes on top of this travel.
+        Assert.InRange(travel, 38 / RouteCost.XySpeedFactor, 1.1f * 38 / RouteCost.XySpeedFactor);
         for (var k = 1; k < order.Length; k++)
         {
             var climb = SurfacePath.Trace(grid, problem.Node(order[k - 1]), problem.Node(order[k]), null);

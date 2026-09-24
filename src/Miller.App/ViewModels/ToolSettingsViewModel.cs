@@ -1,9 +1,11 @@
+using Avalonia;
 using Miller.Application.Services;
 using Miller.Core.Setup;
 
 namespace Miller.App.ViewModels;
 
-// Binds ToolDefinition and draws a schematic: the head above the cutter, the cutter length below it.
+// Binds ToolDefinition and draws a schematic: the head above the cutter (a rectangle for a cylinder,
+// a trapezoid from the bottom to the top diameter for a frustum), the cutter length below it.
 public sealed class ToolSettingsViewModel : SettingsViewModelBase
 {
     public const double SchematicWidth = 120;
@@ -13,7 +15,7 @@ public sealed class ToolSettingsViewModel : SettingsViewModelBase
 
     private static readonly string[] SchematicProperties =
     {
-        nameof(HeadWidth), nameof(HeadLeft), nameof(CutterWidth), nameof(CutterLeft), nameof(CutterHeight), nameof(BallTop), nameof(IsBall),
+        nameof(HeadWidth), nameof(HeadOutline), nameof(CutterWidth), nameof(CutterLeft), nameof(CutterHeight), nameof(BallTop), nameof(IsBall),
     };
 
     public ToolSettingsViewModel(ProjectService project)
@@ -23,6 +25,8 @@ public sealed class ToolSettingsViewModel : SettingsViewModelBase
     }
 
     public static IReadOnlyList<TipType> TipTypes { get; } = Enum.GetValues<TipType>();
+
+    public static IReadOnlyList<HeadShape> HeadShapes { get; } = Enum.GetValues<HeadShape>();
 
     public string Name
     {
@@ -60,6 +64,35 @@ public sealed class ToolSettingsViewModel : SettingsViewModelBase
         }
     }
 
+    public HeadShape HeadShape
+    {
+        get => Current.Tool.HeadShape;
+        set
+        {
+            Edit(p => p.Tool.HeadShape = value);
+            OnPropertyChanged(nameof(IsFrustum));
+            RaiseSchematic();
+        }
+    }
+
+    public float HeadTopDiameter
+    {
+        get => Current.Tool.HeadTopDiameter;
+        set
+        {
+            Edit(p => p.Tool.HeadTopDiameter = value);
+            RaiseSchematic();
+        }
+    }
+
+    public float HeadLength
+    {
+        get => Current.Tool.HeadLength;
+        set => Edit(p => p.Tool.HeadLength = value);
+    }
+
+    public bool IsFrustum => HeadShape == HeadShape.Frustum;
+
     public TipType TipType
     {
         get => Current.Tool.TipType;
@@ -76,14 +109,34 @@ public sealed class ToolSettingsViewModel : SettingsViewModelBase
 
     public string? HeadDiameterError => ErrorFor("Tool.HeadDiameter");
 
-    // Scale so that the wider of head and cutter fills the width and the cutter length fills the height.
+    public string? HeadTopDiameterError => ErrorFor("Tool.HeadTopDiameter");
+
+    public string? HeadLengthError => ErrorFor("Tool.HeadLength");
+
+    // Scale so that the widest of head and cutter fills the width and the cutter length fills the height.
     public double SchematicScale => Math.Min(
-        SchematicWidth / Math.Max(Math.Max(HeadDiameter, CutterDiameter), MinimumForScale),
+        SchematicWidth / Math.Max(Math.Max(Current.Tool.HeadRadius * 2, CutterDiameter), MinimumForScale),
         (SchematicHeight - SchematicHeadHeight) / Math.Max(CutterLength, MinimumForScale));
 
-    public double HeadWidth => HeadDiameter * SchematicScale;
+    // The widest head width in the schematic.
+    public double HeadWidth => Current.Tool.HeadRadius * 2 * SchematicScale;
 
-    public double HeadLeft => (SchematicWidth - HeadWidth) / 2;
+    // Bottom left, bottom right, top right, top left; the head bottom sits on the cutter.
+    public IList<Point> HeadOutline
+    {
+        get
+        {
+            var bottom = HeadDiameter * SchematicScale;
+            var top = IsFrustum ? HeadTopDiameter * SchematicScale : bottom;
+            return new List<Point>
+            {
+                new((SchematicWidth - bottom) / 2, SchematicHeadHeight),
+                new((SchematicWidth + bottom) / 2, SchematicHeadHeight),
+                new((SchematicWidth + top) / 2, 0),
+                new((SchematicWidth - top) / 2, 0),
+            };
+        }
+    }
 
     public double CutterWidth => CutterDiameter * SchematicScale;
 
@@ -97,7 +150,11 @@ public sealed class ToolSettingsViewModel : SettingsViewModelBase
 
     protected override void OnReload()
     {
-        foreach (var name in new[] { nameof(Name), nameof(CutterDiameter), nameof(CutterLength), nameof(HeadDiameter), nameof(TipType) })
+        foreach (var name in new[]
+                 {
+                     nameof(Name), nameof(CutterDiameter), nameof(CutterLength), nameof(HeadDiameter), nameof(HeadShape), nameof(HeadTopDiameter),
+                     nameof(HeadLength), nameof(IsFrustum), nameof(TipType),
+                 })
         {
             OnPropertyChanged(name);
         }
@@ -111,6 +168,8 @@ public sealed class ToolSettingsViewModel : SettingsViewModelBase
         OnPropertyChanged(nameof(CutterDiameterError));
         OnPropertyChanged(nameof(CutterLengthError));
         OnPropertyChanged(nameof(HeadDiameterError));
+        OnPropertyChanged(nameof(HeadTopDiameterError));
+        OnPropertyChanged(nameof(HeadLengthError));
     }
 
     private void RaiseSchematic()

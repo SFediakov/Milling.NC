@@ -47,12 +47,12 @@ public sealed class CutScopeTests
         Assert.Equal(separation.Stock.StockTop, stock[stock.Width - 1, stock.Height - 1], 3);
         Assert.Equal(separation.Stock.StockTop, separation.Standing[0, 0], 3);
 
-        // The band beside the model wall is cut to the floor (the tool axis reaches the wall line by
-        // majority, which also cuts the wall back and reports gouge), the model top is finished.
+        // The band beside the model wall is cut to the floor by the footprint of positions one radius
+        // out (the wall line itself is never entered, so nothing is gouged), the model top is finished.
         var (bi, bj) = stock.CellOf(20f + 5f + 0.75f, 20f);
         Assert.Equal(separation.Floor, stock[bi, bj], 3);
         var analysis = FinalModelAnalyzer.Analyze(stock, separation.Model, separation.Floor, separation.Tolerance);
-        Assert.True(analysis.GougeCells > 0);
+        Assert.Equal(0, analysis.GougeCells);
         var (mi, mj) = stock.CellOf(20f, 20f);
         Assert.Equal(CellCategory.Ok, analysis.Map.Categories[stock.Index(mi, mj)]);
 

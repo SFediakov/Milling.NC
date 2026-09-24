@@ -2,6 +2,7 @@ using Miller.Application.Progress;
 using Miller.Application.Services;
 using Miller.Application.Validation;
 using Miller.Core.Geometry;
+using Miller.Core.HeightMaps;
 using Miller.Core.Io;
 using Miller.Core.Setup;
 using Miller.Core.Toolpaths;
@@ -104,18 +105,22 @@ public sealed class PipelineServiceTests
 
         Assert.Empty(GougeChecker.Verify(result.Toolpath, result.EffectiveTip, project.Parameters.Tolerance));
 
-        // The reach floor decides by majority, so beside the walls, where the footprint is mostly
-        // stock, it lies below the model: the walls are cut back and the analysis reports gouge there.
+        // The reach floor never lies above the drop cutter, and beside the heart walls never below
+        // the model: the floor around the heart is reached in the first round, so no later round
+        // votes a wall line down, and the default 6 mm tool finds no feature narrow enough for the
+        // discounted vote to enter under the model.
+        var drop = HeightMapDilation.ComputeTipMap(result.Model, result.Profile);
         var below = 0;
         for (var k = 0; k < result.Model.CellCount; k++)
         {
+            Assert.True(result.Tip.Z[k] <= MathF.Max(drop.Z[k], result.Floor) + 1e-4f, $"cell {k}: reach floor above the drop cutter");
             if (result.Model.Z[k] - result.EffectiveTip.Z[k] > project.Parameters.Tolerance)
             {
                 below++;
             }
         }
 
-        Assert.True(below > 0, "the heart walls are cut back where the footprint is mostly stock");
+        Assert.Equal(0, below);
 
         var bounds = result.Toolpath.Bounds;
         Assert.True(bounds.Min.X >= result.Stock.Bounds.Min.X - 1e-3f && bounds.Max.X <= result.Stock.Bounds.Max.X + 1e-3f);
@@ -129,6 +134,27 @@ public sealed class PipelineServiceTests
         using var cts = new CancellationTokenSource();
         cts.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new PipelineService().RunAsync(BoxProject(), new[] { Box() }, null, cts.Token));
+    }
+
+    // T-134: the token reaches the native generation; cancelled from its own progress callback in the
+    // reach map, the run stops there and never reports the route.
+    [Fact]
+    public void Cancellation_DuringTheNativeRun_StopsAndThrows()
+    {
+        using var cts = new CancellationTokenSource();
+        var reports = new List<ProgressReport>();
+        var progress = new SynchronousProgress(report =>
+        {
+            reports.Add(report);
+            if (report.Stage == "reach map")
+            {
+                cts.Cancel();
+            }
+        });
+        var error = Assert.ThrowsAny<OperationCanceledException>(() => new PipelineService().Run(BoxProject(), new[] { Box() }, progress, cts.Token));
+        Assert.Equal(cts.Token, error.CancellationToken);
+        Assert.Contains(reports, r => r.Stage == "reach map");
+        Assert.DoesNotContain(reports, r => r.Stage == "route" || r.Stage == "done");
     }
 
     [Fact]

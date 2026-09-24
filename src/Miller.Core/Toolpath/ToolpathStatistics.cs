@@ -1,3 +1,4 @@
+using Miller.Core.Native;
 using Miller.Core.Setup;
 
 namespace Miller.Core.Toolpaths;
@@ -12,9 +13,9 @@ public sealed record ToolpathStatistics(
 {
     public float TotalLength => RapidLength + FeedLength + PlungeLength;
 
-    // Minutes = sum of length / rate. Feed and plunge segments carry their rate; rapids use the
-    // machine's rapid rate from the parameters because G0 has no F word.
-    public static ToolpathStatistics Compute(Toolpath toolpath, CuttingParameters parameters)
+    // Minutes = sum of length / rate (native mn_statistics_compute). Feed and plunge segments carry
+    // their rate; rapids use the machine's rapid rate from the parameters because G0 has no F word.
+    public static unsafe ToolpathStatistics Compute(Toolpath toolpath, CuttingParameters parameters)
     {
         ArgumentNullException.ThrowIfNull(toolpath);
         ArgumentNullException.ThrowIfNull(parameters);
@@ -23,36 +24,16 @@ public sealed record ToolpathStatistics(
             throw new ArgumentException($"Rapid rate must be positive, got {parameters.RapidRate}.", nameof(parameters));
         }
 
-        float rapid = 0, feed = 0, plunge = 0;
-        double minutes = 0;
-        var retracts = 0;
-        foreach (var s in toolpath.Segments)
+        var segments = CoreNative.SegmentsOf(toolpath);
+        CoreNative.Statistics statistics;
+        fixed (CoreNative.Segment* s = segments)
         {
-            var length = s.Length;
-            switch (s.Kind)
-            {
-                case MoveKind.Rapid:
-                    rapid += length;
-                    minutes += length / parameters.RapidRate;
-                    if (s.End.Z > s.Start.Z)
-                    {
-                        retracts++;
-                    }
-
-                    break;
-                case MoveKind.Feed:
-                    feed += length;
-                    minutes += length / s.FeedRate;
-                    break;
-                case MoveKind.Plunge:
-                    plunge += length;
-                    minutes += length / s.FeedRate;
-                    break;
-                default:
-                    throw new ArgumentException($"Unknown move kind {s.Kind}.", nameof(toolpath));
-            }
+            CoreNative.Check(CoreNative.mn_statistics_compute(s, segments.Length, parameters.RapidRate, &statistics));
         }
 
-        return new ToolpathStatistics(rapid, feed, plunge, toolpath.Count, (float)minutes, retracts);
+        return Of(statistics);
     }
+
+    internal static ToolpathStatistics Of(in CoreNative.Statistics s)
+        => new(s.RapidLength, s.FeedLength, s.PlungeLength, s.SegmentCount, s.EstimatedMinutes, s.RetractCount);
 }

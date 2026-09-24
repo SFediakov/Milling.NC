@@ -93,6 +93,11 @@ public sealed partial class MainWindowViewModel
     [RelayCommand]
     private async Task ExitAsync()
     {
+        if (Machine.IsJobActive && !await Confirm.ConfirmAsync("A job is running on the machine. Stop it and exit?"))
+        {
+            return;
+        }
+
         if (Project.IsDirty)
         {
             var decision = await Confirm.AskSaveChangesAsync();

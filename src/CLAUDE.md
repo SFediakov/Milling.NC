@@ -17,6 +17,31 @@
   Debug-only developer tooling with no shipped feature behind it, so it is dropped from
   `Directory.Packages.props`, `Miller.App.csproj` and `third_party/nuget/`. Adding
   `AvaloniaUI.DiagnosticsSupport` later is a one-line change in T-002 and T-006.
+- The turn fine (T-133) is not a cluster of its own: it is part of the route solver's cost, the
+  local search evaluates it inside every candidate move, so it lives with the route solver
+  (since T-134 in `src/Miller.Native/src/mn_route.c` and `mn_window.c`).
+- The native library `src/Miller.Native` (T-134, user request: all toolpath generation in one
+  built C library) is one cluster for the whole generation, and its insulation is weaker than a
+  .NET cluster's: a memory fault inside C ends the process instead of raising an exception the
+  caller could catch. Mitigation: every export checks its arguments and returns a status code with
+  a message, the facades validate before the call and turn a status into the former .NET
+  exception, and no C code uses longjmp, abort or a global state other than the thread-local
+  error text.
+- `RouteSolver` builds two start walks and keeps the cheaper one; both always run, so it is a
+  multi-start, not a fallback or a switch.
+- The machine connection (T-140 to T-143) is a cluster of its own: `src/Miller.Machine` plus the
+  native library `src/Miller.Machine.Native` (`miller_serial`), separate from `miller_native`.
+  `System.IO.Ports` is not vendored and would need a download, so the serial port is C code with a
+  compile-time OS split, like `mn_thread.c`. Its insulation has the same limit as the generation
+  library: a fault inside C ends the process; every export returns a status with a message.
+  `Miller.Application` now references `Miller.Machine`; `MachineService` is the gate.
+- Serial and TCP links are two transports for two kinds of controller, not a fallback: the user
+  chooses one. A settings file written before T-143 has no machine section and loads the machine
+  defaults, as a missing settings file loads all defaults.
+- "Sent only after the previous command's execution is confirmed" is implemented as Grbl's
+  send-response protocol: the next line goes after `ok`/`error`, which Grbl sends once it has
+  executed the line (a move is then in its planner). Waiting for every move to stop would halt the
+  machine at every vertex; the physical end is confirmed once, by `G4 P0` at the end of a program.
 
 ## Placeholder convention (architecture delivered without implementation)
 
@@ -335,3 +360,84 @@
 - NumericBox distinguishes incomplete from invalid text: a sign or decimal-point prefix ("-", "+",
   ".", "-.", "+.") clears the error and leaves Value alone, so the first keystroke of a negative
   number is not shown as a mistake; "" and "abc" stay errors as T-128 requires.
+- Turn fine (T-133): once fined turns lie closer than one slow zone the slow length saturates, so a
+  2-opt or Or-opt move that removes one turn frees nothing and is rejected; the start walk decides
+  the turn structure. A fine-aware walk alone made the heart worse than the old solver on the new
+  metric (it strands nodes to avoid a turn and pays the way back); the old and new solvers were
+  compared on the captured route problems, and keeping the cheaper of the nearest-neighbour and
+  the smooth walk beat the old solver on all 15 heart routes.
+- The fined status is kept per node and 2-opt reverses it in place, which is only valid when
+  `IsFined` gives the same answer for a reversed window: the circle is fitted through index-sorted
+  triples and both end points are tested. Thresholds come from double cosines, because the float
+  cosine of 90 degrees is -4.4e-8 and would let an exact right angle pass as circular.
+- Fine deltas were verified once by recomputing the full cost in double around every applied move
+  (6,007 random moves, the strategy and heart tests); float sums of a 517-unit route differ by 0.006,
+  so a float full recomputation is too coarse for that check.
+- A fined evaluation costs about 1.8 us against about 0.1 us before (walks up to 10 mm, fresh
+  status of the changed nodes): the heart's routes take 0.65 s instead of 0.02 s, 3 axis freedom 5.4 s
+  instead of 0.24 s. The 0.2 mm outline staircases stay in the G-code: every order of those nodes
+  turns at every cell, and the simplifier keeps them (0.14 mm deviation over a 0.05 mm tolerance).
+- A C port that must reproduce .NET float results bit for bit has to copy four .NET rules, each of
+  which changed an output on the heart: `MathF.Max` and `MathF.Min` return NaN when either side is
+  NaN and order -0 below +0 (C `fmaxf` does neither); `MathF.Round` rounds ties to even (`rintf`,
+  not `roundf`); .NET 9 and later saturate a float-to-int conversion and give 0 for NaN (C is
+  undefined there); `Vector3.Transform` is compiled to fused multiply-adds, so the C transform is
+  `fmaf` in the same order. MSVC needs `/fp:precise` and gcc `-ffp-contract=off` so the compiler adds
+  no contraction of its own. Constants such as cos 35 degrees are written from their bits.
+- Starting threads for every block of 16 rows made the native reach map slower than the C#
+  `Parallel.For` (thread start costs more than a block); a pool that lives for the whole map and
+  waits on a condition variable between blocks brought it from 26 ms to 15 ms.
+- The C# pipeline had no tolerance for a different order of float sums, so the differential test
+  (30 heart variants, every map and segment compared by bits) found each porting slip at once; the
+  one crash it found was a component list whose offsets were relative in one function and absolute
+  in its caller.
+- Collision feedback (T-136): a head limit that counts on stock cut exactly to its closing fails by
+  up to Tolerance, because the simplifier keeps chords up to Tolerance above the planned tip. On the
+  heart with an 8 mm cutter that alone gave 3 axis freedom 24 head events; a should-cut cell counts
+  with closing + Tolerance. Rounding up to the level (CeilToLevel) had hidden this slack before.
+- The Z layer has no cave above the first level: stock between the stock top and the first level is
+  never cut by a level route, so should-cut stock there needs its own route before the first cave
+  (349 head events on the heart with an 8 mm cutter without it).
+- A should-cut route over a lattice at the finishing stepover leaves sloped stock 0.01 to 0.08 mm
+  above its closing; every cell over should-cut stock is a node. 3 axis freedom needed no change
+  (extra nodes there only lengthened the path from 14.0 to 17.4 min).
+- A strategy that visits cells at their tip realizes the majority reach map exactly, including its
+  cut-back walls: the rotated heart's gouge cells under the Z layer went from 584 to 1432, the
+  number 3 axis freedom already had before T-136. That is the confirmed reach rule, not a defect.
+- Found while evaluating T-136 and not changed: 3 axis freedom in separation scope on a 10 mm box in a
+  30 mm stock under a 12 mm cutter gives 1582 simulated head events, before and after T-136.
+- Bug that existed before T-136 and is fixed by it: the heart with a ball tip and an 8 mm cutter gave
+  175 simulated head events (cause not analysed); with the should-cut feedback it gives none.
+- The Linux side of the native build (gcc flags `-ffp-contract=off -fno-fast-math`, pthreads,
+  `libmiller_native.so`) has not been compiled on this machine; the first Linux `bash build.sh`
+  verifies it, and the golden export diff shows whether gcc keeps the MSVC float results.
+- Turn fine rules that look along the route (T-139: circular sections of 10 mm, compound turns) cannot
+  be priced by the old +-2 node window: a move changes statuses up to 26 positions from its joins. The
+  local search keeps the turn and the arc test of every position (carried through each reversal,
+  measured again only at the final joins), screens a move with the nodes next to its joins, and applies
+  it only after the exact change over every node it can reach. A fine lower bound for skipping moves was
+  measured first and was useless: 94 to 100 percent of fine evaluations have fined nodes within 25 mm.
+  A scratch build compared every exact change with a double recomputation of the whole route (13,935
+  moves, largest difference 0.000016) and every cached turn and arc after each move.
+- A route length summed in double over float chord lengths is exact and independent of the direction;
+  a float sum is not, and a status must be the same for a route and its reverse or the in-place
+  reversal of 2-opt corrupts the stored statuses.
+- `dotnet sln add` adds Debug configurations to `Miller.sln`, which must list Release only; add a
+  project by hand (Project entry, three Release platform rows, the src folder nesting).
+- A synchronous Windows serial handle serializes ReadFile and WriteFile, so one thread must do
+  both; `MachineController` reads with a 10 ms timeout (ReadIntervalTimeout MAXDWORD with multiplier
+  MAXDWORD returns at the first byte) and writes between reads, which bounds realtime latency.
+- Grbl executes `?`, `!`, `~`, 0x18 and every byte from 0x80 wherever they arrive, also inside a
+  line: `GrblProgram` refuses such a line instead of streaming it (a comment is removed first, so the
+  characters are allowed there).
+- A fake link must behave like a stream (at most the buffer per read); returning more made the
+  controller close the link with an internal fault, which the insulation handled but the test
+  misread as a controller defect.
+- A test that waits on the controller snapshot and then reads view-model properties must refresh
+  the view model once more after the condition holds: the snapshot can be one step ahead.
+- No serial controller is attached to this machine: the serial read and write paths are verified
+  by the Windows build and the open errors only; the protocol runs over the same interface with a
+  fake controller and a loopback TCP server. The Linux branch of `miller_serial` has not been compiled.
+- RouteSolverTests compared a route from node 7 with a boustrophedon from node 0, which is not a route
+  from node 7. The solver undercut it only while lattice arcs shorter than 10 mm were exempt; the test
+  now compares with a serpentine from node 7 (solver 307.7, serpentines 317.4 and 318.1).
