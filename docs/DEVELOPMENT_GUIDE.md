@@ -16,7 +16,7 @@ Contents:
 7. Coding rules and definition of done
 8. Known pitfalls
 9. Milestones
-10. Task list (T-001 to T-143)
+10. Task list (T-001 to T-146)
 
 ---
 
@@ -490,6 +490,14 @@ M30
   the tick; no frame skipping logic, no second path for high speeds.
 - `RunToEnd()` processes the whole toolpath without the clock; used for the
   final-model preview.
+- Collision check (T-144): at the end of every generation `CollisionService`
+  runs the toolpath once over a stock clone with `CollisionRecorder`, the rule
+  of the simulation panel (one event per segment and kind). Every entered cell
+  is recorded: Model when the tool surface (head underside, rapid footprint)
+  lay more than `CollisionDetector.Tolerance` below a model standing above the
+  floor, Stock otherwise; Model outranks Stock. A summary window with one OK
+  button follows; the analysis lays CollisionModel and CollisionStock over
+  every other category.
 - `SeekTo(fraction)` moves the simulation to a fraction of the path length: a
   forward seek sweeps from the current position, a backward seek replays from a
   fresh stock; the clock is paused meanwhile and set to the engine's elapsed
@@ -1762,6 +1770,30 @@ check that decides done.
 - Input: user request (integrate without overloading the interface)
 - Output: one Machine tab (connection and program open; jog and zero with probe, overrides and console folded) and one Machine menu; refreshed at 10 Hz from the controller snapshot; the viewport tool marker follows the machine's work position and draws the answered part of the generated toolpath as done
 - Acceptance: connect needs a port or a host; position, state and version shown; start asks first and runs only from Idle; every command that moves the machine disabled during a job; progress, the failing line and a lost link shown; console traffic; fields saved; the tab fits 360 px without horizontal scroll (render captures)
+- Status: done
+
+#### T-144 Collision check cluster
+- Depends on: T-136, T-143
+- Files: `src/Miller.Core/Simulation/CollisionDetector.cs`, `src/Miller.Core/Simulation/CollisionRecorder.cs`, `src/Miller.Core/Simulation/SimulationEngine.cs`, `src/Miller.Application/Services/CollisionService.cs`, `src/Miller.Application/Services/SimulationService.cs`, `tests/Miller.Tests/Core/Simulation/CollisionRecorderTests.cs`, `tests/Miller.Tests/Application/CollisionServiceTests.cs`
+- Input: user request (conflicts of the cutter head with the model or anything else are found; a collision summary at the end of the path generation)
+- Output: `CollisionDetector` reports every entered cell; `CollisionRecorder` (section 6.6) used by the simulation panel and the check; `CollisionService` as the gate (failure as a result, cancellation propagated, throttled progress)
+- Acceptance: the check gives exactly the simulation panel's events; head over the part top marks Model cells, head over stock only marks Stock cells, a model at the floor is no model; Model outranks Stock; the pipeline stock is untouched; a pre-cancelled token throws; a profile on another grid gives a failed check; progress 0 to 1 within the throttle; heart (default project) zero collisions in 406 ms over 5,445 segments
+- Status: done
+
+#### T-145 Collision summary window
+- Depends on: T-144
+- Files: `src/Miller.App/Services/ConfirmDialogService.cs`, `src/Miller.App/ViewModels/MainWindowViewModel.cs`, `src/Miller.App/App.axaml.cs`, `tests/Miller.Tests/Fixtures/Fakes.cs`, `tests/Miller.Tests/App/CollisionSummaryTests.cs`
+- Input: user request (collision summary in a popup window with an OK button that closes it)
+- Output: `IConfirmDialogService.InformAsync` (one OK button, default and cancel); the check runs as the last stage of Generate; the summary opens once the window is no longer busy; the status bar ends with the collision count
+- Acceptance: one summary per finished generation, equal to `CollisionService.Summarize` of the result; none after a validation error or a cancel during the check (the result is discarded); OK and Escape close the window
+- Status: done
+
+#### T-146 Collision marks on the analysis
+- Depends on: T-144
+- Files: `src/Miller.Core/Analysis/DeviationMap.cs`, `src/Miller.App/ViewModels/AnalysisViewModel.cs`, `src/Miller.App/Views/AnalysisView.axaml`, `src/Miller.App/Styles/Colors.axaml`, `src/Miller.App/Rendering/SceneRenderer.cs`, `tests/Miller.Tests/App/CollisionSummaryTests.cs`
+- Input: user request (conflicts shown on the analysis and marked by a different color)
+- Output: categories CollisionModel and CollisionStock with their own colors, laid over every other category; "Mark collisions" check box (default on); legend and summary line
+- Acceptance: the marked cells carry the collision categories and every other cell keeps its category; switching the marks off restores the categories; no two categories share a color; a report of another grid is refused; a new project clears the marks
 - Status: done
 
 ### M8 Packaging and release

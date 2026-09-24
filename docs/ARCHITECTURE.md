@@ -22,6 +22,7 @@ list that implements it is in `docs/DEVELOPMENT_GUIDE.md`.
 | G11 | Preview of the final cut model including inaccuracy and uncuttable areas | `src/Miller.Core/Analysis/FinalModelAnalyzer.cs`, `src/Miller.Core/Analysis/UncuttableRegions.cs`, `src/Miller.App/Views/AnalysisView.axaml` |
 | G12 | Modular, exchangeable routing algorithms | `src/Miller.Core/Toolpath/IToolpathStrategy.cs`, `src/Miller.Core/Toolpath/StrategyRegistry.cs`, `src/Miller.Core/Toolpath/Strategies/ZLayerByLayerStrategy.cs`, `src/Miller.Core/Toolpath/Strategies/ThreeAxisFreedomStrategy.cs` |
 | G13 | Connect to the CNC and run the prepared program, each command only after the previous one is confirmed | `src/Miller.Machine/MachineController.cs`, `src/Miller.Application/Services/MachineService.cs`, `src/Miller.App/Views/MachineView.axaml` |
+| G14 | Collision summary window at the end of the generation; head and rapid collisions marked on the analysis in their own colors | `src/Miller.Core/Simulation/CollisionRecorder.cs`, `src/Miller.Application/Services/CollisionService.cs`, `src/Miller.App/ViewModels/AnalysisViewModel.cs`, `src/Miller.App/Services/ConfirmDialogService.cs` |
 
 Project rules that constrain the design (root `CLAUDE.md`):
 
@@ -243,9 +244,10 @@ placeholder; the task that implements it is written in the placeholder header.
 | Simulation | `MaterialRemover.cs` | Sweeps one segment: samples at most `CellSize / 2` apart; per sample `stock = min(stock, z + dz)` over the footprint; returns the dirty rectangle |
 | Simulation | `SimulationClock.cs` | Speed factor clamped to [0.1, 1000]; `Advance(realSeconds) -> simSeconds`; pause; `Seek(simSeconds)` |
 | Simulation | `SimulationEngine.cs` | Position along the toolpath (segment index + distance), `Step(simSeconds)`, `SeekTo(length)` (forward, by path length), `RunToEnd()`, `Reset()`, current tool position, progress, `ElapsedSeconds` |
-| Simulation | `CollisionDetector.cs` | Head annulus vs current stock, rapid move into material; emits `SimulationEvent` |
+| Simulation | `CollisionDetector.cs` | Head annulus vs current stock, rapid move into material; emits `SimulationEvent` and reports every entered cell with the tool surface height there |
+| Simulation | `CollisionRecorder.cs` | Collisions of one run: one event per segment and kind (shared by the simulation panel and the collision check), per stock cell `CollisionContact` (None, Stock, Model: the tool surface lay below the model surface), the segments that entered the model; `Report()` gives a `CollisionReport` |
 | Simulation | `SimulationEvent.cs` | Kind (HeadCollision, RapidIntoMaterial), segment index, position |
-| Analysis | `DeviationMap.cs` | `stock - model` per cell where model exists; category per cell (Ok, RestMaterial, Gouge, NoModel) |
+| Analysis | `DeviationMap.cs` | `stock - model` per cell where model exists; category per cell (Ok, RestMaterial, Gouge, NoModel); the overlay categories Overhang, HeadLimited, CornerLimited, CollisionModel, CollisionStock |
 | Analysis | `FinalModelAnalyzer.cs` | Builds `DeviationMap` from the final stock; statistics (rest volume, gouge volume, area fractions) |
 | Analysis | `UncuttableRegions.cs` | Masks: Overhang (downward-facing surface below the top surface), HeadLimited (from `HeadClearance`), CornerLimited (tip-derived surface above model by more than tolerance) |
 
@@ -271,6 +273,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | `Services/ExportService.cs` | Toolpath + project -> post-processor -> `.nc` file |
 | `Services/SimulationService.cs` | Owns `SimulationEngine`, `SimulationClock`, `MaterialRemover`, `CollisionDetector`; `Advance(realSeconds)`; `SeekTo(fraction)` (forward sweeps in place, backward replays from a fresh stock); exposes snapshot (tool position, dirty rectangle, events) |
 | `Services/AnalysisService.cs` | Runs `FinalModelAnalyzer` and `UncuttableRegions` on demand |
+| `Services/CollisionService.cs` | Gate of the collision check cluster: runs the generated toolpath once over a stock clone with a `CollisionRecorder`, progress as stage `collision check`; a failure inside the cluster comes back as a `CollisionCheck` with an error (the toolpath stays usable), cancellation ends the call; `Summarize` and `StatusSuffix` give the texts of the summary window and the status bar |
 | `Services/MachineService.cs` | Gate to the machine cluster: link from `MachineConnectionSettings`, one `MachineController` per connection, one console log per session, programs from the generated toolpath (post-processor into memory, answered lines mapped to toolpath segments) or from a file, every machine command |
 | `Services/SettingsService.cs` | User preferences JSON in the per-user application data folder: last folders, window size, last speed factor |
 | `Services/PresetService.cs` | Named `MillingPreset`s in one `presets.json` next to the executable (`AppContext.BaseDirectory`); `Load`, `Save` (replace by name, case-insensitive), `Delete`; a corrupt file throws |
@@ -298,7 +301,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | Views | `StrategySelectionView.axaml` | Routing strategy, cut scope, minimum island volume, reach percent, post-processor, Generate button, statistics |
 | Views | `SimulationControlsView.axaml` | Play, pause, stop, step, run-to-end, logarithmic speed slider 0.1 to 1000 with numeric entry, progress bar (a press seeks to that fraction), simulated time, collision counter |
 | Views | `MachineView.axaml` | Machine tab: connection (serial port and baud or host and port), state and position, Home, Unlock, Reset; program (use toolpath, open file, check, outline, start, pause, resume, stop, progress); folded: jog and zero with the touch-plate probe, overrides, console |
-| Views | `AnalysisView.axaml` | Final-model mode toggle, legend (Ok, RestMaterial, Gouge, Overhang, HeadLimited, CornerLimited), statistics |
+| Views | `AnalysisView.axaml` | Final-model mode toggle, uncuttable overlay, collision marks (default on), legend (Ok, RestMaterial, Gouge, Overhang, HeadLimited, CornerLimited, model collision, stock collision), statistics |
 | Views | `AboutWindow.axaml` | Version, licenses pointer |
 | Views | `Viewport3DControl.cs` | `OpenGlControlBase` subclass: init, render, deinit; right drag orbits, wheel drag pans, wheel zooms, double click fits, left press picks a model and drags it in X and Y (ray-plane at the hit height); delegates to `SceneRenderer` |
 | Controls | `NumericBox.cs` | `TextBox` subclass with a float `Value`: typed text is kept as typed, valid text is committed per keystroke, invalid text sets a data validation error, the text is rewritten only on an outside `Value` change |
@@ -318,6 +321,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | Rendering | `SceneRenderer.cs` | Composes the renderers; single place that issues draw calls |
 | Services | `IFileDialogService.cs`, `FileDialogService.cs` | Open/save dialogs via Avalonia `StorageProvider` |
 | Services | `ErrorDialogService.cs` | Shows exceptions from services; writes to `LogService` |
+| Services | `ConfirmDialogService.cs` | Modal questions (Save / Discard / Cancel, Yes / No) and notices with one OK button (the collision summary) |
 | Services | `UiTimer.cs` | 60 Hz `DispatcherTimer` driving `SimulationService.Advance` |
 | Services | `GpuPreference.cs` | Registers the executable for the high performance GPU in the user's DirectX graphics preferences when no entry exists (Windows only; the Linux launchers export `DRI_PRIME=1`) |
 | Converters | `LogSliderConverter.cs` | Slider position <-> speed factor (logarithmic) |
@@ -370,6 +374,8 @@ STL file
                                 (NodeLattice, CaveTree, RouteSolver, RouteWriter)
   -> ToolpathSimplifier ....... feed runs reduced to vectors within Tolerance
   -> ToolpathStatistics
+  -> CollisionService (collision check cluster, after mn_generate) ... CollisionReport: events,
+                                entered cells (model or stock only) -> summary window, analysis marks
   -> PostProcessorRegistry.GetById(PostProcessorId).Write(...) -> .nc file
 ```
 
@@ -404,6 +410,7 @@ FinalModelAnalyzer: deviation = stock - model (where model exists)
    dev  >  Tolerance   -> RestMaterial (tool could not reach: corner radius, head limit, cutter length)
    dev  < -Tolerance   -> Gouge (should never happen; indicates a strategy bug)
 UncuttableRegions: Overhang (surface hidden from +Z), HeadLimited, CornerLimited
+CollisionReport of the generation: CollisionModel, CollisionStock laid over every other category
 HeightMapRenderer colors cells by category using Colors.axaml resources.
 ```
 
