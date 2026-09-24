@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Miller.Machine</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!-- The machine connection cluster: the GRBL controller and its links. Serial ports go through the
+       native C library src/Miller.Machine.Native, configured and built with CMake on every build of this
+       project (Visual Studio generator on Windows, Makefile generator on Linux) and copied next to the
+       assemblies of every project that references this one, for build and publish alike. -->
+  <PropertyGroup>
+    <MillerSerialSource>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../Miller.Machine.Native'))</MillerSerialSource>
+    <MillerSerialBuild>$(MillerSerialSource)/build</MillerSerialBuild>
+    <MillerSerialFile Condition="$([MSBuild]::IsOSPlatform('Windows'))">miller_serial.dll</MillerSerialFile>
+    <MillerSerialFile Condition="!$([MSBuild]::IsOSPlatform('Windows'))">libmiller_serial.so</MillerSerialFile>
+  </PropertyGroup>
+
+  <Target Name="BuildMillerSerial" BeforeTargets="BeforeBuild">
+    <Exec Command="cmake -S &quot;$(MillerSerialSource)&quot; -B &quot;$(MillerSerialBuild)&quot; -DCMAKE_BUILD_TYPE=Release" />
+    <Exec Command="cmake --build &quot;$(MillerSerialBuild)&quot; --config Release" />
+  </Target>
+
+  <ItemGroup>
+    <None Include="$(MillerSerialBuild)/out/$(MillerSerialFile)" Link="$(MillerSerialFile)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+</Project>
