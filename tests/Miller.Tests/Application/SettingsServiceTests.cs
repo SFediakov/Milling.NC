@@ -72,6 +72,27 @@ public sealed class SettingsServiceTests : IDisposable
         Assert.False(File.Exists(service.FilePath));
     }
 
+    // T-143: the machine panel's connection and field values survive a restart; a file written before
+    // the panel existed has no machine section and loads with the machine defaults.
+    [Fact]
+    public void MachinePreferences_RoundTrip_AndAnOlderFileGetsTheDefaults()
+    {
+        var machine = new MachinePreferences(MachineConnectionKind.Network, "COM7", 57600, "192.168.5.1", 2323, 0.1f, 750f, 15.5f, 25f, 40f, 3f);
+        new SettingsService(_root) { Machine = machine }.Save();
+        var loaded = new SettingsService(_root);
+        loaded.Load();
+        Assert.Equal(machine, loaded.Machine);
+
+        File.WriteAllText(loaded.FilePath, "{ \"WindowWidth\": 800, \"WindowHeight\": 600, \"SpeedFactor\": 2 }");
+        var older = new SettingsService(_root) { Machine = machine };
+        older.Load();
+        Assert.Equal(MachinePreferences.Default, older.Machine);
+        Assert.Equal(800, older.WindowWidth);
+        Assert.Equal(MachineConnectionKind.Serial, MachinePreferences.Default.Connection);
+        Assert.Equal(115200, MachinePreferences.Default.BaudRate);
+        Assert.Equal(23, MachinePreferences.Default.NetworkPort);
+    }
+
     [Fact]
     public void DefaultDirectory_IsUnderApplicationData()
     {

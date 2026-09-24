@@ -64,16 +64,18 @@ public sealed class MachineController : IDisposable
     private long _lastStatusAt;
     private long _nextPollAt;
 
-    public MachineController(IMachineLink link, MachineTiming? timing = null)
+    // The log may outlive the controller, so a console keeps its history over reconnections.
+    public MachineController(IMachineLink link, MachineTiming? timing = null, MachineLog? log = null)
     {
         _link = link ?? throw new ArgumentNullException(nameof(link));
         _timing = timing ?? MachineTiming.Default;
+        Log = log ?? new MachineLog();
         _snapshot = new MachineSnapshot(LinkState.Connecting, link.Name, null, GrblStatus.Unknown, null, false, null);
         _thread = new Thread(Loop) { IsBackground = true, Name = "Miller machine I/O" };
         _thread.Start();
     }
 
-    public MachineLog Log { get; } = new();
+    public MachineLog Log { get; }
 
     public MachineSnapshot Snapshot => Volatile.Read(ref _snapshot);
 

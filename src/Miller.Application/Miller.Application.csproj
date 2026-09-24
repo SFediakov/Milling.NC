@@ -4,5 +4,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Miller.Core/Miller.Core.csproj" />
+    <ProjectReference Include="../Miller.Machine/Miller.Machine.csproj" />
   </ItemGroup>
 </Project>
