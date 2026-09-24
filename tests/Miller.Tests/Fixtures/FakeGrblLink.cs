@@ -39,6 +39,11 @@ public sealed class FakeGrblLink : IMachineLink
 
     public bool AnswerStatus { get; set; } = true;
 
+    // A hold that keeps reporting Hold:1, as a machine that cannot stop would.
+    public bool HoldNeverCompletes { get; set; }
+
+    public bool BannerAfterReset { get; set; } = true;
+
     public string State { get; set; } = GrblStatus.Idle;
 
     public List<string> Lines { get; } = new();
@@ -98,15 +103,23 @@ public sealed class FakeGrblLink : IMachineLink
                 var now = Stopwatch.GetTimestamp();
                 if (_output.Count > 0 && _output[0].Due <= now)
                 {
-                    var (_, bytes, isAnswer) = _output[0];
+                    // Like a stream: at most the buffer, the rest stays first in line.
+                    var (due, bytes, isAnswer) = _output[0];
+                    var count = Math.Min(bytes.Length, buffer.Length);
+                    bytes.AsSpan(0, count).CopyTo(buffer);
+                    if (count < bytes.Length)
+                    {
+                        _output[0] = (due, bytes[count..], isAnswer);
+                        return count;
+                    }
+
                     _output.RemoveAt(0);
                     if (isAnswer)
                     {
                         _inFlight--;
                     }
 
-                    bytes.CopyTo(buffer);
-                    return bytes.Length;
+                    return count;
                 }
 
                 var wait = _output.Count > 0 ? Math.Min(_output[0].Due, deadline) - now : deadline - now;
@@ -166,7 +179,7 @@ public sealed class FakeGrblLink : IMachineLink
                     var state = State;
                     if (state == GrblStatus.Hold)
                     {
-                        state = _holdReported ? "Hold:0" : "Hold:1";
+                        state = _holdReported && !HoldNeverCompletes ? "Hold:0" : "Hold:1";
                         _holdReported = true;
                     }
 
@@ -194,7 +207,11 @@ public sealed class FakeGrblLink : IMachineLink
                 }
 
                 State = GrblStatus.Idle;
-                Emit(Banner);
+                if (BannerAfterReset)
+                {
+                    Emit(Banner);
+                }
+
                 break;
         }
     }
