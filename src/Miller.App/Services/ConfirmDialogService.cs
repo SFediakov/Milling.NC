@@ -18,13 +18,17 @@ public interface IConfirmDialogService
 
     // Yes / No; closing the dialog with the window button is No.
     Task<bool> ConfirmAsync(string question);
+
+    // A notice with one OK button; OK, Enter, Escape and the window button close it.
+    Task InformAsync(string title, string message);
 }
 
 // Modal questions bound to the main window: Save / Discard / Cancel for unsaved changes, Yes / No
-// before an action on the machine.
+// before an action on the machine, OK after a finished operation such as the collision summary.
 public sealed class ConfirmDialogService : IConfirmDialogService
 {
     public const string Question = "The project has unsaved changes. Save them?";
+    public const string OkLabel = "OK";
     private const double DialogWidth = 420;
 
     private readonly Func<Window?> _owner;
@@ -35,20 +39,27 @@ public sealed class ConfirmDialogService : IConfirmDialogService
     }
 
     public Task<SaveDecision> AskSaveChangesAsync()
-        => AskAsync(Question, new[] { ("Save", SaveDecision.Save), ("Discard", SaveDecision.Discard), ("Cancel", SaveDecision.Cancel) }, SaveDecision.Save, SaveDecision.Cancel);
+        => AskAsync(App.WindowTitle, Question, new[] { ("Save", SaveDecision.Save), ("Discard", SaveDecision.Discard), ("Cancel", SaveDecision.Cancel) }, SaveDecision.Save, SaveDecision.Cancel);
 
     public async Task<bool> ConfirmAsync(string question)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(question);
-        return await AskAsync(question, new[] { ("Yes", true), ("No", false) }, true, false);
+        return await AskAsync(App.WindowTitle, question, new[] { ("Yes", true), ("No", false) }, true, false);
     }
 
-    private async Task<T> AskAsync<T>(string question, (string Label, T Value)[] answers, T accept, T cancel)
+    public async Task InformAsync(string title, string message)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(title);
+        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+        await AskAsync(title, message, new[] { (OkLabel, true) }, true, true);
+    }
+
+    private async Task<T> AskAsync<T>(string title, string question, (string Label, T Value)[] answers, T accept, T cancel)
     {
         var owner = _owner() ?? throw new InvalidOperationException("The main window is not available for the confirm dialog.");
         var dialog = new Window
         {
-            Title = App.WindowTitle,
+            Title = title,
             Width = DialogWidth,
             SizeToContent = SizeToContent.Height,
             CanResize = false,

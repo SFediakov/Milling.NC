@@ -57,6 +57,14 @@ public sealed class FakeConfirmDialogService : IConfirmDialogService
         Questions.Add(question);
         return Task.FromResult(Confirmations.Count > 0 && Confirmations.Dequeue());
     }
+
+    public List<(string Title, string Message)> Notices { get; } = new();
+
+    public Task InformAsync(string title, string message)
+    {
+        Notices.Add((title, message));
+        return Task.CompletedTask;
+    }
 }
 
 // Real services rooted in a temporary directory, with fake dialogs.
@@ -72,6 +80,7 @@ public static class TestServices
             new ExportService(),
             new SimulationService(),
             new AnalysisService(),
+            new CollisionService(),
             machine ?? new MachineService(),
             new SettingsService(Path.Combine(tempRoot, "settings")),
             new PresetService(Path.Combine(tempRoot, "presets")),

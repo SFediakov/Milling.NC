@@ -20,6 +20,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 {
     public const string ReadyStatus = "Ready";
     public const string CancelledStatus = "Toolpath generation cancelled";
+    public const string CollisionSummaryTitle = "Miller - collision summary";
     public static readonly IReadOnlyList<string> StlExtensions = new[] { "stl" };
 
     [ObservableProperty]
@@ -44,6 +45,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         ExportService export,
         SimulationService simulation,
         AnalysisService analysis,
+        CollisionService collisions,
         MachineService machine,
         SettingsService settings,
         PresetService presets,
@@ -60,6 +62,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Export = export ?? throw new ArgumentNullException(nameof(export));
         Simulation = simulation ?? throw new ArgumentNullException(nameof(simulation));
         AnalysisRunner = analysis ?? throw new ArgumentNullException(nameof(analysis));
+        Collisions = collisions ?? throw new ArgumentNullException(nameof(collisions));
         ArgumentNullException.ThrowIfNull(machine);
         Settings = settings ?? throw new ArgumentNullException(nameof(settings));
         PresetStore = presets ?? throw new ArgumentNullException(nameof(presets));
@@ -127,6 +130,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public AnalysisService AnalysisRunner { get; }
 
+    public CollisionService Collisions { get; }
+
     public SettingsService Settings { get; }
 
     public PresetService PresetStore { get; }
@@ -192,6 +197,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         await AddModelAsync(path);
     }
 
+    // The collision check is the last stage: a cancel there cancels the generation, a failure inside it
+    // keeps the toolpath and is named in the summary, which opens once the window is no longer busy.
     [RelayCommand(CanExecute = nameof(CanGenerate))]
     private async Task GenerateAsync()
     {
@@ -203,9 +210,16 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             Progress = r.Fraction;
             StatusText = r.Message;
         });
+        string? summary = null;
         try
         {
             var result = await Pipeline.RunAsync(Project.Current, MeshImport.Meshes, progress, _generation.Token);
+            var collisions = await Collisions.RunAsync(result, progress, _generation.Token);
+            if (!collisions.Succeeded)
+            {
+                Log.Error($"Collision check failed: {collisions.Error}", null);
+            }
+
             LastResult = result;
             Strategy.ShowResult(result);
             Viewport.SetToolpath(result.Toolpath);
@@ -214,9 +228,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             Viewport.ShowModel = false;
             Simulation.Load(result);
             SimulationPanel.OnLoadedChanged();
-            Analysis.SetPipeline(result);
+            Analysis.SetPipeline(result, collisions.Report);
             StatusText = string.Create(CultureInfo.InvariantCulture,
-                $"Toolpath ready: {result.Statistics.SegmentCount} segments, {result.Statistics.EstimatedMinutes:0.0} min");
+                $"Toolpath ready: {result.Statistics.SegmentCount} segments, {result.Statistics.EstimatedMinutes:0.0} min, {CollisionService.StatusSuffix(collisions)}");
+            summary = CollisionService.Summarize(collisions);
             ToolpathGenerated?.Invoke(this, EventArgs.Empty);
         }
         catch (OperationCanceledException)
@@ -233,6 +248,11 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             _generation.Dispose();
             _generation = null;
             IsBusy = false;
+        }
+
+        if (summary is not null)
+        {
+            await Confirm.InformAsync(CollisionSummaryTitle, summary);
         }
     }
 
@@ -332,7 +352,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         LastResult = null;
         Strategy.Clear();
         Simulation.Unload();
-        Analysis.SetPipeline(null);
+        Analysis.SetPipeline(null, null);
         Viewport.SetToolpath(null);
         Viewport.SetStockMap(null, 0f);
         Viewport.ShowModel = true;
