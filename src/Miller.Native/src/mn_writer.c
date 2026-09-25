@@ -16,7 +16,58 @@ struct mn_writer {
     mn_segments scratch;
     int has_position;
     mn_v3 position;
+    const float* material;
+    const mn_profile* profile;
+    float cutter_radius;
+    float cutter_length;
 };
+
+void mn_writer_guard(mn_writer* writer, const float* material, const mn_profile* profile, float cutter_radius, float cutter_length)
+{
+    writer->material = material;
+    writer->profile = profile;
+    writer->cutter_radius = cutter_radius;
+    writer->cutter_length = cutter_length;
+}
+
+/* Whether the head clears the material at one tool position. */
+static int head_clears(const mn_writer* w, const mn_grid* g, mn_v3 tip)
+{
+    int ci = mn_cell_i(g, tip.x);
+    int cj = mn_cell_j(g, tip.y);
+    float head_bottom = tip.z + w->cutter_length;
+    for (int o = 0; o < w->profile->annulus_count; o++) {
+        int i = ci + w->profile->annulus[o].dx;
+        int j = cj + w->profile->annulus[o].dy;
+        if (!mn_in_bounds(g, i, j)) {
+            continue;
+        }
+        float z = w->material[j * g->width + i];
+        if (z > head_bottom + w->profile->annulus[o].dz + MN_COLLISION_TOLERANCE) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* Whether the head clears the material along every segment of the polyline. */
+static int polyline_clears(const mn_writer* w, const mn_grid* g, const mn_segment* segments, int count)
+{
+    float spacing = mn_max(g->cell_size, w->cutter_radius);
+    for (int k = 0; k < count; k++) {
+        mn_v3 a = mn_v3_make(segments[k].start_x, segments[k].start_y, segments[k].start_z);
+        mn_v3 b = mn_v3_make(segments[k].end_x, segments[k].end_y, segments[k].end_z);
+        float length = mn_v3_distance(a, b);
+        int samples = length > 0 ? mn_f2i(ceilf(length / spacing)) : 0;
+        for (int n = 0; n <= samples; n++) {
+            mn_v3 tip = samples == 0 ? a : mn_v3_lerp(a, b, (float)n / (float)samples);
+            if (!head_clears(w, g, tip)) {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
 
 int mn_segments_push(mn_segments* list, mn_segment segment)
 {
@@ -156,6 +207,9 @@ int mn_writer_travel_to(mn_writer* w, mn_v3 to, const mn_route_grid* grid)
     w->scratch.count = 0;
     MN_CHECK(cut(w, from, to, grid, &w->scratch));
     float along = minutes(w, w->scratch.items, w->scratch.count);
+    if (w->material != NULL && !polyline_clears(w, &grid->g, w->scratch.items, w->scratch.count)) {
+        along = INFINITY;
+    }
     mn_v3 up = mn_v3_make(from.x, from.y, w->safe_z);
     mn_v3 over = mn_v3_make(to.x, to.y, w->safe_z);
     mn_segment retract[3];

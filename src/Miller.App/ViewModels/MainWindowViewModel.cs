@@ -45,7 +45,6 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         ExportService export,
         SimulationService simulation,
         AnalysisService analysis,
-        CollisionService collisions,
         MachineService machine,
         SettingsService settings,
         PresetService presets,
@@ -62,7 +61,6 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Export = export ?? throw new ArgumentNullException(nameof(export));
         Simulation = simulation ?? throw new ArgumentNullException(nameof(simulation));
         AnalysisRunner = analysis ?? throw new ArgumentNullException(nameof(analysis));
-        Collisions = collisions ?? throw new ArgumentNullException(nameof(collisions));
         ArgumentNullException.ThrowIfNull(machine);
         Settings = settings ?? throw new ArgumentNullException(nameof(settings));
         PresetStore = presets ?? throw new ArgumentNullException(nameof(presets));
@@ -130,8 +128,6 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public AnalysisService AnalysisRunner { get; }
 
-    public CollisionService Collisions { get; }
-
     public SettingsService Settings { get; }
 
     public PresetService PresetStore { get; }
@@ -197,8 +193,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         await AddModelAsync(path);
     }
 
-    // The collision check is the last stage: a cancel there cancels the generation, a failure inside it
-    // keeps the toolpath and is named in the summary, which opens once the window is no longer busy.
+    // The dynamic collision check is the last stage of every generation pass; its summary opens once
+    // the window is no longer busy.
     [RelayCommand(CanExecute = nameof(CanGenerate))]
     private async Task GenerateAsync()
     {
@@ -214,12 +210,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         try
         {
             var result = await Pipeline.RunAsync(Project.Current, MeshImport.Meshes, progress, _generation.Token);
-            var collisions = await Collisions.RunAsync(result, progress, _generation.Token);
-            if (!collisions.Succeeded)
-            {
-                Log.Error($"Collision check failed: {collisions.Error}", null);
-            }
-
+            var collisions = result.Collisions;
             LastResult = result;
             Strategy.ShowResult(result);
             Viewport.SetToolpath(result.Toolpath);

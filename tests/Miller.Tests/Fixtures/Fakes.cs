@@ -80,7 +80,6 @@ public static class TestServices
             new ExportService(),
             new SimulationService(),
             new AnalysisService(),
-            new CollisionService(),
             machine ?? new MachineService(),
             new SettingsService(Path.Combine(tempRoot, "settings")),
             new PresetService(Path.Combine(tempRoot, "presets")),

@@ -34,6 +34,9 @@ public sealed class PresetServiceTests : IDisposable
         project.CutScope = CutScope.Separation;
         project.MinIslandVolume = 40f;
         project.ReachPercent = 66f;
+        project.CollisionMode = CollisionMode.OneRun;
+        project.RecursionRatio = 2f;
+        project.OneRunRatio = 3f;
         project.Stock.SizeX = 77f;
         project.Models.Add(new ModelPlacement { StlPath = "a.stl", Offset = new Vector3(4, 0, 0) });
         return project;
@@ -66,6 +69,9 @@ public sealed class PresetServiceTests : IDisposable
         Assert.Equal(CutScope.Separation, brass.CutScope);
         Assert.Equal(40f, brass.MinIslandVolume);
         Assert.Equal(66f, brass.ReachPercent);
+        Assert.Equal(CollisionMode.OneRun, brass.CollisionMode);
+        Assert.Equal(2f, brass.RecursionRatio);
+        Assert.Equal(3f, brass.OneRunRatio);
     }
 
     [Fact]
@@ -103,6 +109,9 @@ public sealed class PresetServiceTests : IDisposable
         Assert.Equal(CutScope.Separation, target.CutScope);
         Assert.Equal(40f, target.MinIslandVolume);
         Assert.Equal(66f, target.ReachPercent);
+        Assert.Equal(CollisionMode.OneRun, target.CollisionMode);
+        Assert.Equal(2f, target.RecursionRatio);
+        Assert.Equal(3f, target.OneRunRatio);
         Assert.Equal(55f, target.Stock.SizeX);
         Assert.Equal("b.stl", Assert.Single(target.Models).StlPath);
 

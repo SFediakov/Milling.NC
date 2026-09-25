@@ -39,7 +39,7 @@ public static class TestContexts
         var limit = HeadClearance.ComputeHeadLimit(model, profile, tool.CutterLength);
         var effective = HeadClearance.ApplyHeadLimit(tip, limit);
         var plan = Slicer.Build(effective, geometry.Map, parameters);
-        return new ToolpathContext(model, tip, effective, limit, geometry.Map, plan, tool, profile, parameters, geometry.StockTop);
+        return new ToolpathContext(model, tip, effective, limit, geometry.Map, plan, tool, profile, parameters, geometry.StockTop) { Floor = geometry.StockBottom };
     }
 
     // 10 x 10 x 5 box centered in a 20 x 20 x 5 stock: the box occupies x, y in [5, 15], the ring

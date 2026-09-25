@@ -9,8 +9,9 @@ using Xunit;
 namespace Miller.Tests.Application;
 
 // The status bar text names the stage and, where a stage iterates, the iteration and the percent
-// of the stage: reach map rounds, head clearance iterations, routing passes. Fractions stay
-// cumulative and repeated messages are forwarded only once the bar has visibly moved.
+// of the stage: reach map rounds, routing passes, the segments of the collision check; from the
+// second generation pass on it names the pass. Fractions stay cumulative and repeated messages
+// are forwarded only once the bar has visibly moved.
 public sealed class StageProgressTests
 {
     private static MillingProject BoxProject(string strategyId)
@@ -39,7 +40,8 @@ public sealed class StageProgressTests
         Assert.Contains(reports, r => r.Stage == "reach map" && r.Message == "reach map: round 1 of 3, 33%");
         Assert.Contains(reports, r => r.Stage == "reach map" && r.Message == "reach map: round 2 of 3, 67%");
         Assert.Contains(reports, r => r.Stage == "reach map" && r.Message == "reach map: round 3 of 3, 100%");
-        Assert.Contains(reports, r => r.Stage == "head clearance" && r.Message == "head clearance: iteration 1 of 8, 13%");
+        Assert.Contains(reports, r => r.Stage == "head clearance" && r.Message == "head clearance");
+        Assert.Contains(reports, r => r.Stage == CollisionService.StageName && r.Message.StartsWith("collision check: segment ", StringComparison.Ordinal));
         Assert.Contains(reports, r => r.Stage == "route" && r.Message.StartsWith("route: pass 1 of ", StringComparison.Ordinal));
         Assert.Contains(reports, r => r.Stage == "route" && r.Message.EndsWith(", 100%", StringComparison.Ordinal));
         Assert.Contains(reports, r => r.Stage == "slice" && r.Message == "slice");
@@ -61,6 +63,33 @@ public sealed class StageProgressTests
         var stageEnd = reports[^1].Fraction;
         Assert.Equal(0.25f, stageStart, 4);
         Assert.Equal(0.40f, stageEnd, 4);
+    }
+
+    // Recursion (T-148): the second pass names itself and the bar never moves back over the passes.
+    [Fact]
+    public void Recursion_NamesEveryPassAfterTheFirst_AndTheBarNeverMovesBack()
+    {
+        var project = MillingProject.Default();
+        project.Tool.CutterDiameter = 2;
+        project.Tool.HeadDiameter = 4;
+        project.Tool.CutterLength = 2.5f;
+        project.Parameters.Stepover = 1;
+        project.Parameters.Stepdown = 1.5f;
+        project.Stock.SizeX = 14;
+        project.Stock.SizeY = 14;
+        project.Stock.SizeZ = 5;
+        project.Stock.AlignZ = StockAlignment.Max;
+        project.Parameters.CellSize = 0.5f;
+        project.Models.Add(new ModelPlacement { StlPath = "box.stl" });
+        var reports = new List<ProgressReport>();
+        var result = new PipelineService().Run(project, new[] { TestMeshes.Box(8, 8, 3) }, new SynchronousProgress(reports.Add), CancellationToken.None);
+        Assert.True(result.Passes >= 2, $"{result.Passes} passes");
+        Assert.Contains(reports, r => r.Stage == "route" && r.Message.StartsWith("pass 2, route: pass 1 of ", StringComparison.Ordinal));
+        Assert.Contains(reports, r => r.Stage == CollisionService.StageName && r.Message.StartsWith("pass 2, collision check", StringComparison.Ordinal));
+        Assert.DoesNotContain(reports, r => r.Message.StartsWith("pass 1,", StringComparison.Ordinal));
+        Assert.True(reports.Select(r => r.Fraction).SequenceEqual(reports.Select(r => r.Fraction).OrderBy(f => f)), "progress went backwards");
+        Assert.Equal("Toolpath ready", reports[^1].Message);
+        Assert.Equal(1f, reports[^1].Fraction);
     }
 
     [Fact]

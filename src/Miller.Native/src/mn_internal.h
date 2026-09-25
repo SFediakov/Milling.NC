@@ -15,6 +15,9 @@
 /* FinalModelAnalyzer.FloorTolerance. */
 #define MN_FLOOR_TOLERANCE 1e-4f
 
+/* CollisionDetector.Tolerance: float slack so a tip resting exactly on a surface is no collision. */
+#define MN_COLLISION_TOLERANCE 1e-4f
+
 /* ---- profile ---- */
 
 typedef struct mn_profile {
@@ -96,12 +99,16 @@ float mn_cost_exact(const mn_route_grid* grid, mn_v3 a, mn_v3 b);
 #define MN_Z_SPEED_FACTOR 1.0f
 #define MN_BUDGET_MAX_EVALUATIONS 40000000LL
 
+/* Precedence pairs (T-150): before[k] is visited ahead of after[k]. pair_count 0 means none. */
 typedef struct mn_problem {
     mn_route_grid grid;
     const float* x;
     const float* y;
     const float* z;
     int count;
+    const int* before;
+    const int* after;
+    int pair_count;
 } mn_problem;
 
 static inline mn_v3 mn_problem_node(const mn_problem* p, int k) { return mn_v3_make(p->x[k], p->y[k], p->z[k]); }
@@ -162,9 +169,69 @@ void mn_segments_free(mn_segments* list);
 float mn_segment_length(const mn_segment* s);
 
 int mn_writer_travel_to(mn_writer* writer, mn_v3 to, const mn_route_grid* grid);
+/* One run (T-150): a travel along the surface polyline is taken only when the head clears
+ * `material` along it (sampled every max(cell, cutter radius)); otherwise the writer retracts.
+ * The pointers stay owned by the caller. NULL material switches the rule off. */
+void mn_writer_guard(mn_writer* writer, const float* material, const mn_profile* profile, float cutter_radius, float cutter_length);
 int mn_writer_follow_to(mn_writer* writer, mn_v3 to, const mn_route_grid* grid);
 int mn_writer_has_position(const mn_writer* writer, mn_v3* position);
 int mn_writer_take(mn_writer* writer, mn_segments* result);
+
+/* ---- collision check and resolution (T-147, T-148) ---- */
+
+typedef struct mn_collisions {
+    mn_collision* items;
+    int count;
+    int capacity;
+} mn_collisions;
+
+int mn_collisions_push(mn_collisions* list, mn_collision item);
+void mn_collisions_free(mn_collisions* list);
+
+/* What a check found, aggregated per tool position (the cell of the tool axis) and per entered
+ * cell. STOCK: removable, the cell's closing (the lowest height any position brings it to, the
+ * standing stock of the cut scope included) plus the tolerance lies below the tool surface that
+ * hit it. MODEL: not removable, the model or kept stock stops the removal short of the surface.
+ * REPEAT: removable stock that was already SHOULD_REMOVE and still stood in the way. SURFACE: the
+ * tool surface lay below the model surface (the report's Model contact, the simulation's rule). */
+#define MN_HIT_STOCK 1
+#define MN_HIT_MODEL 2
+#define MN_HIT_REPEAT 4
+#define MN_HIT_SURFACE 8
+
+typedef struct mn_hits {
+    int cells;
+    const float* closing;   /* per cell, NaN where no position reaches it */
+    float slack;            /* the project tolerance: the simplified path may run this much above the planned tip */
+    float* position_z;      /* lowest tip z of the position when it hit; NaN without a hit */
+    uint8_t* position_flags;
+    float* cell_height;     /* highest material an entered cell stood at when hit; NaN without a hit */
+    uint8_t* cell_flags;
+    int entered;            /* distinct entered cells */
+    int unremovable;        /* entered cells flagged MODEL */
+} mn_hits;
+
+int mn_hits_init(mn_hits* hits, int cells);
+void mn_hits_free(mn_hits* hits);
+
+/* Sets MN_CELL_MODEL where the model stands above the floor; other bits are kept. */
+void mn_model_bits(const float* model, int cells, float floor, uint8_t* status);
+
+/* Clears MN_CELL_COLLISION, walks the segments over a clone of `stock` and sets it again on every
+ * entered cell; `hits` may be NULL, otherwise its closing map must be set. Events hold one collision
+ * per segment and kind. */
+int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const float* stock, const float* model, float floor, const mn_profile* profile, float cutter_radius,
+    float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor);
+
+/* Resolution of one check (recursion mode): entered removable stock becomes SHOULD_REMOVE without
+ * COLLISION; a position whose head hit unremovable cells is forbidden (its tip in `raised` lifted
+ * until the head clears what stays, FORBIDDEN set) unless the model cells only it finishes outnumber
+ * the hit ones by more than `ratio` times; a position blocked by stock that was already
+ * SHOULD_REMOVE is forbidden as well. `effective` is the tip map of the positions (the reach tip under
+ * the raises), `material` the same with the standing stock of the cut scope, which is what stays.
+ * Returns how many marks were added. */
+int mn_resolve(const mn_grid* g, const mn_profile* profile, float cutter_length, const float* model, const float* effective, const float* material, float floor, float tolerance,
+    float ratio, const mn_hits* hits, uint8_t* status, float* raised);
 
 /* ---- strategies and checks ---- */
 
