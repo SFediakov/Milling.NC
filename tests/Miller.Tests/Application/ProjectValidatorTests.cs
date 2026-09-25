@@ -57,6 +57,19 @@ public sealed class ProjectValidatorTests
     }
 
     [Fact]
+    public void CollisionRatios_MustBeFiniteAndNotNegative()
+    {
+        AssertSingleError(p => p.RecursionRatio = -1f, "Strategy.RecursionRatio");
+        AssertSingleError(p => p.RecursionRatio = float.NaN, "Strategy.RecursionRatio");
+        AssertSingleError(p => p.RecursionRatio = float.PositiveInfinity, "Strategy.RecursionRatio");
+        AssertSingleError(p => p.OneRunRatio = -0.5f, "Strategy.OneRunRatio");
+        AssertSingleError(p => p.OneRunRatio = float.NaN, "Strategy.OneRunRatio");
+        Assert.True(Validate(p => p.RecursionRatio = 0f).IsValid);
+        Assert.True(Validate(p => p.OneRunRatio = 1e6f).IsValid);
+        AssertSingleError(p => p.CollisionMode = (CollisionMode)7, "Strategy.CollisionMode");
+    }
+
+    [Fact]
     public void CutterLength_MustBePositive()
     {
         AssertSingleError(p => p.Tool.CutterLength = -1, "Tool.CutterLength");

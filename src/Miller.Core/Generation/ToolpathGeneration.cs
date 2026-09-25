@@ -11,8 +11,10 @@ using Miller.Core.Toolpaths.Strategies;
 
 namespace Miller.Core.Generation;
 
-// Everything one generation produced. HeadLimitedMask marks where the head, not the cutter, decides
-// the depth; ShouldCut the stock the collision check found in the way of the head.
+// Everything one generation produced. HeadLimitedMask marks the positions the collision handling
+// raised (the head, not the cutter, decides the depth there); ShouldCut the stock the dynamic check
+// found in the way of the head; Status the native status byte per cell; Collisions the check of the
+// kept pass with the rule of the simulation panel; Passes how many passes ran.
 public sealed record GenerationResult(
     Mesh MachineMesh,
     StockGeometry Stock,
@@ -27,16 +29,24 @@ public sealed record GenerationResult(
     Toolpath Toolpath,
     ToolpathStatistics Statistics,
     ToolProfile Profile,
-    float Floor);
+    float Floor,
+    CellStatus[] Status,
+    CollisionReport Collisions,
+    int Passes,
+    IReadOnlyList<PassCollisions> PassCollisions);
+
+// What one generation pass's check found: the distinct entered cells and the events.
+public readonly record struct PassCollisions(int EnteredCells, int Events);
 
 // The whole toolpath generation in one call of the native library (mn_generate): transform, stock,
-// model map, reach map, head clearance, slicing and cut scope, routing, simplification and
-// statistics. The placement of the models (machine matrices) and the stock box come from the setup
-// classes, which the viewport shares; the progress reports carry the stage index of the pipeline
-// table (1 transform .. 9 statistics).
+// model map, reach map, then per pass the raised tips, slicing and cut scope, routing,
+// simplification, statistics and the dynamic collision check; recursion mode repeats the pass
+// while the collisions decrease. The placement of the models (machine matrices) and the stock box
+// come from the setup classes, which the viewport shares; the progress reports carry the pass and
+// the stage index of the pipeline table (1 transform .. 10 collision check).
 public static class ToolpathGeneration
 {
-    public static unsafe GenerationResult Run(MillingProject project, IReadOnlyList<Mesh> meshes, Action<int, StepProgress>? progress, CancellationToken cancellation)
+    public static unsafe GenerationResult Run(MillingProject project, IReadOnlyList<Mesh> meshes, Action<int, int, StepProgress>? progress, CancellationToken cancellation)
     {
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(meshes);
@@ -84,7 +94,7 @@ public static class ToolpathGeneration
         var rows = matrices.SelectMany(m => new[] { m.M11, m.M12, m.M13, m.M14, m.M21, m.M22, m.M23, m.M24, m.M31, m.M32, m.M33, m.M34, m.M41, m.M42, m.M43, m.M44 }).ToArray();
         var mirrored = matrices.Select(m => m.GetDeterminant() < 0 ? 1 : 0).ToArray();
         var p = project.Parameters;
-        CoreNative.StageCallback? callback = progress is null ? null : (_, stage, step, steps, fraction) => progress(stage, new StepProgress(step, steps, fraction));
+        CoreNative.StageCallback? callback = progress is null ? null : (_, pass, stage, step, steps, fraction) => progress(pass, stage, new StepProgress(step, steps, fraction));
         var callbackPointer = callback is null ? IntPtr.Zero : System.Runtime.InteropServices.Marshal.GetFunctionPointerForDelegate(callback);
         using var cancel = new CoreNative.CancelFlag(cancellation);
         IntPtr result;
@@ -112,6 +122,9 @@ public static class ToolpathGeneration
                 CutScope = (int)project.CutScope,
                 MinIslandVolume = project.MinIslandVolume,
                 ReachPercent = project.ReachPercent,
+                CollisionMode = (int)project.CollisionMode,
+                RecursionRatio = project.RecursionRatio,
+                OneRunRatio = project.OneRunRatio,
             };
             CoreNative.Check(CoreNative.mn_generate(&job, callbackPointer, IntPtr.Zero, cancel.Pointer, &result), cancellation);
         }
@@ -125,6 +138,29 @@ public static class ToolpathGeneration
         {
             CoreNative.mn_result_free(result);
         }
+    }
+
+    // The events of a native check as the simulation panel reports them, with the model split.
+    internal static unsafe CollisionReport ReportOf(CoreNative.Collision* collisions, int count, CollisionContact[] contacts)
+    {
+        var events = new List<SimulationEvent>(count);
+        var modelSegments = new HashSet<int>();
+        for (var k = 0; k < count; k++)
+        {
+            var e = collisions[k];
+            var tip = new Vector3(e.X, e.Y, e.Z);
+            var kind = e.Kind == 0 ? SimulationEventKind.HeadCollision : SimulationEventKind.RapidIntoMaterial;
+            var message = kind == SimulationEventKind.HeadCollision
+                ? CollisionDetector.HeadMessage(e.Segment, tip, e.StockZ, e.Surface)
+                : CollisionDetector.RapidMessage(e.Segment, tip, e.StockZ);
+            events.Add(new SimulationEvent(kind, e.Segment, tip, message));
+            if (e.Model != 0)
+            {
+                modelSegments.Add(e.Segment);
+            }
+        }
+
+        return new CollisionReport(events, contacts, modelSegments.Count);
     }
 
     private static unsafe GenerationResult Read(IntPtr result, MillingProject project, BoundingBox stockBounds)
@@ -146,13 +182,17 @@ public static class ToolpathGeneration
         }
 
         var bytes = new byte[cells];
-        bool[,] Mask(int which)
+        void Fill(int which)
         {
             fixed (byte* b = bytes)
             {
                 CoreNative.mn_result_mask(result, which, b);
             }
+        }
 
+        bool[,] Mask(int which)
+        {
+            Fill(which);
             return CoreNative.Mask(bytes, grid.Width, grid.Height);
         }
 
@@ -184,6 +224,45 @@ public static class ToolpathGeneration
         CoreNative.Statistics statistics;
         CoreNative.mn_result_statistics(result, &statistics);
         var stock = new StockGeometry(Map(0), top, bottom, stockBounds);
+        var headLimited = Mask(CoreNative.MaskHeadLimited);
+        var shouldCut = Mask(CoreNative.MaskShouldCut);
+        Fill(CoreNative.MaskStatus);
+        var status = new CellStatus[cells];
+        for (var k = 0; k < cells; k++)
+        {
+            status[k] = (CellStatus)bytes[k];
+        }
+
+        Fill(CoreNative.MaskContacts);
+        var contacts = new CollisionContact[cells];
+        for (var k = 0; k < cells; k++)
+        {
+            contacts[k] = (CollisionContact)bytes[k];
+        }
+
+        var passes = CoreNative.mn_result_passes(result);
+        var entered = new int[Math.Max(passes, 1)];
+        var passEvents = new int[Math.Max(passes, 1)];
+        fixed (int* e = entered, v = passEvents)
+        {
+            CoreNative.mn_result_pass_counts(result, e, v);
+        }
+
+        var passCollisions = new PassCollisions[passes];
+        for (var k = 0; k < passes; k++)
+        {
+            passCollisions[k] = new PassCollisions(entered[k], passEvents[k]);
+        }
+
+        var collisionCount = CoreNative.mn_result_collision_count(result);
+        var collisions = new CoreNative.Collision[Math.Max(collisionCount, 1)];
+        CollisionReport report;
+        fixed (CoreNative.Collision* c = collisions)
+        {
+            CoreNative.mn_result_collisions(result, c);
+            report = ReportOf(c, collisionCount, contacts);
+        }
+
         return new GenerationResult(
             new Mesh(triangles),
             stock,
@@ -191,13 +270,17 @@ public static class ToolpathGeneration
             Map(2),
             Map(3),
             Map(4),
-            Mask(0),
-            Mask(1),
+            headLimited,
+            shouldCut,
             CoreNative.PlanOf(CoreNative.mn_result_plan(result), grid.Width, grid.Height),
             Map(5),
             toolpath,
             ToolpathStatistics.Of(statistics),
             ToolProfile.Create(project.Tool, project.Parameters.CellSize),
-            floor);
+            floor,
+            status,
+            report,
+            passes,
+            passCollisions);
     }
 }

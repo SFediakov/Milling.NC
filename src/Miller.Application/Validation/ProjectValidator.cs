@@ -90,6 +90,13 @@ public static class ProjectValidator
         Positive(errors, "Parameters.RapidRate", p.RapidRate);
         Positive(errors, "Parameters.SpindleRpm", p.SpindleRpm);
         NonNegative(errors, "Strategy.MinIslandVolume", project.MinIslandVolume);
+        if (!Enum.IsDefined(project.CollisionMode))
+        {
+            errors.Add(new ValidationMessage("Strategy.CollisionMode", $"Unknown collision mode {project.CollisionMode}."));
+        }
+
+        Finite(errors, "Strategy.RecursionRatio", project.RecursionRatio);
+        Finite(errors, "Strategy.OneRunRatio", project.OneRunRatio);
         if (!(project.ReachPercent > ReachMap.MinPercent && project.ReachPercent <= ReachMap.MaxPercent))
         {
             errors.Add(new ValidationMessage("Strategy.ReachPercent",
@@ -168,6 +175,14 @@ public static class ProjectValidator
         if (!(value >= 0))
         {
             errors.Add(new ValidationMessage(field, $"{field} must be 0 or greater, got {F(value)}."));
+        }
+    }
+
+    private static void Finite(List<ValidationMessage> errors, string field, float value)
+    {
+        if (!(float.IsFinite(value) && value >= 0))
+        {
+            errors.Add(new ValidationMessage(field, $"{field} must be a finite number of 0 or greater, got {F(value)}."));
         }
     }
 

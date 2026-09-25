@@ -194,6 +194,47 @@ public sealed class SettingsViewModelsTests : IDisposable
         Assert.Null(_vm.Strategy.MinIslandVolumeError);
     }
 
+    // T-151: the collision mode enables its own ratio, both ratios validate, a new project resets them.
+    [Fact]
+    public void Strategy_CollisionMode_EnablesItsRatioAndValidates()
+    {
+        Assert.Equal(new[] { CollisionMode.Recursion, CollisionMode.OneRun }, StrategySelectionViewModel.CollisionModes);
+        Assert.Equal(CollisionMode.Recursion, _vm.Strategy.CollisionMode);
+        Assert.True(_vm.Strategy.IsRecursion);
+        Assert.False(_vm.Strategy.IsOneRun);
+        Assert.Equal(MillingProject.DefaultCollisionRatio, _vm.Strategy.RecursionRatio);
+        Assert.Equal(MillingProject.DefaultCollisionRatio, _vm.Strategy.OneRunRatio);
+
+        var raised = new List<string?>();
+        _vm.Strategy.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        _vm.Strategy.CollisionMode = CollisionMode.OneRun;
+        Assert.Equal(CollisionMode.OneRun, _vm.Project.Current.CollisionMode);
+        Assert.True(_vm.Project.IsDirty);
+        Assert.False(_vm.Strategy.IsRecursion);
+        Assert.True(_vm.Strategy.IsOneRun);
+        Assert.Contains(nameof(StrategySelectionViewModel.IsRecursion), raised);
+        Assert.Contains(nameof(StrategySelectionViewModel.IsOneRun), raised);
+
+        _vm.Strategy.RecursionRatio = 4f;
+        Assert.Equal(4f, _vm.Project.Current.RecursionRatio);
+        Assert.Null(_vm.Strategy.RecursionRatioError);
+        _vm.Strategy.RecursionRatio = -1f;
+        Assert.NotNull(_vm.Strategy.RecursionRatioError);
+        Assert.Contains(nameof(StrategySelectionViewModel.RecursionRatioError), raised);
+        _vm.Strategy.OneRunRatio = float.NaN;
+        Assert.NotNull(_vm.Strategy.OneRunRatioError);
+        _vm.Strategy.OneRunRatio = 0f;
+        Assert.Null(_vm.Strategy.OneRunRatioError);
+
+        _vm.NewProjectCommand.Execute(null);
+        Assert.Equal(CollisionMode.Recursion, _vm.Strategy.CollisionMode);
+        Assert.True(_vm.Strategy.IsRecursion);
+        Assert.Equal(MillingProject.DefaultCollisionRatio, _vm.Strategy.RecursionRatio);
+        Assert.Equal(MillingProject.DefaultCollisionRatio, _vm.Strategy.OneRunRatio);
+        Assert.Null(_vm.Strategy.RecursionRatioError);
+        Assert.Null(_vm.Strategy.OneRunRatioError);
+    }
+
     [Fact]
     public void NewProject_ReloadsEveryPanelWithoutMarkingDirty()
     {

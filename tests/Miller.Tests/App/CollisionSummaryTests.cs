@@ -57,7 +57,8 @@ public sealed class CollisionSummaryTests : IDisposable
 
         var (title, message) = Assert.Single(_confirm.Notices);
         Assert.Equal(MainWindowViewModel.CollisionSummaryTitle, title);
-        var check = new CollisionService().Run(vm.LastResult!, null, CancellationToken.None);
+        var check = vm.LastResult!.Collisions;
+        Assert.True(check.Succeeded);
         Assert.Equal(CollisionService.Summarize(check), message);
         Assert.EndsWith(CollisionService.StatusSuffix(check), vm.StatusText);
         Assert.StartsWith("Toolpath ready:", vm.StatusText);
@@ -78,7 +79,7 @@ public sealed class CollisionSummaryTests : IDisposable
         Assert.Empty(_confirm.Notices);
     }
 
-    // The check is the last stage of the generation: a cancel there discards the result.
+    // The check is the last stage of every generation pass: a cancel there discards the result.
     [Fact]
     public async Task CancelDuringTheCheck_CancelsTheGeneration_AndShowsNoSummary()
     {

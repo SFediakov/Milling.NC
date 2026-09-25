@@ -38,14 +38,19 @@ public static class RouteSolver
             return new[] { start };
         }
 
+        if (problem.Before.Length != problem.After.Length)
+        {
+            throw new ArgumentException($"Precedence lists differ in length: {problem.Before.Length}, {problem.After.Length}.", nameof(problem));
+        }
+
         var order = new int[n];
         var grid = SolverNative.Grid.Of(problem.Grid);
         long evaluations = 0;
         using var flag = new SolverNative.CancelFlag(cancellation);
         fixed (float* floor = problem.Grid.Floor, x = problem.X, y = problem.Y, z = problem.Z)
-        fixed (int* result = order)
+        fixed (int* result = order, before = problem.Before, after = problem.After)
         {
-            SolverNative.Check(SolverNative.mn_route_solve(&grid, floor, x, y, z, n, start, allowance, flag.Pointer, result, &evaluations), cancellation);
+            SolverNative.Check(SolverNative.mn_route_solve(&grid, floor, x, y, z, n, start, before, after, problem.PairCount, allowance, flag.Pointer, result, &evaluations), cancellation);
         }
 
         budget.Consume(evaluations);

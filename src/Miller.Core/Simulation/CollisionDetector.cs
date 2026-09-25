@@ -38,8 +38,7 @@ public static class CollisionDetector
                 var surface = tip.Z + offset.Dz;
                 if (z > surface + Tolerance)
                 {
-                    found ??= new SimulationEvent(SimulationEventKind.RapidIntoMaterial, segmentIndex, tip,
-                        string.Create(CultureInfo.InvariantCulture, $"Rapid move in segment {segmentIndex} enters material at {tip.X:0.###}, {tip.Y:0.###}, {tip.Z:0.###} (stock {z:0.###})."));
+                    found ??= new SimulationEvent(SimulationEventKind.RapidIntoMaterial, segmentIndex, tip, RapidMessage(segmentIndex, tip, z));
                     contact?.Invoke(i, j, surface);
                 }
             }
@@ -54,14 +53,19 @@ public static class CollisionDetector
             var underside = headBottom + offset.Dz;
             if (z > underside + Tolerance)
             {
-                found ??= new SimulationEvent(SimulationEventKind.HeadCollision, segmentIndex, tip,
-                    string.Create(CultureInfo.InvariantCulture, $"Head touches the stock in segment {segmentIndex} at {tip.X:0.###}, {tip.Y:0.###}, {tip.Z:0.###} (stock {z:0.###} above the head underside {underside:0.###})."));
+                found ??= new SimulationEvent(SimulationEventKind.HeadCollision, segmentIndex, tip, HeadMessage(segmentIndex, tip, z, underside));
                 contact?.Invoke(i, j, underside);
             }
         }
 
         return found;
     }
+
+    public static string RapidMessage(int segmentIndex, Vector3 tip, float stockZ)
+        => string.Create(CultureInfo.InvariantCulture, $"Rapid move in segment {segmentIndex} enters material at {tip.X:0.###}, {tip.Y:0.###}, {tip.Z:0.###} (stock {stockZ:0.###}).");
+
+    public static string HeadMessage(int segmentIndex, Vector3 tip, float stockZ, float underside)
+        => string.Create(CultureInfo.InvariantCulture, $"Head touches the stock in segment {segmentIndex} at {tip.X:0.###}, {tip.Y:0.###}, {tip.Z:0.###} (stock {stockZ:0.###} above the head underside {underside:0.###}).");
 
     // NaN for cells outside the grid or without material, so comparisons stay false.
     private static float Cell(HeightMap stock, int i, int j) => stock.InBounds(i, j) ? stock[i, j] : float.NaN;

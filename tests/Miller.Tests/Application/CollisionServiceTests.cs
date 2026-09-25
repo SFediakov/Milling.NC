@@ -1,8 +1,6 @@
 using System.Diagnostics;
 using System.Numerics;
-using Miller.Application.Progress;
 using Miller.Application.Services;
-using Miller.Core.HeightMaps;
 using Miller.Core.Setup;
 using Miller.Core.Simulation;
 using Miller.Core.Toolpaths;
@@ -11,12 +9,14 @@ using Xunit;
 
 namespace Miller.Tests.Application;
 
-// T-144: the collision check cluster runs the generated toolpath once, records the collisions with the
-// rule of the simulation panel, never touches the pipeline result and reports its own failures.
+// T-147: the dynamic collision check runs inside the native generation and, on its own, through
+// NativeCollisionCheck: the head ring and the rapid footprint against the stock as it stands, one
+// event per segment and kind (the rule of the simulation panel), Model outranks Stock. The
+// generation's own check closes every pass and its report reaches the summary text.
 // Fixture: an 8 x 8 x 3 box in a 14 x 14 x 5 stock at 0.5 mm cells under a 2 mm cutter with a 4 mm head.
 public sealed class CollisionServiceTests
 {
-    private static PipelineResult Box(float cutterLength)
+    private static MillingProject BoxProject(float cutterLength)
     {
         var project = MillingProject.Default();
         project.Tool.CutterDiameter = 2;
@@ -28,8 +28,14 @@ public sealed class CollisionServiceTests
         project.Stock.SizeZ = 5;
         project.Parameters.CellSize = 0.5f;
         project.Models.Add(new ModelPlacement { StlPath = "box.stl" });
-        return new PipelineService().Run(project, new[] { TestMeshes.Box(8, 8, 3) }, null, CancellationToken.None);
+        return project;
     }
+
+    private static PipelineResult Box(float cutterLength)
+        => new PipelineService().Run(BoxProject(cutterLength), new[] { TestMeshes.Box(8, 8, 3) }, null, CancellationToken.None);
+
+    private static CollisionReport Check(PipelineResult result, Toolpath path, out CellStatus[] status)
+        => NativeCollisionCheck.Run(path, result.Stock.Map, result.Model, result.Floor, result.Profile.Tool, CollisionDetector.Tolerance, out status);
 
     // World X of the first model cell in the middle row, the middle Y and the model top there.
     private static (float X, float Y, float Top) BoxEdge(PipelineResult result)
@@ -68,21 +74,24 @@ public sealed class CollisionServiceTests
     }
 
     [Fact]
-    public void CollidingPath_GivesTheSimulationEvents_ModelAndStockContacts_AndLeavesTheResultIntact()
+    public void CollidingPath_GivesTheSimulationEvents_ModelAndStockContacts_AndLeavesTheStockIntact()
     {
         var result = Box(1f);
-        result = result with { Toolpath = Colliding(result) };
+        var path = Colliding(result);
         var stockBefore = (float[])result.Stock.Map.Z.Clone();
 
-        var check = new CollisionService().Run(result, null, CancellationToken.None);
-        Assert.True(check.Succeeded, check.Error);
-        var report = check.Report!;
+        var report = Check(result, path, out var status);
 
+        // The C# recorder over the same path finds the same events: every sample it takes is one the
+        // native check takes as well.
         var simulation = new SimulationService();
-        simulation.Load(result);
+        simulation.Load(result with { Toolpath = path });
         simulation.RunToEnd();
         Assert.NotEmpty(simulation.Events);
-        Assert.Equal(simulation.Events, report.Events);
+        Assert.Equal(simulation.Events.Select(e => (e.Kind, e.SegmentIndex)), report.Events.Select(e => (e.Kind, e.SegmentIndex)));
+        // The native check samples the head along a segment as well, so its event names the first
+        // colliding sample of the segment; the wording is the simulation panel's.
+        Assert.All(report.Events, e => Assert.StartsWith(e.Kind == SimulationEventKind.HeadCollision ? "Head touches the stock in segment " : "Rapid move in segment ", e.Message));
 
         Assert.True(report.Cells(CollisionContact.Model) > 0);
         Assert.True(report.Cells(CollisionContact.Stock) > 0);
@@ -91,6 +100,15 @@ public sealed class CollisionServiceTests
         Assert.Equal(result.Model.CellCount, report.Contacts.Length);
         Assert.Equal(stockBefore, result.Stock.Map.Z);
 
+        // Status bits: Model where the model stands, Collision on every entered cell and nowhere else.
+        for (var k = 0; k < status.Length; k++)
+        {
+            Assert.Equal(result.Model.Z[k] > result.Floor + 1e-4f, (status[k] & CellStatus.Model) != 0);
+            Assert.Equal(report.Contacts[k] != CollisionContact.None, (status[k] & CellStatus.Collision) != 0);
+            Assert.Equal(CellStatus.None, status[k] & (CellStatus.ShouldRemove | CellStatus.Forbidden));
+        }
+
+        var check = CollisionService.Of(report);
         var summary = CollisionService.Summarize(check);
         Assert.Contains($"Collisions in {report.Segments} segments", summary);
         Assert.Contains("Touching the model: 2 segments", summary);
@@ -98,15 +116,50 @@ public sealed class CollisionServiceTests
         Assert.Equal($"collisions: {report.Events.Count}", CollisionService.StatusSuffix(check));
     }
 
+    // Order dependence: a cell already cut below the head underside is no collision, the same cell
+    // uncut is one.
+    [Fact]
+    public void CellCutFirst_IsNoCollision_UncutItIs()
+    {
+        var result = Box(1f);
+        var origin = result.Stock.Map.CellCenter(3, 3);
+        var top = result.Stock.StockTop;
+        var rate = result.Parameters.FeedRate;
+        var deep = new Vector3(origin.X, origin.Y, top - 2f);
+        var beside = new Vector3(origin.X + 2.5f, origin.Y, top - 2f);
+
+        var uncut = new Toolpath();
+        uncut.Add(new ToolpathSegment(deep with { Z = result.SafeZ }, deep, MoveKind.Plunge, rate));
+        var report = Check(result, uncut, out _);
+        Assert.Single(report.Events);
+        Assert.Equal(SimulationEventKind.HeadCollision, report.Events[0].Kind);
+
+        // The same plunge after a pass over the ring cells at head clearance: nothing stands in the way.
+        var cutFirst = new Toolpath();
+        var clearing = top - 1.5f;
+        cutFirst.Add(new ToolpathSegment(beside with { Z = result.SafeZ }, beside with { Z = clearing }, MoveKind.Plunge, rate));
+        cutFirst.Add(new ToolpathSegment(beside with { Z = clearing }, deep with { Z = clearing, X = deep.X - 2.5f }, MoveKind.Feed, rate));
+        cutFirst.Add(new ToolpathSegment(deep with { Z = clearing, X = deep.X - 2.5f }, deep with { Z = clearing, X = deep.X - 2.5f, Y = deep.Y + 2.5f }, MoveKind.Feed, rate));
+        cutFirst.Add(new ToolpathSegment(deep with { Z = clearing, X = deep.X - 2.5f, Y = deep.Y + 2.5f }, deep with { Z = clearing, Y = deep.Y + 2.5f, X = deep.X + 2.5f }, MoveKind.Feed, rate));
+        cutFirst.Add(new ToolpathSegment(deep with { Z = clearing, Y = deep.Y + 2.5f, X = deep.X + 2.5f }, deep with { Z = clearing, X = deep.X + 2.5f, Y = deep.Y - 2.5f }, MoveKind.Feed, rate));
+        cutFirst.Add(new ToolpathSegment(deep with { Z = clearing, X = deep.X + 2.5f, Y = deep.Y - 2.5f }, deep with { Z = clearing, X = deep.X - 2.5f, Y = deep.Y - 2.5f }, MoveKind.Feed, rate));
+        cutFirst.Add(new ToolpathSegment(deep with { Z = clearing, X = deep.X - 2.5f, Y = deep.Y - 2.5f }, deep with { Z = clearing }, MoveKind.Feed, rate));
+        cutFirst.Add(new ToolpathSegment(deep with { Z = clearing }, deep, MoveKind.Plunge, rate));
+        var after = Check(result, cutFirst, out _);
+        Assert.DoesNotContain(after.Events, e => e.SegmentIndex == cutFirst.Count - 1);
+    }
+
     [Fact]
     public void PlannedPath_HasNoCollisions()
     {
-        var check = new CollisionService().Run(Box(20f), null, CancellationToken.None);
+        var result = Box(20f);
+        var check = result.Collisions;
         Assert.True(check.Succeeded);
         Assert.Empty(check.Report!.Events);
         Assert.All(check.Report.Contacts, c => Assert.Equal(CollisionContact.None, c));
         Assert.Equal(CollisionService.NoCollisionsText, CollisionService.Summarize(check));
         Assert.Equal("collisions: 0", CollisionService.StatusSuffix(check));
+        Assert.Equal(1, result.Passes);
     }
 
     [Fact]
@@ -120,55 +173,35 @@ public sealed class CollisionServiceTests
             path.Add(new ToolpathSegment(new Vector3(1 + k, 1, top - 1), new Vector3(1 + k, 2, top - 1), MoveKind.Rapid, result.Parameters.FeedRate));
         }
 
-        var check = new CollisionService().Run(result with { Toolpath = path }, null, CancellationToken.None);
+        var check = CollisionService.Of(Check(result, path, out _));
         Assert.Equal(CollisionService.MaxListedEvents + 3, check.Report!.Events.Count);
         var summary = CollisionService.Summarize(check);
         Assert.Equal(CollisionService.MaxListedEvents, summary.Split('\n').Count(line => line.StartsWith("Rapid move in segment", StringComparison.Ordinal)));
         Assert.EndsWith("... and 3 more.", summary);
     }
 
+    // Insulation: bad arguments are refused before the native check runs.
     [Fact]
-    public async Task Cancellation_EndsTheCheck()
+    public void GridMismatch_IsRefused()
     {
         var result = Box(20f);
-        using var cancelled = new CancellationTokenSource();
-        await cancelled.CancelAsync();
-        Assert.Throws<OperationCanceledException>(() => new CollisionService().Run(result, null, cancelled.Token));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new CollisionService().RunAsync(result, null, cancelled.Token));
+        var other = new Miller.Core.HeightMaps.HeightMap(0, 0, 1, 3, 3, 0f);
+        Assert.Throws<ArgumentException>(() => NativeCollisionCheck.Run(result.Toolpath, result.Stock.Map, other, result.Floor, result.Profile.Tool, CollisionDetector.Tolerance, out _));
+        var badTool = new ToolDefinition { CutterDiameter = 2, HeadDiameter = 4, CutterLength = 0 };
+        Assert.Throws<ArgumentException>(() => NativeCollisionCheck.Run(result.Toolpath, result.Stock.Map, result.Model, result.Floor, badTool, CollisionDetector.Tolerance, out _));
     }
 
-    // Insulation: a fault inside the cluster (here a profile on another grid) becomes a failed check.
+    // A failed check is still summarised as such (the record keeps the error form for the window).
     [Fact]
-    public void FaultInsideTheCluster_IsAFailedCheck_NotAnException()
+    public void FailedCheck_SummarisesTheError()
     {
-        var result = Box(20f);
-        var broken = result with { Profile = ToolProfile.Create(result.Profile.Tool, result.Profile.CellSize * 2) };
-        var check = new CollisionService().Run(broken, null, CancellationToken.None);
+        var check = new CollisionCheck(null, "cell size differs");
         Assert.False(check.Succeeded);
-        Assert.Null(check.Report);
-        Assert.Contains("cell size", check.Error);
         Assert.StartsWith("The collision check failed: ", CollisionService.Summarize(check));
         Assert.Equal("collision check failed", CollisionService.StatusSuffix(check));
     }
 
-    [Fact]
-    public void Progress_RunsFromZeroToOne_Throttled()
-    {
-        var reports = new List<ProgressReport>();
-        new CollisionService().Run(Box(20f), new SynchronousProgress(reports.Add), CancellationToken.None);
-        Assert.All(reports, r => Assert.Equal(CollisionService.StageName, r.Stage));
-        Assert.Equal(0f, reports[0].Fraction);
-        Assert.Equal(1f, reports[^1].Fraction);
-        Assert.Equal("collision check: 100%", reports[^1].Message);
-        for (var k = 1; k < reports.Count; k++)
-        {
-            Assert.True(reports[k].Fraction - reports[k - 1].Fraction >= PipelineService.MinVisibleDelta || reports[k].Fraction == 1f);
-        }
-
-        Assert.True(reports.Count <= (int)(1f / PipelineService.MinVisibleDelta) + 2, $"{reports.Count} reports");
-    }
-
-    // The default heart job is free of collisions (T-136); the check time is written to the test output.
+    // The default heart job stays free of collisions; the native check time is written to the test output.
     [Fact]
     public void HeartFixture_HasNoCollisions()
     {
@@ -183,19 +216,15 @@ public sealed class CollisionServiceTests
         var result = new PipelineService().Run(project, import.Meshes, null, CancellationToken.None);
 
         var watch = Stopwatch.StartNew();
-        var check = new CollisionService().Run(result, null, TestContext.Current.CancellationToken);
+        var report = Check(result, result.Toolpath, out _);
         watch.Stop();
-        TestContext.Current.TestOutputHelper?.WriteLine($"collision check of the heart: {watch.ElapsedMilliseconds} ms over {result.Toolpath.Count} segments");
-        Assert.True(check.Succeeded, check.Error);
-        Assert.Empty(check.Report!.Events);
-    }
+        TestContext.Current.TestOutputHelper?.WriteLine($"collision check of the heart: {watch.ElapsedMilliseconds} ms over {result.Toolpath.Count} segments, {result.Passes} generation passes");
+        Assert.Empty(report.Events);
+        Assert.Empty(result.Collisions.Report!.Events);
 
-    private sealed class SynchronousProgress : IProgress<ProgressReport>
-    {
-        private readonly Action<ProgressReport> _handler;
-
-        public SynchronousProgress(Action<ProgressReport> handler) => _handler = handler;
-
-        public void Report(ProgressReport value) => _handler(value);
+        var simulation = new SimulationService();
+        simulation.Load(result);
+        simulation.RunToEnd();
+        Assert.Empty(simulation.Events);
     }
 }

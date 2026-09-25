@@ -29,6 +29,15 @@
       <c:NumericBox Name="ReachPercentBox" Classes="numeric" Value="{Binding ReachPercent}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding ReachPercentError}" IsVisible="{Binding ReachPercentError, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
+      <TextBlock Classes="label" Text="Collision handling" />
+      <ComboBox Name="CollisionModeBox" ItemsSource="{x:Static vm:StrategySelectionViewModel.CollisionModes}" SelectedItem="{Binding CollisionMode}" Width="260" HorizontalAlignment="Left" />
+      <TextBlock Classes="label" Text="Recursion: finished model cells per damaged cell to keep a position (X)" TextWrapping="Wrap" />
+      <c:NumericBox Name="RecursionRatioBox" Classes="numeric" Value="{Binding RecursionRatio}" IsEnabled="{Binding IsRecursion}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding RecursionRatioError}" IsVisible="{Binding RecursionRatioError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Classes="label" Text="One run: finished model cells per damaged cell to keep a node (Y)" TextWrapping="Wrap" />
+      <c:NumericBox Name="OneRunRatioBox" Classes="numeric" Value="{Binding OneRunRatio}" IsEnabled="{Binding IsOneRun}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding OneRunRatioError}" IsVisible="{Binding OneRunRatioError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
       <TextBlock Classes="label" Text="Post-processor" />
       <ComboBox Name="PostProcessorBox" ItemsSource="{Binding PostProcessors}" SelectedItem="{Binding PostProcessor}" Width="260" HorizontalAlignment="Left">
         <ComboBox.ItemTemplate>

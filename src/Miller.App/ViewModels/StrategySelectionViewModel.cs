@@ -3,6 +3,7 @@ using System.Text;
 using CommunityToolkit.Mvvm.Input;
 using Miller.Application.Services;
 using Miller.Core.GCode;
+using Miller.Core.Generation;
 using Miller.Core.Setup;
 using Miller.Core.Slicing;
 using Miller.Core.Toolpaths;
@@ -10,7 +11,8 @@ using Miller.Core.Toolpaths;
 namespace Miller.App.ViewModels;
 
 // Routing strategy and post-processor choice from the registries, the cut scope, the reach rule,
-// the generate and cancel commands of the main view model, and the statistics of the last run.
+// the collision mode with its ratio (X for recursion, Y for one run), the generate and cancel
+// commands of the main view model, and the statistics of the last run.
 public sealed class StrategySelectionViewModel : SettingsViewModelBase
 {
     public const string NoToolpathText = "No toolpath yet.";
@@ -27,6 +29,8 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
     public IReadOnlyList<IPostProcessor> PostProcessors { get; } = PostProcessorRegistry.All;
 
     public static IReadOnlyList<CutScope> CutScopes { get; } = Enum.GetValues<CutScope>();
+
+    public static IReadOnlyList<CollisionMode> CollisionModes { get; } = Enum.GetValues<CollisionMode>();
 
     public IAsyncRelayCommand GenerateCommand { get; }
 
@@ -76,9 +80,36 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
 
     public string? ReachPercentError => ErrorFor("Strategy.ReachPercent");
 
+    public CollisionMode CollisionMode
+    {
+        get => Current.CollisionMode;
+        set
+        {
+            Edit(p => p.CollisionMode = value);
+            OnPropertyChanged(nameof(IsRecursion));
+            OnPropertyChanged(nameof(IsOneRun));
+        }
+    }
+
+    public bool IsRecursion => Current.CollisionMode == CollisionMode.Recursion;
+
+    public bool IsOneRun => Current.CollisionMode == CollisionMode.OneRun;
+
+    public float RecursionRatio { get => Current.RecursionRatio; set => Edit(p => p.RecursionRatio = value); }
+
+    public string? RecursionRatioError => ErrorFor("Strategy.RecursionRatio");
+
+    public float OneRunRatio { get => Current.OneRunRatio; set => Edit(p => p.OneRunRatio = value); }
+
+    public string? OneRunRatioError => ErrorFor("Strategy.OneRunRatio");
+
     public ToolpathStatistics? Statistics { get; private set; }
 
     public SlicePlan? Plan { get; private set; }
+
+    public int Passes { get; private set; }
+
+    public IReadOnlyList<PassCollisions> PassCollisions { get; private set; } = Array.Empty<PassCollisions>();
 
     public string StatisticsText
     {
@@ -93,7 +124,8 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Segments: {Statistics.SegmentCount}\n"));
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Feed: {Statistics.FeedLength:0.0} mm, plunge: {Statistics.PlungeLength:0.0} mm, rapid: {Statistics.RapidLength:0.0} mm\n"));
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Estimated time: {Statistics.EstimatedMinutes:0.0} min, retracts: {Statistics.RetractCount}\n"));
-            text.Append(string.Create(CultureInfo.InvariantCulture, $"Levels: {Plan.Levels}, lowest level: {Plan.LowestLevel:0.000} mm"));
+            text.Append(string.Create(CultureInfo.InvariantCulture, $"Levels: {Plan.Levels}, lowest level: {Plan.LowestLevel:0.000} mm\n"));
+            text.Append(string.Create(CultureInfo.InvariantCulture, $"Generation passes: {Passes}, collisions per pass: {string.Join(", ", PassCollisions.Select(p => p.Events.ToString(CultureInfo.InvariantCulture)))}"));
             return text.ToString();
         }
     }
@@ -103,6 +135,8 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         ArgumentNullException.ThrowIfNull(result);
         Statistics = result.Statistics;
         Plan = result.Plan;
+        Passes = result.Passes;
+        PassCollisions = result.PassCollisions;
         RaiseStatistics();
     }
 
@@ -110,6 +144,8 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
     {
         Statistics = null;
         Plan = null;
+        Passes = 0;
+        PassCollisions = Array.Empty<PassCollisions>();
         RaiseStatistics();
     }
 
@@ -123,6 +159,13 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         OnPropertyChanged(nameof(MinIslandVolumeError));
         OnPropertyChanged(nameof(ReachPercent));
         OnPropertyChanged(nameof(ReachPercentError));
+        OnPropertyChanged(nameof(CollisionMode));
+        OnPropertyChanged(nameof(IsRecursion));
+        OnPropertyChanged(nameof(IsOneRun));
+        OnPropertyChanged(nameof(RecursionRatio));
+        OnPropertyChanged(nameof(RecursionRatioError));
+        OnPropertyChanged(nameof(OneRunRatio));
+        OnPropertyChanged(nameof(OneRunRatioError));
     }
 
     protected override void OnErrorsChanged()
@@ -130,6 +173,8 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         base.OnErrorsChanged();
         OnPropertyChanged(nameof(MinIslandVolumeError));
         OnPropertyChanged(nameof(ReachPercentError));
+        OnPropertyChanged(nameof(RecursionRatioError));
+        OnPropertyChanged(nameof(OneRunRatioError));
     }
 
     private void RaiseStatistics()

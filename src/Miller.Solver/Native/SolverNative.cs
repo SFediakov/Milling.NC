@@ -68,7 +68,7 @@ internal static unsafe class SolverNative
     public static extern long mn_budget_share(long remaining, int nodes, long nodesLeft);
 
     [DllImport(Library)]
-    public static extern int mn_route_solve(Grid* grid, float* floor, float* x, float* y, float* z, int count, int start, long allowance, int* cancel, int* order, long* evaluations);
+    public static extern int mn_route_solve(Grid* grid, float* floor, float* x, float* y, float* z, int count, int start, int* before, int* after, int pairCount, long allowance, int* cancel, int* order, long* evaluations);
 
     [DllImport(Library)]
     public static extern float mn_route_path_cost(Grid* grid, float* floor, float* x, float* y, float* z, int* order, int count);

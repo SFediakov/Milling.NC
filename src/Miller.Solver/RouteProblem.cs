@@ -29,6 +29,13 @@ public sealed class RouteProblem
         Z = z;
     }
 
+    // Precedence pairs (T-150): Before[k] is visited ahead of After[k]. Both empty without pairs.
+    public int[] Before { get; init; } = Array.Empty<int>();
+
+    public int[] After { get; init; } = Array.Empty<int>();
+
+    public int PairCount => Before.Length;
+
     public RouteGrid Grid { get; }
 
     public float[] X { get; }

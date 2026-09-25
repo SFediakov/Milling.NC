@@ -62,6 +62,9 @@ public sealed class ProjectSerializerTests
         PostProcessorId = "grbl",
         CutScope = CutScope.Separation,
         MinIslandVolume = 120.5f,
+        CollisionMode = CollisionMode.OneRun,
+        RecursionRatio = 3.5f,
+        OneRunRatio = 0.25f,
     };
 
     [Fact]
@@ -125,6 +128,10 @@ public sealed class ProjectSerializerTests
         Assert.Equal(original.PostProcessorId, copy.PostProcessorId);
         Assert.Equal(CutScope.Separation, copy.CutScope);
         Assert.Equal(120.5f, copy.MinIslandVolume);
+        Assert.Equal(CollisionMode.OneRun, copy.CollisionMode);
+        Assert.Equal(3.5f, copy.RecursionRatio);
+        Assert.Equal(0.25f, copy.OneRunRatio);
+        Assert.Contains("\"CollisionMode\": \"OneRun\"", json);
 
         Assert.Equal(original.Tool.Name, copy.Tool.Name);
         Assert.Equal(original.Tool.CutterDiameter, copy.Tool.CutterDiameter);
@@ -225,6 +232,17 @@ public sealed class ProjectSerializerTests
         var project = ProjectSerializer.Deserialize("{ \"SchemaVersion\": 1 }");
         Assert.Equal(6f, project.Tool.CutterDiameter);
         Assert.Equal(MillingProject.DefaultRoutingStrategyId, project.RoutingStrategyId);
+    }
+
+    // A file written before the collision modes (T-151) loads recursion with the default ratios.
+    [Fact]
+    public void Deserialize_WithoutCollisionFields_LoadsTheDefaults()
+    {
+        var project = ProjectSerializer.Deserialize("{ \"SchemaVersion\": 3, \"CutScope\": \"Separation\" }");
+        Assert.Equal(CollisionMode.Recursion, project.CollisionMode);
+        Assert.Equal(MillingProject.DefaultCollisionRatio, project.RecursionRatio);
+        Assert.Equal(MillingProject.DefaultCollisionRatio, project.OneRunRatio);
+        Assert.Equal(10f, MillingProject.DefaultCollisionRatio);
     }
 
     [Fact]

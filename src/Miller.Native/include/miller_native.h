@@ -182,7 +182,9 @@ MN_API float mn_turn_slow_length(const float* x, const float* y, float cell_size
 MN_API float mn_turn_overlap(int32_t zones_a, int32_t zones_b, float gap);
 MN_API float mn_turn_fine(const float* x, const float* y, float cell_size, const int32_t* order, int32_t count);
 MN_API int64_t mn_budget_share(int64_t remaining, int32_t nodes, int64_t nodes_left);
-MN_API int32_t mn_route_solve(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, int32_t count, int32_t start, int64_t allowance, const volatile int32_t* cancel, int32_t* order, int64_t* evaluations);
+/* Precedence pairs (T-150): pair k orders node before[k] ahead of node after[k]; pair_count 0 means no
+ * pairs. The start must have no predecessor and the pairs must be acyclic. */
+MN_API int32_t mn_route_solve(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, int32_t count, int32_t start, const int32_t* before, const int32_t* after, int32_t pair_count, int64_t allowance, const volatile int32_t* cancel, int32_t* order, int64_t* evaluations);
 MN_API float mn_route_path_cost(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, const int32_t* order, int32_t count);
 
 /* ---- writer ---- */
@@ -199,7 +201,49 @@ MN_API void mn_writer_free(mn_writer* writer);
 #define MN_STRATEGY_Z_LAYER 0
 #define MN_STRATEGY_THREE_AXIS_FREEDOM 1
 
-/* Everything a strategy reads. Masks of the plan come from mn_plan; should_cut may be NULL. */
+/* ---- cell status (collision handling, T-147) ---- */
+/* One byte per cell. MODEL: shouldn't be removed (the model stands above the floor). SHOULD_REMOVE:
+ * stock the head hit; cut to its closing before the tool goes deeper beside it. COLLISION: the head
+ * or a rapid entered the cell in the last check and it stayed unresolved (a model cell, or stock that
+ * could not be removed). FORBIDDEN: a tool position raised until its head clears. */
+#define MN_CELL_MODEL 1
+#define MN_CELL_SHOULD_REMOVE 2
+#define MN_CELL_COLLISION 4
+#define MN_CELL_FORBIDDEN 8
+
+/* Recursion: generate, check, resolve and generate again while collisions decrease. One run: the
+ * strategies evaluate every node against the standing material before its route (T-150). */
+#define MN_COLLISION_RECURSION 0
+#define MN_COLLISION_ONE_RUN 1
+
+#define MN_EVENT_HEAD 0
+#define MN_EVENT_RAPID 1
+
+/* One collision per segment and kind (the rule of the simulation panel): the tool tip, the first
+ * entered cell, the material height there and the tool surface (head underside, rapid footprint
+ * bottom) that lay below it; model is 1 when the segment entered the model. */
+typedef struct mn_collision {
+    int32_t segment;
+    int32_t kind;
+    float x;
+    float y;
+    float z;
+    float stock_z;
+    float surface;
+    int32_t cell;
+    int32_t model;
+} mn_collision;
+
+/* Dynamic collision check over a stock clone: feeds and plunges remove material at CellSize / 2 along
+ * the segment; the head ring is tested at every segment end and every max(CellSize, cutter radius)
+ * along it, the footprint of a rapid at the same spacing, against the stock as it stands. status
+ * (cells) receives MODEL and, per entered cell, COLLISION; SHOULD_REMOVE is not touched. */
+MN_API int32_t mn_collision_check(const mn_segment* segments, int32_t count, const mn_grid* grid, const float* stock, const float* model, float floor, const mn_tool* tool, float tolerance, uint8_t* status, mn_collision** events, int32_t* event_count);
+
+/* Everything a strategy reads. Masks of the plan come from mn_plan; should_cut may be NULL. In one
+ * run mode (collision_mode MN_COLLISION_ONE_RUN, ratio Y) the strategy evaluates every node against
+ * the standing material and writes the raised tips of the positions it does not achieve into
+ * `raised` (cells, NaN where none) when that is not NULL. */
 typedef struct mn_context {
     mn_grid grid;
     const float* model;
@@ -212,6 +256,10 @@ typedef struct mn_context {
     mn_tool tool;
     mn_parameters parameters;
     float stock_top;
+    float floor;
+    int32_t collision_mode;
+    float ratio;
+    float* raised;
 } mn_context;
 
 /* 3 axis freedom helpers: the level map max(tip, level) with NaN kept, and whether a cell of a map
@@ -254,6 +302,9 @@ typedef struct mn_job {
     int32_t cut_scope;
     float min_island_volume;
     float reach_percent;
+    int32_t collision_mode;
+    float recursion_ratio;
+    float one_run_ratio;
 } mn_job;
 
 typedef struct mn_result mn_result;
@@ -267,9 +318,13 @@ typedef struct mn_result mn_result;
 #define MN_STAGE_ROUTE 7
 #define MN_STAGE_SIMPLIFY 8
 #define MN_STAGE_STATISTICS 9
+#define MN_STAGE_CHECK 10
 
-/* Progress: context, stage, step, steps, fraction. */
-typedef void (*mn_stage_fn)(void* context, int32_t stage, int32_t step, int32_t steps, float fraction);
+/* Recursion passes never exceed this number. */
+#define MN_MAX_PASSES 8
+
+/* Progress: context, pass (from 1), stage, step, steps, fraction. */
+typedef void (*mn_stage_fn)(void* context, int32_t pass, int32_t stage, int32_t step, int32_t steps, float fraction);
 
 MN_API int32_t mn_generate(const mn_job* job, mn_stage_fn progress, void* context, const volatile int32_t* cancel, mn_result** result);
 
@@ -283,6 +338,12 @@ MN_API int32_t mn_generate(const mn_job* job, mn_stage_fn progress, void* contex
 
 #define MN_MASK_HEAD_LIMITED 0
 #define MN_MASK_SHOULD_CUT 1
+#define MN_MASK_STATUS 2
+/* Per cell what the kept pass's check entered: nothing, stock only, or the model (outranks stock). */
+#define MN_MASK_CONTACTS 3
+#define MN_CONTACT_NONE 0
+#define MN_CONTACT_STOCK 1
+#define MN_CONTACT_MODEL 2
 
 MN_API void mn_result_grid(const mn_result* result, mn_grid* grid);
 MN_API void mn_result_numbers(const mn_result* result, float* stock_top, float* stock_bottom, float* floor);
@@ -294,6 +355,11 @@ MN_API void mn_result_triangles(const mn_result* result, float* triangles);
 MN_API int32_t mn_result_segment_count(const mn_result* result);
 MN_API void mn_result_segments(const mn_result* result, mn_segment* segments);
 MN_API void mn_result_statistics(const mn_result* result, mn_statistics* statistics);
+MN_API int32_t mn_result_passes(const mn_result* result);
+/* Per pass (mn_result_passes entries): the distinct cells its check entered and its events. */
+MN_API void mn_result_pass_counts(const mn_result* result, int32_t* entered, int32_t* events);
+MN_API int32_t mn_result_collision_count(const mn_result* result);
+MN_API void mn_result_collisions(const mn_result* result, mn_collision* collisions);
 MN_API void mn_result_profile(const mn_result* result, int32_t* offset_count, int32_t* annulus_count);
 MN_API void mn_result_profile_read(const mn_result* result, mn_offset* offsets, mn_offset* annulus);
 MN_API void mn_result_free(mn_result* result);

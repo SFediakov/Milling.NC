@@ -36,12 +36,11 @@ public partial class App : Avalonia.Application
             var export = new ExportService();
             var simulation = new SimulationService();
             var analysis = new AnalysisService();
-            var collisions = new CollisionService();
             var machine = new MachineService();
             var dialogs = new FileDialogService(() => desktop.MainWindow);
             var errors = new ErrorDialogService(log, () => desktop.MainWindow);
             var confirm = new ConfirmDialogService(() => desktop.MainWindow);
-            var viewModel = new MainWindowViewModel(project, meshImport, pipeline, export, simulation, analysis, collisions, machine, settings, presets, dialogs, errors, confirm,
+            var viewModel = new MainWindowViewModel(project, meshImport, pipeline, export, simulation, analysis, machine, settings, presets, dialogs, errors, confirm,
                 handler => new Progress<Miller.Application.Progress.ProgressReport>(handler), log, Program.AppVersion);
             desktop.MainWindow = new MainWindow
             {
