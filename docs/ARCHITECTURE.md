@@ -22,7 +22,8 @@ list that implements it is in `docs/DEVELOPMENT_GUIDE.md`.
 | G11 | Preview of the final cut model including inaccuracy and uncuttable areas | `src/Miller.Core/Analysis/FinalModelAnalyzer.cs`, `src/Miller.Core/Analysis/UncuttableRegions.cs`, `src/Miller.App/Views/AnalysisView.axaml` |
 | G12 | Modular, exchangeable routing algorithms | `src/Miller.Core/Toolpath/IToolpathStrategy.cs`, `src/Miller.Core/Toolpath/StrategyRegistry.cs`, `src/Miller.Core/Toolpath/Strategies/ZLayerByLayerStrategy.cs`, `src/Miller.Core/Toolpath/Strategies/ThreeAxisFreedomStrategy.cs` |
 | G13 | Connect to the CNC and run the prepared program, each command only after the previous one is confirmed | `src/Miller.Machine/MachineController.cs`, `src/Miller.Application/Services/MachineService.cs`, `src/Miller.App/Views/MachineView.axaml` |
-| G14 | Collision summary window at the end of the generation; head and rapid collisions marked on the analysis in their own colors | `src/Miller.Core/Simulation/CollisionRecorder.cs`, `src/Miller.Application/Services/CollisionService.cs`, `src/Miller.App/ViewModels/AnalysisViewModel.cs`, `src/Miller.App/Services/ConfirmDialogService.cs` |
+| G14 | Collision summary window at the end of the generation; head and rapid collisions marked on the analysis in their own colors | `src/Miller.Native/src/mn_collision.c`, `src/Miller.Application/Services/CollisionService.cs`, `src/Miller.App/ViewModels/AnalysisViewModel.cs`, `src/Miller.App/Services/ConfirmDialogService.cs` |
+| G15 | Collision handling of the generation: dynamic check, recursion with the X ratio, one run with the Y ratio, chosen on the Strategy tab | `src/Miller.Native/src/mn_collision.c`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_solver.c`, `src/Miller.App/ViewModels/StrategySelectionViewModel.cs` |
 
 Project rules that constrain the design (root `CLAUDE.md`):
 
@@ -273,7 +274,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | `Services/ExportService.cs` | Toolpath + project -> post-processor -> `.nc` file |
 | `Services/SimulationService.cs` | Owns `SimulationEngine`, `SimulationClock`, `MaterialRemover`, `CollisionDetector`; `Advance(realSeconds)`; `SeekTo(fraction)` (forward sweeps in place, backward replays from a fresh stock); exposes snapshot (tool position, dirty rectangle, events) |
 | `Services/AnalysisService.cs` | Runs `FinalModelAnalyzer` and `UncuttableRegions` on demand |
-| `Services/CollisionService.cs` | Gate of the collision check cluster: runs the generated toolpath once over a stock clone with a `CollisionRecorder`, progress as stage `collision check`; a failure inside the cluster comes back as a `CollisionCheck` with an error (the toolpath stays usable), cancellation ends the call; `Summarize` and `StatusSuffix` give the texts of the summary window and the status bar |
+| `Services/CollisionService.cs` | Gate of the collision check cluster: turns the report of the native check that closes every generation pass into a `CollisionCheck`; `Summarize` and `StatusSuffix` give the texts of the summary window and the status bar |
 | `Services/MachineService.cs` | Gate to the machine cluster: link from `MachineConnectionSettings`, one `MachineController` per connection, one console log per session, programs from the generated toolpath (post-processor into memory, answered lines mapped to toolpath segments) or from a file, every machine command |
 | `Services/SettingsService.cs` | User preferences JSON in the per-user application data folder: last folders, window size, last speed factor |
 | `Services/PresetService.cs` | Named `MillingPreset`s in one `presets.json` next to the executable (`AppContext.BaseDirectory`); `Load`, `Save` (replace by name, case-insensitive), `Delete`; a corrupt file throws |
@@ -354,9 +355,12 @@ Mirrors the source tree: `Core/<Folder>/<Type>Tests.cs`,
 
 Every step from the transform to the statistics runs inside the native library
 in one `mn_generate` call (`ToolpathGeneration.Run`); the names below are the
-facades that expose the same step on its own. The head clearance step feeds back
-(T-136): stock above the model that blocks the head becomes should be cut, the
-tip is defined again, and the strategies receive the should-cut mask.
+facades that expose the same step on its own. The first pass runs without any
+head consideration; the dynamic collision check closes every pass and, in
+recursion mode (T-148), its resolution feeds the next pass: stock the head met
+becomes should be removed, positions whose head met the model are forbidden or
+achieved by the X ratio, and the pass repeats while the collisions decrease. One
+run mode (T-150) decides inside the strategies and runs one pass.
 
 ```
 STL file
@@ -366,7 +370,9 @@ STL file
                                 anchor (models before their offsets), so offsets move models inside it
   -> MeshRasterizer ........... model HeightMap (max Z per cell, floor where no model)
   -> ReachMap ................. tip HeightMap: reach floor per position by footprint vote (ReachPercent)
-  -> HeadClearance ............ head-limit HeightMap, effective tip = max(tip, limit)
+  -> raised tips .............. the forbidden positions of the earlier passes (NaN in the first),
+                                effective tip = max(tip, raise); HeadClearance is the facade of the
+                                head limit formula
   -> Slicer ................... SlicePlan (levels with masks, coverage)
   -> SeparationRegion ......... plan restricted to the cut scope, Standing map; strategies see
                                 effective tip = max(effective tip, standing)
@@ -374,8 +380,10 @@ STL file
                                 (NodeLattice, CaveTree, RouteSolver, RouteWriter)
   -> ToolpathSimplifier ....... feed runs reduced to vectors within Tolerance
   -> ToolpathStatistics
-  -> CollisionService (collision check cluster, after mn_generate) ... CollisionReport: events,
-                                entered cells (model or stock only) -> summary window, analysis marks
+  -> mn_check_path ............ dynamic collision check of the pass over a stock clone: events,
+                                entered cells (model or stock only), the cell status byte
+  -> mn_resolve (recursion) ... should-remove marks, forbidden positions, next pass
+  -> CollisionService.Of ...... CollisionReport of the kept pass -> summary window, analysis marks
   -> PostProcessorRegistry.GetById(PostProcessorId).Write(...) -> .nc file
 ```
 
