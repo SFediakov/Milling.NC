@@ -43,6 +43,13 @@
   panel, so a defect there reaches both. Its gate `CollisionService` turns every failure except
   cancellation into a failed `CollisionCheck`; the generated toolpath is kept and the summary names
   the failure. A separate project would have duplicated the engine, which the no-dual-path rule forbids.
+- The collision handling (T-147 to T-151) is part of the generation cluster, not a cluster of its own:
+  the dynamic check, the recursion and the one run rule live in `src/Miller.Native` beside the
+  pipeline and the strategies they steer (user request: all of it in the C library). `CollisionService`
+  only formats the report; the separate post-generation check of T-144 is gone (user request).
+- The head-limited mask and map of the result now hold the raised positions of the collision
+  handling (recursion: forbidden positions and their propagation; one run: dropped nodes and lifted
+  region cells), not a limit computed before routing; `HeadClearance` stays as the facade of the formula.
 - "Sent only after the previous command's execution is confirmed" is implemented as Grbl's
   send-response protocol: the next line goes after `ok`/`error`, which Grbl sends once it has
   executed the line (a move is then in its planner). Waiting for every move to stop would halt the
@@ -446,3 +453,38 @@
 - RouteSolverTests compared a route from node 7 with a boustrophedon from node 0, which is not a route
   from node 7. The solver undercut it only while lattice arcs shorter than 10 mm were exempt; the test
   now compares with a serpentine from node 7 (solver 307.7, serpentines 317.4 and 318.1).
+- The dynamic check (T-147) must use CollisionDetector.Tolerance (1e-4), not the project tolerance:
+  with 0.05 the native check reported zero events while the simulation panel showed 59 near-touches
+  within that slack on the box fixture. The project tolerance is the simplifier slack: it decides
+  whether a hit cell is removable (closing + tolerance below the tool surface) and pads every lift.
+- A hit is classified by removability against the closing of the strategy tip, not by the model
+  surface: stock within the tolerance above a model top can never be cut below the head, and marking
+  it should-remove sent the should-cut routes down beside every wall (250 events on the heart after
+  a first pass with 11).
+- Forbidding one ring of positions raises the material the next ring's head meets; without the
+  propagation over the closing of the lifted tips the recursion resolved one ring per pass and hit
+  the 8-pass cap on the heart in separation scope. The propagation must flag with the check's
+  tolerance (1e-4): with 0.05 a head that only touches the closing was let through and hit.
+- The propagation must not read the standing map of the cut scope as material that stays: the
+  separation draws its terraces again every pass from the raised tips, and lifting positions beside
+  the first pass's terraces kept the deep-stock trench at 12 mm instead of the floor. Positions are
+  evaluated at their reach tip (without standing), and the separation takes the raised tip so the
+  trench moves beyond the collar in one pass; the region from the unraised tip left the trench
+  hugging the part and the collar forbade all of it.
+- The X and Y ratios compare the model cells the cutter finishes at a position with the unremovable
+  cells its head meets. "Cells only this position finishes" was tried first and is zero wherever nodes
+  overlap (every node of a 2-cell-wide slot), so Y = 0 still dropped the whole slot.
+- One run needs a floor for the chords, not only a verdict per node: a convex model part reaches into
+  the head ring between two safe nodes 3 mm apart. Every cell of a route's region is evaluated against
+  the material as the routes left it and lifted like a dropped node, and a travel retracts when the
+  polyline's head would meet that material. A static floor from the closing was wrong where the
+  standing stock is above the closing (a model top between two levels that no route visits).
+- A node dropped at one level must be evaluated again at the next: the cells it finishes grow with
+  depth while the damage stays, so Y = 0 must be able to achieve the slot floor that was dropped at
+  the levels above; an achieved node clears an earlier lift of its cell.
+- The count that decides whether the recursion goes on is the entered cells or the unremovable ones
+  among them: forbidding the model hits of pass 1 creates removable stock hits in pass 2 (the raised
+  band stands until its should-cut route), so "entered cells decrease" alone stopped at pass 2 with
+  the collisions of pass 1 kept.
+- Under Git Bash the GUI-subsystem export returns without waiting unless piped; the golden was
+  regenerated with `Miller.exe --export ... | tail -1`.

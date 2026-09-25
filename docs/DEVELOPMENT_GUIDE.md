@@ -16,7 +16,7 @@ Contents:
 7. Coding rules and definition of done
 8. Known pitfalls
 9. Milestones
-10. Task list (T-001 to T-146)
+10. Task list (T-001 to T-152)
 
 ---
 
@@ -302,20 +302,39 @@ effectiveTip[i,j] = max(tip[i,j], limit[i,j])
 headLimited[i,j] = limit[i,j] > tip[i,j] + Tolerance
 ```
 
-In the pipeline the head limit is taken over the material the cutter leaves, not
-the model: `closing = min over the footprint of effectiveTip + dz`, rounded up
-to the level it stands at (`CeilToLevel`), iterated from the tip map until the
-effective tip settles (at most 8 rounds). Collision feedback (T-136): every cell
-is shouldn't be cut (the model), might be cut (stock above the model) or should
-be cut. At a head-limited position a ring cell whose rounded-up material blocks
-the head, stands above `model + Tolerance` and could be cut lower
-(`closing + Tolerance < rounded - Tolerance`) becomes should be cut, when marking
-the blocking cells of the position lowers its limit at all. A should-cut cell
-counts with `closing + Tolerance` instead of the rounded-up value (the
-simplified path may run `Tolerance` above the planned tip), and the round is
-repeated. Marks only grow; the loop ends when the effective tip is stable and
-nothing new was marked, or after 8 rounds. The strategies cut every should-cut
-cell to its closing before the tool goes deeper beside it (section 6.4).
+The pipeline applies no head limit before the first pass (T-147 to T-150): the
+first toolpath is generated from the reach tip alone, then checked dynamically
+against the stock as the path leaves it (section 6.6), and the check decides
+what the head keeps up. Every cell carries a status byte (`CellStatus`,
+`MN_CELL_*`): Model (shouldn't be removed: the model stands above the floor),
+ShouldRemove (stock the head met that the next pass cuts to its closing first),
+Collision (an entered cell the kept pass could not resolve) and Forbidden (a
+tool position raised until its head clears). The head limit map of the result is
+that raise (NaN where none), `effectiveTip = max(tip, raise)`, and
+`headLimited = raise > tip + Tolerance`.
+
+Recursion mode (`CollisionMode.Recursion`, T-148): after every pass the check's
+hits are resolved. A hit cell is removable when its closing (`min over the
+footprint of the strategy tip + dz`, standing stock included) plus `Tolerance`
+lies below the tool surface that met it; such stock becomes ShouldRemove and
+loses Collision. A position whose head met unremovable cells (the model, or
+stock only the model's removal would free) is forbidden unless the X rule keeps
+it: `finished > X * damaged`, with `finished` the model cells the cutter
+finishes at that position (its bottom reaches their surface) and `damaged` the
+unremovable cells its head meets. A forbidden position's tip is lifted to
+`stays - dz - CutterLength + Tolerance + CollisionDetector.Tolerance` over the
+worst cell (`stays` = its closing, never below the model). Stock that was
+already ShouldRemove and still stood in the way forbids the position as well.
+The lift then propagates: every position whose head meets the closing of the
+lifted tip map (model only, the standing stock of the cut scope is drawn again
+every pass) is decided by the same rule, up to 8 rounds, so a wall is cleared
+in one pass instead of one ring of positions per pass. The pass repeats while
+the entered cells or the unremovable ones among them still decrease and the
+resolution added a mark, at most `MN_MAX_PASSES` (8) times; the pass with the
+fewest entered cells is kept and reported. The strategies cut every
+ShouldRemove cell to its closing before the tool goes deeper beside it
+(section 6.4). One run mode (`CollisionMode.OneRun`, T-150) decides inside the
+strategies instead (section 6.4) and runs one pass.
 
 Material removal (`MaterialRemover`), one sample of the tool at tip `(x, y, z)`:
 
@@ -427,6 +446,24 @@ Uncuttable classification (`UncuttableRegions`):
   Every such cell is a node (a lattice at the finishing stepover left the stock
   higher than the head limit counts on). Without should-cut cells the strategy is
   unchanged.
+- One run (`CollisionMode.OneRun`, T-150): both strategies keep the material as
+  their routes leave it (the footprint of every visited node stamped into a copy
+  of the stock) and evaluate every node of a route against it before the route
+  is solved. A cell in the head ring standing above the underside is an internal
+  blocker when another node of the route cuts it low enough (a precedence pair
+  orders that node first), a clearing blocker when a position at its tip, not
+  below the route's level, cuts it low enough (those cells are lowered by a
+  clearing route before the route: every position whose footprint holds one, at
+  `max(tip, level)`), and impossible otherwise (the model, or stock only the
+  model's removal would free). A node with impossible blockers is achieved when
+  `finished > Y * damaged` (the same counts as X), otherwise dropped and its cell
+  lifted until the head clears; the other cells of the route's region are lifted
+  the same way so the chords between the nodes climb over what their head would
+  meet, and a travel between routes takes the retract when its polyline's head
+  would meet the standing material. Cyclic pairs drop the nodes on the cycle.
+  The route solver takes the pairs (`RouteProblem.Before`/`After`): the walks
+  visit a node once its predecessors are visited and 2-opt or Or-opt applies a
+  move only when the route it produces keeps every pair.
 - "3 axis freedom": one free route per level of the plan. At level L the nodes
   are the coverage cells whose tip lies below the previous level (the stock top
   for the first), each at `max(tip, L)`, and the moves follow the surface
@@ -490,14 +527,20 @@ M30
   the tick; no frame skipping logic, no second path for high speeds.
 - `RunToEnd()` processes the whole toolpath without the clock; used for the
   final-model preview.
-- Collision check (T-144): at the end of every generation `CollisionService`
-  runs the toolpath once over a stock clone with `CollisionRecorder`, the rule
-  of the simulation panel (one event per segment and kind). Every entered cell
-  is recorded: Model when the tool surface (head underside, rapid footprint)
-  lay more than `CollisionDetector.Tolerance` below a model standing above the
-  floor, Stock otherwise; Model outranks Stock. A summary window with one OK
-  button follows; the analysis lays CollisionModel and CollisionStock over
-  every other category.
+- Collision check (T-144, native since T-147): the dynamic check closes every
+  generation pass inside the native library (`mn_collision_check`,
+  `NativeCollisionCheck` on its own): the toolpath over a stock clone, feeds and
+  plunges removing material at `CellSize / 2`, the head ring tested at every
+  segment end and every `max(CellSize, cutter radius)` along it, the footprint
+  of a rapid at the same spacing, against the stock as it stands, so a cell cut
+  before the head passes is no collision and the same cell uncut is one. The
+  rule of the simulation panel holds: one event per segment and kind, every
+  entered cell recorded as Model when the tool surface lay more than
+  `CollisionDetector.Tolerance` below a model standing above the floor, Stock
+  otherwise, Model outranks Stock. The report of the kept pass reaches
+  `PipelineResult.Collisions`; a summary window with one OK button follows and
+  the analysis lays CollisionModel and CollisionStock over every other category.
+  The Strategy tab shows the passes and the collisions of each.
 - `SeekTo(fraction)` moves the simulation to a fraction of the path length: a
   forward seek sweeps from the current position, a backward seek replays from a
   fresh stock; the clock is paused meanwhile and set to the engine's elapsed
@@ -522,6 +565,8 @@ M30
 | `SpindleRpm > 0` | Parameters.SpindleRpm |
 | `0 < ReachPercent <= 100` | Strategy.ReachPercent |
 | `MinIslandVolume >= 0` | Strategy.MinIslandVolume |
+| `CollisionMode` is `Recursion` or `OneRun` | Strategy.CollisionMode |
+| `RecursionRatio`, `OneRunRatio` finite and `>= 0` | Strategy.RecursionRatio, Strategy.OneRunRatio |
 | Stock dimensions > 0 | Stock.* |
 | Model bounds inside the stock box in machine space (`ModelLayout.StockBoundsMachine`; warning, not error) | Stock.Placement |
 | Grid size `Width * Height <= 4_000_000` cells | Parameters.CellSize |
@@ -1794,6 +1839,54 @@ check that decides done.
 - Input: user request (conflicts shown on the analysis and marked by a different color)
 - Output: categories CollisionModel and CollisionStock with their own colors, laid over every other category; "Mark collisions" check box (default on); legend and summary line
 - Acceptance: the marked cells carry the collision categories and every other cell keeps its category; switching the marks off restores the categories; no two categories share a color; a report of another grid is refused; a new project clears the marks
+- Status: done
+
+#### T-147 Dynamic collision check in the native library
+- Depends on: T-144
+- Files: `src/Miller.Native/src/mn_collision.c`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Native/src/mn_internal.h`, `src/Miller.Core/Simulation/CellStatus.cs`, `src/Miller.Core/Simulation/NativeCollisionCheck.cs`, `src/Miller.Core/Simulation/CollisionDetector.cs`, `src/Miller.Core/Native/CoreNative.cs`, `tests/Miller.Tests/Application/CollisionServiceTests.cs`
+- Input: user request (a dynamic collision check between the toolpath coordinates and the surrounding cells, considering the cells not cut out yet and not the cells already cut out; a status bit per cell, not a string)
+- Output: `mn_collision_check` and `mn_check_path` (section 6.6), the status byte `MN_CELL_*` mirrored as `CellStatus`, `mn_collision` events with the simulation panel's texts, the facade `NativeCollisionCheck`
+- Acceptance: the native check finds every event the C# recorder finds on a hand-made colliding path (same kinds and segments) and every entered cell carries Collision; a cell cut first is no collision, uncut it is; bad arguments are refused before the walk; the heart default job has no collisions in the native check and in the simulation
+- Status: done
+
+#### T-148 Generation without head clearance, recursion mode
+- Depends on: T-147
+- Files: `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/src/mn_collision.c`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Application/Services/PipelineService.cs`, `tests/Miller.Tests/Application/CollisionModesTests.cs`, `tests/Miller.Tests/Application/StageProgressTests.cs`, `tests/Miller.Tests/Golden/heart_grbl.nc`
+- Input: user request (generate first without any cutter head consideration, check dynamically, mark should-be-removed stock, forbid or achieve the positions whose head meets the model by the X rule, repeat while the collisions decrease)
+- Output: the pipeline split into the shared preparation and the pass, the static head clearance loop of T-136 removed, the resolution and its propagation (section 6.3), the kept pass with its per pass counts (`PipelineResult.Passes`, `PassCollisions`), progress per pass with a bar that never moves back; `heart_grbl.nc` regenerated
+- Acceptance: box beside a wall (both strategies) and the heart (both scopes) end with zero collisions in the check and in the simulation after 2 to 3 passes, the first pass having some; the deep stock separation reaches the floor beyond the collar with zero collisions; the slotted plate under a short cutter is forbidden at X = 1e9 (no collision, rest material) and achieved at X = 0 (collisions reported, floor finished); a project without collisions runs one pass without marks; heart: 1,260 forbidden positions (the head-limited count of T-136), 4,914 segments, 4.4 min
+- Status: done
+
+#### T-149 Collision handling settings
+- Depends on: T-148
+- Files: `src/Miller.Core/Setup/MillingProject.cs`, `src/Miller.Core/Setup/MillingPreset.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.App/ViewModels/StrategySelectionViewModel.cs`, `src/Miller.App/Views/StrategySelectionView.axaml`, tests
+- Input: user request (X and Y set in the strategy window for the recursion and one run selections)
+- Output: `CollisionMode` (Recursion, OneRun), `RecursionRatio` (X), `OneRunRatio` (Y), default 10; the combo box and the two numeric boxes on the Strategy tab, each ratio enabled by its mode; validation rows of section 6.7; presets carry the three values; the statistics text names the passes and the collisions of each
+- Acceptance: the view model flips `IsRecursion`/`IsOneRun`, writes the project, reports `Strategy.*` errors for negative or non-finite ratios, a new project resets; files without the fields load the defaults; round trip through the serializer and the presets
+- Status: done
+
+#### T-150 One run mode: the collision rule inside the strategies and the route solver
+- Depends on: T-148
+- Files: `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_solver.c`, `src/Miller.Native/src/mn_writer.c`, `src/Miller.Solver/RouteProblem.cs`, `src/Miller.Solver/RouteSolver.cs`, `tests/Miller.Tests/Solver/RouteSolverPrecedenceTests.cs`, `tests/Miller.Tests/Application/CollisionModesTests.cs`
+- Input: user request (additional rules for the solver of the transportation task: a route that causes a collision cannot be applied, stock cells are cut on the previous layers instead, a node that would need model cells cut is not achieved unless the Y rule keeps it)
+- Output: the guard of section 6.4 (material as the routes leave it, node evaluation, precedence pairs, clearing routes, region lifts, head-aware travels), the precedence pairs of the route solver
+- Acceptance: random acyclic pairs are kept by the walks and every applied move; pairs the free route satisfies keep its cost within 10 percent; a reversing pair puts the far node first; cyclic pairs, a start with a predecessor and uneven lists are refused; the box beside a wall and the heart run one pass with zero collisions; the slotted plate is dropped at Y = 1e9 and achieved at Y = 0
+- Status: done
+
+#### T-151 Summary and analysis from the native check
+- Depends on: T-147
+- Files: `src/Miller.Application/Services/CollisionService.cs`, `src/Miller.App/ViewModels/MainWindowViewModel.cs`, `src/Miller.App/App.axaml.cs`, `tests/Miller.Tests/App/CollisionSummaryTests.cs`
+- Input: user request (the separate collision check is excluded)
+- Output: `CollisionService.RunAsync` removed; the summary window, the status bar and the analysis marks read `PipelineResult.Collisions`; `CollisionService` keeps the texts
+- Acceptance: one summary per finished generation equal to the summary of the result's report; a cancel during the check stage discards the result; the analysis marks the report's cells
+- Status: done
+
+#### T-152 Documentation of the collision handling
+- Depends on: T-147 to T-151
+- Files: `docs/DEVELOPMENT_GUIDE.md`, `docs/ARCHITECTURE.md`, `src/CLAUDE.md`
+- Input: this task list
+- Output: sections 6.3, 6.4, 6.6, 6.7 and 5.1 rewritten for the dynamic check, the modes and the ratios
+- Acceptance: every rule named in the sections has a test in `CollisionModesTests`, `CollisionServiceTests` or `RouteSolverPrecedenceTests`
 - Status: done
 
 ### M8 Packaging and release
