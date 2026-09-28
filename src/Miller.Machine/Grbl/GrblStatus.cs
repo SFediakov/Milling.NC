@@ -71,6 +71,12 @@ public sealed record GrblStatus(
         var stateField = fields[0];
         var colon = stateField.IndexOf(':');
         var state = colon < 0 ? stateField : stateField[..colon];
+        if (state.Length == 0)
+        {
+            // Grbl starts every report with the machine state; without it the report is broken.
+            throw new FormatException($"'{report}' holds no machine state.");
+        }
+
         var sub = colon < 0 ? NoValue : ParseInt(stateField[(colon + 1)..]);
         Axes? machine = null;
         Axes? work = null;

@@ -202,7 +202,7 @@ MN_API float mn_route_lower_bound(const float* a, const float* b) { return mn_co
 
 MN_API float mn_route_planar(const float* a, const float* b) { return mn_cost_planar(mn_v3_make(a[0], a[1], a[2]), mn_v3_make(b[0], b[1], b[2])); }
 
-/* ---- turn fine ---- */
+/* ---- turn fine (T-153) ---- */
 
 int mn_turn_between(const float* x, const float* y, int a, int b, int c, float* cosine, int* side)
 {
@@ -219,90 +219,38 @@ int mn_turn_between(const float* x, const float* y, int a, int b, int c, float* 
     }
     *cosine = (ux * wx + uy * wy) / (lu * lw);
     float cross = ux * wy - uy * wx;
-    *side = cross > 0 ? 1 : cross < 0 ? -1 : 0;
+    *side = fabsf(cross) <= MN_STRAIGHT_SINE * (lu * lw) ? 0 : cross > 0 ? 1 : -1;
     return 1;
 }
 
-/* Whether `test` lies within the tolerance of the circle through i, j and k, taken in index order. */
-static int on_circle(const float* x, const float* y, int i, int j, int k, int test, float tolerance)
+int mn_turn_fined(const float* x, const float* y, int a, int b, int c)
 {
-    int swap;
-    if (i > j) {
-        swap = i;
-        i = j;
-        j = swap;
-    }
-    if (j > k) {
-        swap = j;
-        j = k;
-        k = swap;
-    }
-    if (i > j) {
-        swap = i;
-        i = j;
-        j = swap;
-    }
-    double bx = (double)(x[j] - x[i]);
-    double by = (double)(y[j] - y[i]);
-    double cx = (double)(x[k] - x[i]);
-    double cy = (double)(y[k] - y[i]);
-    double d = 2.0 * (bx * cy - by * cx);
-    if (d == 0.0) {
-        return 0;
-    }
-    double b2 = bx * bx + by * by;
-    double c2 = cx * cx + cy * cy;
-    double ox = (cy * b2 - by * c2) / d;
-    double oy = (bx * c2 - cx * b2) / d;
-    double radius = sqrt(ox * ox + oy * oy);
-    double tx = (double)(x[test] - x[i]) - ox;
-    double ty = (double)(y[test] - y[i]) - oy;
-    return fabs(sqrt(tx * tx + ty * ty) - radius) <= (double)tolerance;
+    float cosine;
+    int side;
+    int defined = mn_turn_between(x, y, a, b, c, &cosine, &side);
+    return mn_turn_is_fined(defined, cosine, side);
 }
 
-int mn_arc_between(const float* x, const float* y, float tolerance, int q0, int q1, int q2, int q3)
+MN_API int32_t mn_turn_fined_at(const float* x, const float* y, const int32_t* order, int32_t count, int32_t position)
 {
-    float cos1, cos2;
-    int side1, side2;
-    if (!mn_turn_between(x, y, q0, q1, q2, &cos1, &side1) || !mn_turn_between(x, y, q1, q2, q3, &cos2, &side2)) {
+    if (position < 1 || position >= count - 1) {
         return 0;
     }
-    if (side1 == 0 || side1 != side2 || !(cos1 > MN_COS_CIRCULAR_MAX) || !(cos2 > MN_COS_CIRCULAR_MAX)) {
-        return 0;
-    }
-    return on_circle(x, y, q0, q1, q2, q3, tolerance) && on_circle(x, y, q1, q2, q3, q0, tolerance);
-}
-
-/* A route order read as one forward piece, without a cache. */
-static void order_view(mn_view* view, const float* x, const float* y, float cell_size, const int* order, int count)
-{
-    mn_view_reset(view, order, NULL, x, y, cell_size, NULL);
-    mn_view_add(view, 0, count - 1, 0);
-}
-
-MN_API int32_t mn_turn_fined_at(const float* x, const float* y, float cell_size, const int32_t* order, int32_t count, int32_t position)
-{
-    if (count < 3 || position < 0 || position >= count) {
-        return 0;
-    }
-    mn_view view;
-    order_view(&view, x, y, cell_size, order, count);
-    return mn_view_fined(&view, position);
+    return mn_turn_fined(x, y, order[position - 1], order[position], order[position + 1]);
 }
 
 float mn_turn_overlap_of(int zones_a, int zones_b, float gap) { return mn_max(0.0f, MN_SLOW_ZONE * (float)(zones_a + zones_b) - gap); }
 
 MN_API float mn_turn_overlap(int32_t zones_a, int32_t zones_b, float gap) { return mn_turn_overlap_of(zones_a, zones_b, gap); }
 
-/* Slow XY length of a route: 2 x SlowZone per fined turn less the overlap of every two consecutive
- * events, the route start and end being events without a zone. */
-float mn_turn_slow(const float* x, const float* y, float cell_size, const int* order, int n)
+/* Slow XY length of a route: every node where the direction changes starts a movement whose first
+ * and last SlowZone are slow; 2 x SlowZone per fined node less the overlap of every two consecutive
+ * events, the route start and end being events without a zone, so a millimetre is slow once. */
+float mn_turn_slow(const float* x, const float* y, const int* order, int n)
 {
     if (n < 3) {
         return 0.0f;
     }
-    mn_view view;
-    order_view(&view, x, y, cell_size, order, n);
     float s = 0.0f;
     float last_s = 0.0f;
     int last_zones = 0;
@@ -314,7 +262,7 @@ float mn_turn_slow(const float* x, const float* y, float cell_size, const int* o
         int zones;
         if (k == n - 1) {
             zones = 0;
-        } else if (mn_view_fined(&view, k)) {
+        } else if (mn_turn_fined(x, y, order[k - 1], order[k], order[k + 1])) {
             zones = 1;
         } else {
             continue;
@@ -326,14 +274,8 @@ float mn_turn_slow(const float* x, const float* y, float cell_size, const int* o
     return total;
 }
 
-MN_API float mn_turn_slow_length(const float* x, const float* y, float cell_size, const int32_t* order, int32_t count)
-{
-    return mn_turn_slow(x, y, cell_size, order, count);
-}
+MN_API float mn_turn_slow_length(const float* x, const float* y, const int32_t* order, int32_t count) { return mn_turn_slow(x, y, order, count); }
 
 float mn_per_slow_millimetre(void) { return MN_PER_SLOW_MILLIMETRE; }
 
-MN_API float mn_turn_fine(const float* x, const float* y, float cell_size, const int32_t* order, int32_t count)
-{
-    return mn_turn_slow(x, y, cell_size, order, count) * MN_PER_SLOW_MILLIMETRE;
-}
+MN_API float mn_turn_fine(const float* x, const float* y, const int32_t* order, int32_t count) { return mn_turn_slow(x, y, order, count) * MN_PER_SLOW_MILLIMETRE; }

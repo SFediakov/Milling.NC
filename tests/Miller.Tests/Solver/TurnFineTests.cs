@@ -3,10 +3,10 @@ using Xunit;
 
 namespace Miller.Tests.Solver;
 
-// A turn of more than 35 degrees slows the 5 mm before and after it to 0.3 of the speed; the zones
-// run across short chords, overlapping zones are slow once, route ends clip them, and a real
-// circular move (four nodes on one circle, turning the same way, each turn below 90 degrees) is not
-// fined. The fine is charged on XY travel.
+// T-153: every node where the XY direction changes starts a new movement (any angle, on circles as on
+// corners); the first and last 5 mm of a movement run at 0.3 of the speed, a millimetre is slow once
+// where zones overlap, route ends clip them, and straight nodes are not fined. The fine is charged on
+// XY travel.
 public sealed class TurnFineTests
 {
     private const float Cell = 0.2f;
@@ -30,8 +30,62 @@ public sealed class TurnFineTests
         return Path((0, 0), (20, 0), (20 + x, y));
     }
 
+    private static RouteProblem Octagon(float s)
+        => Path((0, 0), (s, 0), (2 * s, s), (2 * s, 2 * s), (s, 3 * s), (0, 3 * s), (-s, 2 * s), (-s, s), (0, 0.001f));
+
+    private static float[] Arc(RouteProblem problem)
+    {
+        var arc = new float[problem.Count];
+        for (var k = 1; k < problem.Count; k++)
+        {
+            arc[k] = arc[k - 1] + RouteCost.Planar(problem.Node(k - 1), problem.Node(k));
+        }
+
+        return arc;
+    }
+
+    // Whether the direction changes at k, computed here from the rule.
+    private static bool Turns(RouteProblem problem, int k)
+    {
+        var (ux, uy) = (problem.X[k] - problem.X[k - 1], problem.Y[k] - problem.Y[k - 1]);
+        var (wx, wy) = (problem.X[k + 1] - problem.X[k], problem.Y[k + 1] - problem.Y[k]);
+        var lu = MathF.Sqrt(ux * ux + uy * uy);
+        var lw = MathF.Sqrt(wx * wx + wy * wy);
+        return lu >= TurnFine.MinChord && lw >= TurnFine.MinChord
+            && (MathF.Abs(ux * wy - uy * wx) > TurnFine.StraightSine * (lu * lw) || ux * wx + uy * wy < 0);
+    }
+
+    // The union of the zones SlowZone before and after every turning node, within the route.
+    private static float UnionOfZones(RouteProblem problem)
+    {
+        var arc = Arc(problem);
+        var zones = Enumerable.Range(1, Math.Max(problem.Count - 2, 0))
+            .Where(k => Turns(problem, k))
+            .Select(k => (Lo: MathF.Max(0f, arc[k] - TurnFine.SlowZone), Hi: MathF.Min(arc[^1], arc[k] + TurnFine.SlowZone)))
+            .OrderBy(z => z.Lo)
+            .ToList();
+        var union = 0f;
+        var open = 0f;
+        var close = -1f;
+        foreach (var (lo, hi) in zones)
+        {
+            if (lo > close)
+            {
+                union += MathF.Max(0f, close - open);
+                open = lo;
+                close = hi;
+            }
+            else
+            {
+                close = MathF.Max(close, hi);
+            }
+        }
+
+        return union + MathF.Max(0f, close - open);
+    }
+
     [Fact]
-    public void OneSharpTurnBetweenLongChords_Slows5MmOnEachSide()
+    public void OneTurnBetweenLongChords_Slows5MmOnEachSide()
     {
         var problem = Corner(90f);
         Assert.Equal(10f, Slow(problem), 4);
@@ -42,20 +96,22 @@ public sealed class TurnFineTests
 
     [Theory]
     [InlineData(0f, 0f)]
-    [InlineData(20f, 0f)]
-    [InlineData(34.9f, 0f)]
+    [InlineData(1f, 10f)]
+    [InlineData(10f, 10f)]
+    [InlineData(34.9f, 10f)]
     [InlineData(35.1f, 10f)]
     [InlineData(90f, 10f)]
     [InlineData(179f, 10f)]
-    public void OnlyTurnsAbove35Degrees_AreFined(float degrees, float slow)
+    [InlineData(180f, 10f)]
+    public void EveryDirectionChange_IsFined(float degrees, float slow)
     {
         Assert.Equal(slow, Slow(Corner(degrees)), 4);
     }
 
     [Fact]
-    public void Zone_RunsAcrossShortChords()
+    public void StraightNodes_AreNotFined_AndTheZoneRunsAcrossShortChords()
     {
-        // 1 mm chords along X, a right angle at 20, 1 mm chords along Y.
+        // 1 mm chords along X, a right angle at 20, 1 mm chords along Y: one new direction.
         var points = new List<(float, float)>();
         for (var i = 0; i <= 20; i++)
         {
@@ -72,7 +128,24 @@ public sealed class TurnFineTests
         Assert.Equal(1, Enumerable.Range(1, problem.Count - 2).Count(k => FinedAt(problem, k)));
     }
 
+    [Fact]
+    public void DiagonalOfCellCentres_FarFromTheOrigin_IsStraight_AndAOneCellJogIsNot()
+    {
+        // Cell centres of a 0.05 mm grid at the far corner of the largest grid (4,000,000 cells, 100 mm
+        // at this cell size): float rounding makes the diagonal only nearly collinear, which is not a
+        // direction change.
+        const float cell = 0.05f;
+        var points = Enumerable.Range(0, 30).Select(k => (98f + (k + 0.5f) * cell, 97f + (k + 0.5f) * cell)).ToArray();
+        var straight = Path(points);
+        Assert.Equal(0f, Slow(straight));
+        points[15] = (points[15].Item1 + cell, points[15].Item2);
+        var jog = Path(points);
+        Assert.Equal(new[] { 14, 15, 16 }, Enumerable.Range(1, jog.Count - 2).Where(k => FinedAt(jog, k)).ToArray());
+        Assert.Equal(Arc(jog)[^1], Slow(jog), 3);
+    }
+
     [Theory]
+    [InlineData(1f, 11f)]
     [InlineData(3f, 13f)]
     [InlineData(10f, 20f)]
     [InlineData(12f, 20f)]
@@ -91,237 +164,47 @@ public sealed class TurnFineTests
         Assert.Equal(0f, Slow(Path((0, 0))));
     }
 
-    [Fact]
-    public void LatticeOctagon_IsARealCircularMove()
+    [Theory]
+    [InlineData(1f)]
+    [InlineData(1.05f)]
+    [InlineData(3f)]
+    public void Circles_AreFinedAtEveryTurn(float side)
     {
-        // Eight cell centres on the circle of radius sqrt(2.5) cells around (0.5, 1.5), 45 degree turns.
-        var s = 2f;
-        var problem = Path((0, 0), (s, 0), (2 * s, s), (2 * s, 2 * s), (s, 3 * s), (0, 3 * s), (-s, 2 * s), (-s, s), (0, 0.001f));
-        Assert.All(Enumerable.Range(1, problem.Count - 2), k => Assert.False(FinedAt(problem, k), $"node {k} fined"));
-        Assert.Equal(0f, Slow(problem));
+        // The turns of the octagon lie closer than two zones, so the whole route is slow.
+        var octagon = Octagon(side);
+        Assert.All(Enumerable.Range(1, octagon.Count - 2), k => Assert.True(FinedAt(octagon, k), $"node {k} not fined"));
+        Assert.Equal(Arc(octagon)[^1], Slow(octagon), 3);
+        var arc = Enumerable.Range(0, 5).Select(k => Polar(60f * k, 10f * side)).ToArray();
+        Assert.Equal(30f, Slow(Path(arc)), 3);
     }
 
     [Fact]
-    public void HexagonArc_IsCircular_ButTheSameTurnsOffTheCircleAreFined()
+    public void SlowLength_EqualsTheUnionOfTheZonesOfEveryDirectionChange()
     {
-        var arc = Enumerable.Range(0, 5).Select(k => Polar(60f * k, 10f)).ToArray();
-        Assert.Equal(0f, Slow(Path(arc)));
-        arc[2] = (arc[2].Item1 * 1.1f, arc[2].Item2 * 1.1f);
-        Assert.True(Slow(Path(arc)) > 0f);
-    }
-
-    [Fact]
-    public void AxisToAxisTurns_AreNeverCircular()
-    {
-        // Square corners and a rectangle U-turn lie on a circle, but every turn is 90 degrees.
-        var square = Path((0, 0), (4, 0), (4, 4), (0, 4), (0, 0.5f));
-        Assert.True(FinedAt(square, 1));
-        Assert.True(FinedAt(square, 2));
-        Assert.True(FinedAt(square, 3));
-        var uTurn = Path((0, 0), (10, 0), (10, 1), (0, 1));
-        Assert.True(FinedAt(uTurn, 1));
-        Assert.True(FinedAt(uTurn, 2));
-    }
-
-    [Fact]
-    public void AlternatingKinks_AreNotCircular()
-    {
-        // 45 degree kinks left and right: a staircase, not an arc.
-        var problem = Path((0, 0), (1, 0), (2, 1), (3, 1), (4, 2), (5, 2));
-        Assert.All(Enumerable.Range(1, problem.Count - 2), k => Assert.True(FinedAt(problem, k), $"node {k} not fined"));
-    }
-
-    [Fact]
-    public void ReversedRoute_HasTheSameStatusesAndSlowLength()
-    {
-        var random = new Random(12345);
-        for (var trial = 0; trial < 200; trial++)
-        {
-            var count = random.Next(3, 30);
-            var points = new (float, float)[count];
-            for (var k = 0; k < count; k++)
-            {
-                // Lattice points so that concyclic windows occur as well as random turns.
-                points[k] = (random.Next(0, 8) * 1.5f, random.Next(0, 8) * 1.5f);
-            }
-
-            var problem = Path(points);
-            var forward = InOrder(problem);
-            var backward = forward.Reverse().ToArray();
-            for (var k = 1; k < count - 1; k++)
-            {
-                Assert.Equal(TurnFine.IsFined(problem, forward, k), TurnFine.IsFined(problem, backward, count - 1 - k));
-            }
-
-            var there = TurnFine.SlowLength(problem, forward);
-            var back = TurnFine.SlowLength(problem, backward);
-            Assert.True(MathF.Abs(there - back) <= 1e-3f, $"forward {there}, backward {back}");
-        }
-    }
-
-    [Fact]
-    public void SlowLength_EqualsTheUnionOfTheZones()
-    {
-        var random = new Random(777);
+        var random = new Random(153);
         for (var trial = 0; trial < 300; trial++)
         {
-            var count = random.Next(2, 40);
-            var points = new (float, float)[count];
+            var count = random.Next(1, 40);
+            var points = new (float X, float Y)[count];
             for (var k = 0; k < count; k++)
             {
-                points[k] = ((float)(random.NextDouble() * 30), (float)(random.NextDouble() * 30));
+                points[k] = trial % 2 == 0
+                    ? (random.Next(0, 8) * 1.5f, random.Next(0, 8) * 1.5f)
+                    : ((float)(random.NextDouble() * 30), (float)(random.NextDouble() * 30));
             }
 
             var problem = Path(points);
-            var arc = new float[count];
-            for (var k = 1; k < count; k++)
+            for (var k = 1; k < count - 1; k++)
             {
-                arc[k] = arc[k - 1] + RouteCost.Planar(problem.Node(k - 1), problem.Node(k));
+                Assert.Equal(Turns(problem, k), FinedAt(problem, k));
             }
 
-            var zones = Enumerable.Range(1, Math.Max(count - 2, 0))
-                .Where(k => FinedAt(problem, k))
-                .Select(k => (Lo: MathF.Max(0f, arc[k] - TurnFine.SlowZone), Hi: MathF.Min(arc[^1], arc[k] + TurnFine.SlowZone)))
-                .OrderBy(z => z.Lo)
-                .ToList();
-            var union = 0f;
-            var open = 0f;
-            var close = -1f;
-            foreach (var (lo, hi) in zones)
-            {
-                if (lo > close)
-                {
-                    union += MathF.Max(0f, close - open);
-                    open = lo;
-                    close = hi;
-                }
-                else
-                {
-                    close = MathF.Max(close, hi);
-                }
-            }
-
-            union += MathF.Max(0f, close - open);
-            Assert.True(MathF.Abs(union - Slow(problem)) <= 1e-3f, $"union {union}, slow length {Slow(problem)}");
+            Assert.True(MathF.Abs(UnionOfZones(problem) - Slow(problem)) <= 1e-3f, $"union {UnionOfZones(problem)}, slow length {Slow(problem)}");
         }
     }
 
     [Fact]
-    public void Fine_DependsOnXyOnly()
-    {
-        var flat = Path((0, 0), (20, 0), (20, 3), (0, 3));
-        var raised = new RouteProblem(flat.Grid, flat.X, flat.Y, new[] { 0f, 4f, -2f, 7f });
-        Assert.Equal(Slow(flat), Slow(raised));
-    }
-
-    [Fact]
-    public void CoincidentNodes_GiveNoTurn_AndAFiniteLength()
-    {
-        var problem = Path((0, 0), (5, 0), (5, 0), (5, 5), (5, 5));
-        var slow = Slow(problem);
-        Assert.True(float.IsFinite(slow));
-        Assert.Equal(0f, slow);
-        Assert.False(FinedAt(problem, 1));
-        Assert.False(FinedAt(problem, 2));
-    }
-
-    // T-139: a path that starts at `start`, heading along +X, and walks the given chords, each turning
-    // by its angle (degrees, positive to the left) from the previous direction.
-    private static RouteProblem Walk((float X, float Y) start, params (float Turn, float Length)[] chords)
-    {
-        var points = new List<(float, float)> { start };
-        var heading = 0f;
-        var (x, y) = start;
-        foreach (var (turn, length) in chords)
-        {
-            heading += turn;
-            x += length * MathF.Cos(heading * MathF.PI / 180f);
-            y += length * MathF.Sin(heading * MathF.PI / 180f);
-            points.Add((x, y));
-        }
-
-        return Path(points.ToArray());
-    }
-
-    private static RouteProblem Octagon(float s)
-        => Path((0, 0), (s, 0), (2 * s, s), (2 * s, 2 * s), (s, 3 * s), (0, 3 * s), (-s, 2 * s), (-s, s), (0, 0.001f));
-
-    [Fact]
-    public void CircularSection_ShorterThan10Mm_IsFined()
-    {
-        // The octagon path is 9.66 s long: 9.66 mm at s = 1 fines its 45 degree turns, 10.14 mm at
-        // s = 1.05 is a real circular move.
-        Assert.Equal(TurnFine.CircularMinLength, 10f);
-        var shortLoop = Octagon(1f);
-        Assert.All(Enumerable.Range(1, shortLoop.Count - 2), k => Assert.True(FinedAt(shortLoop, k), $"node {k} not fined"));
-        Assert.True(Slow(shortLoop) > 0f);
-        var longLoop = Octagon(1.05f);
-        Assert.All(Enumerable.Range(1, longLoop.Count - 2), k => Assert.False(FinedAt(longLoop, k), $"node {k} fined"));
-        Assert.Equal(0f, Slow(longLoop));
-    }
-
-    [Fact]
-    public void SplitCorner_OfSmallTurns_IsACompoundTurn()
-    {
-        // 75 degrees in three 25 degree turns 1 mm apart: fined from 5 mm before the first to 5 mm
-        // after the last turn.
-        var split = Walk((-10, 0), (0, 10), (25, 1), (25, 1), (25, 10));
-        Assert.True(FinedAt(split, 1));
-        Assert.True(FinedAt(split, 2));
-        Assert.True(FinedAt(split, 3));
-        Assert.Equal(12f, Slow(split), 3);
-
-        // The same turns 11 mm apart: no two of them lie within 10 mm.
-        var spread = Walk((-10, 0), (0, 10), (25, 11), (25, 11), (25, 10));
-        Assert.Equal(0f, Slow(spread));
-    }
-
-    [Theory]
-    [InlineData(1.5f, 11.5f)]
-    [InlineData(12f, 0f)]
-    public void CompoundTurn_SkipsStraightNodes_WithinItsSpan(float straight, float slow)
-    {
-        // 30 degrees, three straight chords, 30 degrees: one 60 degree turn when the straight part
-        // is shorter than 10 mm.
-        var third = straight / 3f;
-        var problem = Walk((-10, 0), (0, 10), (30, third), (0, third), (0, third), (30, 10));
-        Assert.Equal(slow, Slow(problem), 3);
-    }
-
-    [Fact]
-    public void SmallTurn_NextToASharpCorner_DoesNotStretchItsZone()
-    {
-        var problem = Walk((0, 0), (0, 20), (90, 2), (10, 20));
-        Assert.True(FinedAt(problem, 1));
-        Assert.False(FinedAt(problem, 2));
-        Assert.Equal(10f, Slow(problem), 3);
-    }
-
-    [Fact]
-    public void OppositeWiggle_DoesNotHideACompoundTurn()
-    {
-        var problem = Walk((-10, 0), (0, 10), (30, 1), (-5, 1), (30, 10));
-        Assert.True(FinedAt(problem, 1));
-        Assert.True(FinedAt(problem, 2));
-        Assert.True(FinedAt(problem, 3));
-        Assert.Equal(12f, Slow(problem), 3);
-    }
-
-    [Fact]
-    public void GentlePolygon_IsNotFined()
-    {
-        // 10 degree turns 4 mm apart: any three span 8 mm and turn 30 degrees.
-        var chords = new List<(float, float)> { (0, 10) };
-        for (var k = 0; k < 12; k++)
-        {
-            chords.Add((10, k % 2 == 0 ? 4f : 4.3f));
-        }
-
-        Assert.Equal(0f, Slow(Walk((0, 0), chords.ToArray())));
-    }
-
-    [Fact]
-    public void ReversedDenseAndCurvedRoutes_HaveTheSameStatusesAndSlowLength()
+    public void ReversedRoutes_HaveTheSameStatusesAndSlowLength()
     {
         var random = new Random(5150);
         for (var trial = 0; trial < 200; trial++)
@@ -345,5 +228,25 @@ public sealed class TurnFineTests
 
             Assert.True(MathF.Abs(TurnFine.SlowLength(problem, forward) - TurnFine.SlowLength(problem, backward)) <= 1e-3f);
         }
+    }
+
+    [Fact]
+    public void Fine_DependsOnXyOnly()
+    {
+        var flat = Path((0, 0), (20, 0), (20, 3), (0, 3));
+        var raised = new RouteProblem(flat.Grid, flat.X, flat.Y, new[] { 0f, 4f, -2f, 7f });
+        Assert.Equal(13f, Slow(flat), 4);
+        Assert.Equal(Slow(flat), Slow(raised));
+    }
+
+    [Fact]
+    public void CoincidentNodes_GiveNoTurn_AndAFiniteLength()
+    {
+        var problem = Path((0, 0), (5, 0), (5, 0), (5, 5), (5, 5));
+        var slow = Slow(problem);
+        Assert.True(float.IsFinite(slow));
+        Assert.Equal(0f, slow);
+        Assert.False(FinedAt(problem, 1));
+        Assert.False(FinedAt(problem, 2));
     }
 }

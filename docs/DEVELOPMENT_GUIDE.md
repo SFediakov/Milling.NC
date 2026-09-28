@@ -401,38 +401,39 @@ Uncuttable classification (`UncuttableRegions`):
   polyline between the two nodes (`SurfacePath`: every cell-edge crossing lifted
   to the highest plateau touching it, never below the straight line between the
   ends, rise and descent in place at the ends), plus the turn fine below.
-  `RouteSolver` starts from the cheaper of two walks over candidate lists (10
-  planar-nearest): the nearest-neighbour walk and a smooth walk that scores
-  each step together with the cheapest step after it, fine included. It
+  `RouteSolver` starts from the cheapest of four walks: over candidate lists (10
+  planar-nearest) the nearest-neighbour walk and a smooth walk that scores each
+  step together with the cheapest step after it, fine included, and the sweeps
+  along X and along Y, which run the nodes grid row by grid row (or column by
+  column) end to end and turn only between lines (T-153). It
   improves with 2-opt and Or-opt until nothing improves or the program's budget
   of 40,000,000 evaluated candidate moves (`RouteBudget.MaxEvaluations`, shared
   in proportion to node counts) is spent; the fine of every move is exact.
   Going around an obstacle is not a separate search: the tour through the
   intermediate nodes is the way around, and the cost of a move over an
   obstacle is its climb.
-- Turn fine (`TurnFine`): a turn is the change of the XY direction between the
-  chords into and out of a node. A node is fined for a sharp turn (above 35
-  degrees) or as part of a compound turn (T-139): up to 4 consecutive smaller
-  turns, straight nodes between them skipped, at most 8 positions each way, that
-  change the direction by more than 35 degrees within less than 10 mm of path
-  (the angle between the chord into the first and the chord out of the last); a
-  sharp turn ends the search, so a small turn beside a corner does not stretch
-  its zone. Neither is fined on a real circular move: a chain of arcs, each four
-  consecutive nodes on one circle within half a cell turning the same way below
-  90 degrees at both inner nodes, at least 10 mm long from its first node to its
-  last (followed at most 16 arcs each way). A square corner, a U-turn, a short
-  arc and a corner split into small turns are therefore never circular. A
-  movement is the stretch between two fined turns or a route end; its first and
-  last 5 mm run at 0.3 of the speed, so a fined turn slows the 5 mm before and
-  after it, overlapping zones count once and route ends clip them. The fine is
-  charged on XY travel, `(1 / 0.3 - 1) / 3` cost units per slow millimetre. On a
-  3 mm lattice the solver runs straight and rounds corners with two 45 degree
-  turns on one lattice circle (10.2 mm) instead of turning 90 degrees. Once
-  turns lie closer than one zone, removing one frees nothing, which is why the
-  start walk matters. The status of a node depends on up to 26 positions of the
-  route, so the local search keeps the turn and arc of every position, screens a
-  move with the nodes next to its joins and applies it only when the exact fine
-  change, over every node the move can change, still leaves a gain.
+- Turn fine (`TurnFine`, T-153): a turn is the change of the XY direction
+  between the chords into and out of a node. Every node where the direction
+  changes starts a new coordinate set and so a new movement, whatever the angle,
+  on circles as on corners; a node is straight on when the sine of the change is
+  within 0.001 (float noise of the node coordinates) and the direction does not
+  reverse. The first and last 5 mm of every movement run at 0.3 of the speed: a
+  fined node slows the 5 mm before and after it, a millimetre is slow once where
+  zones overlap (a movement shorter than 10 mm is slow over its whole length) and
+  route ends clip the zones. Short steps therefore run slow along their whole
+  length and the solver keeps long straight moves. The fine is charged on XY
+  travel, `(1 / 0.3 - 1) / 3` cost units per slow millimetre. A flat charge of
+  10 mm per fined node, whatever the length of the movement, was tried first: it
+  bills a 1 mm movement as 10 slow mm, and the solver then climbed over material
+  and plunged back rather than follow a curved band (the user's project went from
+  19.5 to 169.5 min of length over rate and from 32,081 to 37,981 direction
+  changes). The status of a node depends on it and its two neighbours only, so a
+  2-opt or Or-opt move changes the status of the nodes at its joins only; the
+  fine window adds the overlap of their zones with the events up to 10 mm away,
+  and the change is exact. The local search cannot turn a spiral into rows, so
+  the start walk decides the turn structure; that is why the sweeps are among the
+  start walks. The toolpath statistics give length over rate and do not include
+  the slow zones.
 - "Z layer by layer": cave by cave. A cave is cut completely at its level, then
   the tool drops one level in place into the first child cave; a sibling is
   visited only when the whole subtree is done, nearest first. Every route is
@@ -1887,6 +1888,14 @@ check that decides done.
 - Input: this task list
 - Output: sections 6.3, 6.4, 6.6, 6.7 and 5.1 rewritten for the dynamic check, the modes and the ratios
 - Acceptance: every rule named in the sections has a test in `CollisionModesTests`, `CollisionServiceTests` or `RouteSolverPrecedenceTests`
+- Status: done
+
+#### T-153 Turn fine on every new direction
+
+- Files: `src/Miller.Native/src/mn_route.c`, `src/Miller.Native/src/mn_window.c`, `src/Miller.Native/src/mn_window.h`, `src/Miller.Native/src/mn_solver.c`, `src/Miller.Native/src/mn_internal.h`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Solver/TurnFine.cs`, `src/Miller.Solver/Native/SolverNative.cs`, `tests/Miller.Tests/Solver/*`, `tests/Miller.Tests/Application/CutScopeTests.cs`, `tests/Miller.Tests/Golden/heart_grbl.nc`
+- Input: user request (the first and last 5 mm are not punished on a circle: delete that rule and apply the punishment after every new coordinate set, so the route mills most of the path in long directions and as few small steps as possible)
+- Output: the rule of section 6.4 (every direction change fined, no circular exemption, no compound threshold, straight within a sine of 0.001, zones overlapping once); sweep start walks along X and Y; the exact fine change from the join nodes and the fine window (the screen and the arc chains are gone); the angle and circle constants removed from `TurnFine`; `heart_grbl.nc` regenerated
+- Acceptance: every direction change fined (1 to 180 degrees, octagons and arcs slow over their whole length, U-turns 1 mm wide 11 mm); the slow length equals the union of the zones on 300 random routes; a diagonal of cell centres 100 mm from the origin is straight, a one cell jog on it gives three turns; reversed routes give the same statuses; one more evaluation never raises the cost; a 12 x 8 lattice keeps the 14 turns of the row pattern and a 20 x 20 lattice from node 7 costs no more than the serpentine; zero events and zero gouges on the fixtures; direction changes and length over rate against Build_1.0.102: heart sample 3,586 to 3,543 and 4.53 to 4.47 min, 3 axis 15,737 to 14,264 and 13.9 to 14.0 min, the user's project 32,081 to 32,591 and 19.5 to 19.7 min (kept events 13 to 12, route stage 361 to 150 s): most direction changes come from the outline and should-cut nodes, every cell of which is a node
 - Status: done
 
 ### M8 Packaging and release
