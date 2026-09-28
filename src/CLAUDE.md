@@ -488,3 +488,19 @@
   the collisions of pass 1 kept.
 - Under Git Bash the GUI-subsystem export returns without waiting unless piped; the golden was
   regenerated with `Miller.exe --export ... | tail -1`.
+- Bug that existed before this session, fixed (hills): the Z-layer lattice covers a level with node
+  footprints only while stepover <= r * sqrt(2); the validator allows stepover up to the diameter, and
+  a 3 mm cutter with the default 3 mm stepover left spikes through every level that the recursion then
+  hit (heart laid flat: 5 passes ending at 990 events, now 3 passes ending at 0). `cover_gaps` adds
+  every region cell no node footprint covers as a node; below that stepover nothing is added.
+- Bug that existed before this session, fixed (safe height): never-cut cells kept the stock top as the
+  route floor, so moves crossed them as feeds on the stock top. The route floor lifts them to the safe
+  plane; corner touches read the unlifted `touch` floor, or every diagonal step of a band route beside
+  uncut cells would hop to the safe plane. Parts of a move on the safe plane are rapids.
+- Bug that existed before this session, fixed (terraces): the separation widened every level by the
+  widest head radius, a stair step even under a frustum. The head radius at the height the slab
+  stands above the head bottom is used instead, through the separable lower envelope with a negative
+  squared radius per source (power distance), one transform per level. Cylinder output is unchanged.
+- Removed volume is no measure of the terrace fix while the model is flush with the stock top: the
+  recursion collar beside the model differs per head and dominates (a 24 mm cylinder head never
+  reached the floor there); the test puts the model on the stock bottom.

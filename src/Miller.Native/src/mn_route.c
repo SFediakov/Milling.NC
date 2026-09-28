@@ -36,13 +36,18 @@ static float plateau(const mn_route_grid* grid, int i, int j)
     return mn_in_bounds(&grid->g, i, j) ? grid->floor[j * grid->g.width + i] : NAN;
 }
 
+static float plateau_touched(const mn_route_grid* grid, int i, int j)
+{
+    return mn_in_bounds(&grid->g, i, j) ? grid->touch[j * grid->g.width + i] : NAN;
+}
+
 /* `first` must be a number; NaN candidates never win. */
 static float max2(float first, float second) { return second > first ? second : first; }
 
 static float max3(float first, float second, float third) { return max2(max2(first, second), third); }
 
-/* Highest plateau among the cells touching the point: its own cell and the cell on the other side
- * of every grid line the point lies on. */
+/* Highest touch floor among the cells touching the point: its own cell and the cell on the other
+ * side of every grid line the point lies on. */
 static float touching(const mn_route_grid* grid, float x, float y)
 {
     float fi = (x - grid->g.origin_x) / grid->g.cell_size;
@@ -58,7 +63,7 @@ static float touching(const mn_route_grid* grid, float x, float y)
     float best = NAN;
     for (int jj = j0; jj <= j1; jj++) {
         for (int ii = i0; ii <= i1; ii++) {
-            float value = plateau(grid, ii, jj);
+            float value = plateau_touched(grid, ii, jj);
             if (mn_isnan(best) || value > best) {
                 best = value;
             }
@@ -153,7 +158,7 @@ float mn_trace(const mn_route_grid* grid, mn_v3 a, mn_v3 b, mn_points* points, i
 
 MN_API float mn_surface_trace(const mn_grid* grid, const float* floor, const float* a, const float* b, float** points, int32_t* point_count)
 {
-    mn_route_grid route = { *grid, floor };
+    mn_route_grid route = { *grid, floor, floor };
     mn_points list = { 0 };
     int status;
     float climb = mn_trace(&route, mn_v3_make(a[0], a[1], a[2]), mn_v3_make(b[0], b[1], b[2]), points != NULL ? &list : NULL, &status);
@@ -189,7 +194,7 @@ float mn_cost_exact(const mn_route_grid* grid, mn_v3 a, mn_v3 b)
 
 MN_API float mn_route_exact(const mn_grid* grid, const float* floor, const float* a, const float* b)
 {
-    mn_route_grid route = { *grid, floor };
+    mn_route_grid route = { *grid, floor, floor };
     return mn_cost_exact(&route, mn_v3_make(a[0], a[1], a[2]), mn_v3_make(b[0], b[1], b[2]));
 }
 

@@ -2,8 +2,9 @@
 
 /* Turns tool positions into segments (RouteWriter). A cut follows the surface polyline: level,
  * rising and gently descending parts are feeds, a descent steeper than MN_MAX_RAMP_SLOPE is a feed
- * over the lower point and a plunge. A travel takes that polyline or a retract to safe Z, a rapid and
- * a plunge, whichever the rates make faster; the program starts with a plunge from safe Z. */
+ * over the lower point and a plunge; a part on the safe plane (a floor lifted over uncut stock) is a
+ * rapid. A travel takes that polyline or a retract to safe Z, a rapid and a plunge, whichever the
+ * rates make faster; the program starts with a plunge from safe Z. */
 
 #define MN_WRITER_LEVEL_EPSILON 1e-5f
 #define MN_MAX_RAMP_SLOPE 2.0f
@@ -159,6 +160,23 @@ static float minutes(const mn_writer* w, const mn_segment* segments, int count)
     return total;
 }
 
+/* A level or rising part of the polyline: a feed below the safe plane, a rapid on it. The polyline
+ * of one move lies on its chord, so consecutive rapids on the plane join into one. */
+static int push_along(const mn_writer* w, mn_segments* segments, mn_v3 a, mn_v3 b)
+{
+    if (!(a.z >= w->safe_z && b.z >= w->safe_z)) {
+        return mn_segments_push(segments, make_segment(a, b, MN_MOVE_FEED, w->parameters.feed_rate));
+    }
+    mn_segment* last = segments->count > 0 ? &segments->items[segments->count - 1] : NULL;
+    if (last != NULL && last->kind == MN_MOVE_RAPID && mn_v3_equal(seg_end(last), a)) {
+        last->end_x = b.x;
+        last->end_y = b.y;
+        last->end_z = b.z;
+        return MN_OK;
+    }
+    return mn_segments_push(segments, make_segment(a, b, MN_MOVE_RAPID, w->parameters.rapid_rate));
+}
+
 static int cut(mn_writer* w, mn_v3 from, mn_v3 to, const mn_route_grid* grid, mn_segments* segments)
 {
     w->buffer.count = 0;
@@ -178,12 +196,12 @@ static int cut(mn_writer* w, mn_v3 from, mn_v3 to, const mn_route_grid* grid, mn
         if (drop > MN_WRITER_LEVEL_EPSILON && drop > MN_MAX_RAMP_SLOPE * planar) {
             if (planar > 0) {
                 mn_v3 over = mn_v3_make(next.x, next.y, at.z);
-                MN_CHECK(mn_segments_push(segments, make_segment(at, over, MN_MOVE_FEED, w->parameters.feed_rate)));
+                MN_CHECK(push_along(w, segments, at, over));
                 at = over;
             }
             MN_CHECK(mn_segments_push(segments, make_segment(at, next, MN_MOVE_PLUNGE, w->parameters.plunge_rate)));
         } else {
-            MN_CHECK(mn_segments_push(segments, make_segment(at, next, MN_MOVE_FEED, w->parameters.feed_rate)));
+            MN_CHECK(push_along(w, segments, at, next));
         }
         at = next;
     }
@@ -263,13 +281,13 @@ int mn_writer_take(mn_writer* w, mn_segments* result)
 
 MN_API int32_t mn_writer_travel(mn_writer* writer, const float* to, const mn_grid* grid, const float* floor)
 {
-    mn_route_grid route = { *grid, floor };
+    mn_route_grid route = { *grid, floor, floor };
     return mn_writer_travel_to(writer, mn_v3_make(to[0], to[1], to[2]), &route);
 }
 
 MN_API int32_t mn_writer_follow(mn_writer* writer, const float* to, const mn_grid* grid, const float* floor)
 {
-    mn_route_grid route = { *grid, floor };
+    mn_route_grid route = { *grid, floor, floor };
     return mn_writer_follow_to(writer, mn_v3_make(to[0], to[1], to[2]), &route);
 }
 
