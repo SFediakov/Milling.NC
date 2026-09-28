@@ -5,8 +5,7 @@ namespace Miller.Tests.Solver;
 
 // The solver minimises travel plus turn fine: every move it applies lowers the fined cost of the
 // route, so one more evaluation never makes the route worse; it cuts along two rows instead of
-// zigzagging across them, keeps a circular loop, and on a flat lattice turns along lattice arcs
-// rather than at right angles.
+// zigzagging across them, fines every turn of a circle, and on a flat lattice runs straight rows.
 public sealed class RouteSolverFineTests
 {
     private static RouteProblem Points(float cell, params (float X, float Y)[] points)
@@ -26,29 +25,7 @@ public sealed class RouteSolverFineTests
         return Points(0.5f, points.ToArray());
     }
 
-    private static int FinedTurns(RouteProblem problem, int[] order) => Turns(problem, order, fined: true);
-
-    // Turns above 35 degrees that are fined, or that are exempt as circular.
-    private static int Turns(RouteProblem problem, int[] order, bool fined)
-    {
-        var sharp = MathF.Cos(TurnFine.SharpTurnDegrees * MathF.PI / 180f);
-        var count = 0;
-        for (var k = 1; k < order.Length - 1; k++)
-        {
-            var isFined = TurnFine.IsFined(problem, order, k);
-            var ux = problem.X[order[k]] - problem.X[order[k - 1]];
-            var uy = problem.Y[order[k]] - problem.Y[order[k - 1]];
-            var wx = problem.X[order[k + 1]] - problem.X[order[k]];
-            var wy = problem.Y[order[k + 1]] - problem.Y[order[k]];
-            var cos = (ux * wx + uy * wy) / MathF.Sqrt((ux * ux + uy * uy) * (wx * wx + wy * wy));
-            if (fined ? isFined : !isFined && cos < sharp)
-            {
-                count++;
-            }
-        }
-
-        return count;
-    }
+    private static int FinedTurns(RouteProblem problem, int[] order) => Enumerable.Range(1, Math.Max(order.Length - 2, 0)).Count(k => TurnFine.IsFined(problem, order, k));
 
     private static int[] Solve(RouteProblem problem, int start, long allowance)
         => RouteSolver.Solve(problem, start, new RouteBudget(RouteBudget.MaxEvaluations), allowance, TestContext.Current.CancellationToken);
@@ -106,8 +83,8 @@ public sealed class RouteSolverFineTests
         }
     }
 
-    // T-139: statuses reach up to 26 positions from a join, so a move is applied only after its exact
-    // fine change; dense lattices and curves (compound turns, arc chains) must never raise the cost.
+    // The fine change of a move is read at its joins only; dense lattices and curves, where every
+    // node turns, must never raise the cost.
     [Fact]
     public void OneMoreEvaluation_NeverRaisesTheFinedCost_OnDenseLatticesAndCurves()
     {
@@ -174,20 +151,23 @@ public sealed class RouteSolverFineTests
     }
 
     [Fact]
-    public void CircularLoop_IsKept_WithoutFine()
+    public void CircularLoop_IsFinedAtEveryTurn()
     {
+        // No three vertices of the octagon lie on a line, so every inner node of any order turns.
         var s = 3f;
         var problem = Points(0.2f, (0, 0), (s, 0), (2 * s, s), (2 * s, 2 * s), (s, 3 * s), (0, 3 * s), (-s, 2 * s), (-s, s));
         var order = Solve(problem, 0, 1_000_000);
-        Assert.Equal(0, FinedTurns(problem, order));
-        Assert.Equal(0f, TurnFine.Fine(problem, order));
+        Assert.Equal(problem.Count - 2, FinedTurns(problem, order));
+        Assert.True(TurnFine.SlowLength(problem, order) > 0f);
+        Assert.Equal(TurnFine.SlowLength(problem, order) * TurnFine.PerSlowMillimetre, TurnFine.Fine(problem, order), 3);
     }
 
     [Fact]
-    public void FlatLattice_TurnsAlongArcs_WithFewerFinedTurnsThanTheRowPattern()
+    public void FlatLattice_RunsLongStraightRows()
     {
-        // 12 x 8 nodes 3 mm apart. The row pattern turns 90 degrees twice at every row end; the
-        // solver rounds its corners with two 45 degree turns on one lattice circle, which are exempt.
+        // 12 x 8 nodes 3 mm apart. The row pattern turns twice at every row end (14 turns); a corner
+        // rounded with two 45 degree turns on a lattice circle is fined now as well, so the solver
+        // keeps to straight rows.
         var problem = Lattice(12, 8, 3f);
         var greedy = Solve(problem, 0, 0);
         var order = Solve(problem, 0, RouteBudget.MaxEvaluations);
@@ -203,12 +183,10 @@ public sealed class RouteSolverFineTests
 
         var rowOrder = rows.ToArray();
         Assert.Equal(14, FinedTurns(problem, rowOrder));
-        Assert.Equal(0, Turns(problem, rowOrder, fined: false));
         var fined = FinedTurns(problem, order);
-        var circular = Turns(problem, order, fined: false);
-        Assert.True(fined < FinedTurns(problem, rowOrder), $"{fined} fined turns");
-        Assert.True(circular > fined, $"{circular} circular, {fined} fined turns");
-        Assert.True(RouteSolver.PathCost(problem, order) < RouteSolver.PathCost(problem, greedy));
+        Assert.True(fined <= FinedTurns(problem, rowOrder), $"{fined} fined turns");
+        Assert.True(RouteSolver.PathCost(problem, order) <= RouteSolver.PathCost(problem, greedy) + 1e-3f);
+        Assert.True(RouteSolver.PathCost(problem, order) <= RouteSolver.PathCost(problem, rowOrder) + 1e-3f);
     }
 
     [Fact]

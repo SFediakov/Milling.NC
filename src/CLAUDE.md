@@ -504,6 +504,19 @@
   widest head radius, a stair step even under a frustum. The head radius at the height the slab
   stands above the head bottom is used instead, through the separable lower envelope with a negative
   squared radius per source (power distance), one transform per level. Cylinder output is unchanged.
+- T-153 supersedes the circular, compound and 35 degree rules of T-133 and T-139 above: every direction
+  change is fined. A flat 10 mm per fined node (no overlap) was tried first and is wrong: it bills a
+  1 mm movement as 10 slow mm, and the solver then climbed over material to the safe plane and
+  plunged back instead of following a curved band cell by cell (user's project 19.5 to 169.5 min of
+  length over rate, plunge 212 to 20,709 mm). The union of the zones (a millimetre slow once) keeps the
+  physics of "the first and last 5 mm of a movement".
+- With every turn fined, 2-opt and Or-opt cannot turn a spiral into rows (20 x 20 lattice: 46 turns
+  against the serpentine's 40); the sweep start walks give the rows. Most direction changes of a real
+  route come from outline and should-cut nodes (every such cell is a node), which no order removes.
+- Bug that existed before this session, fixed: `GrblStatus.Parse("<>")` returned an empty state that
+  replaced Idle, so `MachineRobustnessTests.ABrokenStatusReport_IsLogged_AndTheNextOneIsRead("<>")`
+  failed whenever `Run` came before the next poll (about one `build.sh` in two). A report without a
+  state is now a broken report.
 - Found and not changed: 3 axis freedom in separation scope on the heart laid flat (60 x 60 x 25, 6 mm
   cutter, frustum 10 to 20 over 10, stepdown 0.5) keeps 19288 head events: the recursion keeps pass 2
   for its fewest entered cells although pass 1 had 4041 events. Same on the build before this session.

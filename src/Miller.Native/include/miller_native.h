@@ -176,11 +176,11 @@ MN_API float mn_surface_trace(const mn_grid* grid, const float* floor, const flo
 MN_API float mn_route_exact(const mn_grid* grid, const float* floor, const float* a, const float* b);
 MN_API float mn_route_lower_bound(const float* a, const float* b);
 MN_API float mn_route_planar(const float* a, const float* b);
-/* Whether the node at `position` of the route `order` is fined (TurnFine). */
-MN_API int32_t mn_turn_fined_at(const float* x, const float* y, float cell_size, const int32_t* order, int32_t count, int32_t position);
-MN_API float mn_turn_slow_length(const float* x, const float* y, float cell_size, const int32_t* order, int32_t count);
+/* Whether the node at `position` of the route `order` is fined (TurnFine): the direction changes there. */
+MN_API int32_t mn_turn_fined_at(const float* x, const float* y, const int32_t* order, int32_t count, int32_t position);
+MN_API float mn_turn_slow_length(const float* x, const float* y, const int32_t* order, int32_t count);
 MN_API float mn_turn_overlap(int32_t zones_a, int32_t zones_b, float gap);
-MN_API float mn_turn_fine(const float* x, const float* y, float cell_size, const int32_t* order, int32_t count);
+MN_API float mn_turn_fine(const float* x, const float* y, const int32_t* order, int32_t count);
 MN_API int64_t mn_budget_share(int64_t remaining, int32_t nodes, int64_t nodes_left);
 /* Precedence pairs (T-150): pair k orders node before[k] ahead of node after[k]; pair_count 0 means no
  * pairs. The start must have no predecessor and the pairs must be acyclic. */
