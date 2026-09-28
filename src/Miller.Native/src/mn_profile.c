@@ -41,6 +41,25 @@ static float head_underside(const mn_tool* tool, float d)
     return mn_min(h, tool->head_length);
 }
 
+/* The inverse of the underside: the height over which the head widens (a frustum widening upward;
+ * 0 for every other head, which is at its widest at once) and its radius at height h above its
+ * bottom, the distance within which material standing h above the head bottom meets it. */
+float mn_head_widening(const mn_tool* tool)
+{
+    return tool->head_shape == MN_HEAD_FRUSTUM && tool->head_top_diameter > tool->head_diameter ? tool->head_length : 0.0f;
+}
+
+float mn_head_radius_at(const mn_tool* tool, float h)
+{
+    float widening = mn_head_widening(tool);
+    if (!(widening > 0) || h >= widening) {
+        return mn_head_radius(tool);
+    }
+    float bottom = tool->head_diameter / 2.0f;
+    float top = tool->head_top_diameter / 2.0f;
+    return bottom + (top - bottom) * mn_max(0.0f, h) / widening;
+}
+
 int mn_profile_build(const mn_tool* tool, float cell_size, mn_profile* profile)
 {
     memset(profile, 0, sizeof(*profile));

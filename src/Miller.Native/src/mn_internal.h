@@ -30,6 +30,8 @@ typedef struct mn_profile {
 int mn_profile_build(const mn_tool* tool, float cell_size, mn_profile* profile);
 void mn_profile_free(mn_profile* profile);
 float mn_head_radius(const mn_tool* tool);
+float mn_head_widening(const mn_tool* tool);
+float mn_head_radius_at(const mn_tool* tool, float h);
 
 /* ---- mesh ---- */
 
@@ -76,9 +78,13 @@ int mn_lattice_step(float spacing, float cell_size);
 int mn_lattice(const uint8_t* inside, int width, int height, int step, mn_ints* nodes);
 int mn_outline(const uint8_t* inside, int width, int height, int i, int j);
 
+/* `floor` is what a move through a cell stays above, `touch` what a point on a cell's edge or corner
+ * stays above: the strategies lift uncut stock to the safe plane in `floor` only, so a diagonal step
+ * between neighbouring nodes that touches an uncut cell at a corner keeps to its stock height. */
 typedef struct mn_route_grid {
     mn_grid g;
     const float* floor;
+    const float* touch;
 } mn_route_grid;
 
 typedef struct mn_points {

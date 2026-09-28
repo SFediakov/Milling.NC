@@ -738,6 +738,55 @@ static int guard_evaluate(mn_guard* g, float* xs, float* ys, float* zs, int* cou
 
 /* ---- shared helpers of the strategies ---- */
 
+static void cover_footprint(const mn_grid* g, const mn_profile* profile, int cell, uint8_t* covered)
+{
+    int ci = cell % g->width;
+    int cj = cell / g->width;
+    for (int o = 0; o < profile->offset_count; o++) {
+        int i = ci + profile->offsets[o].dx;
+        int j = cj + profile->offsets[o].dy;
+        if (mn_in_bounds(g, i, j)) {
+            covered[j * g->width + i] = 1;
+        }
+    }
+}
+
+/* Every cell of the region lies under the cutter of a node: a lattice wider than the cutter radius
+ * times sqrt(2) leaves cells no node footprint reaches, and the route between the nodes does not
+ * always pass over them, so the stock there stood as a spike through every level. Each such cell, in
+ * row-major order, becomes a node itself. */
+static int cover_gaps(const uint8_t* inside, const mn_grid* g, const mn_profile* profile, mn_ints* nodes, uint8_t* covered)
+{
+    int cells = mn_cells(g);
+    memset(covered, 0, (size_t)cells);
+    for (int n = 0; n < nodes->count; n++) {
+        cover_footprint(g, profile, nodes->items[n], covered);
+    }
+    for (int c = 0; c < cells; c++) {
+        if (inside[c] && !covered[c]) {
+            MN_CHECK(mn_ints_push(nodes, c));
+            cover_footprint(g, profile, c, covered);
+        }
+    }
+    return MN_OK;
+}
+
+/* The route floor over material no route has taken: a move through such a cell at the stock top
+ * grazes uncut stock, so a cell whose floor still stands at its stock height rises to the safe plane
+ * (stock top plus the safe height). The unlifted floor stays the touch floor of the route grid, so a
+ * diagonal step between neighbouring nodes that meets an uncut cell only at its corner keeps low. */
+static void lift_uncut(const mn_context* context, const float* floor, float* lifted)
+{
+    int cells = mn_cells(&context->grid);
+    const float* stock = context->stock;
+    float safe = context->stock_top + context->parameters.safe_height;
+    for (int c = 0; c < cells; c++) {
+        float f = floor[c];
+        int uncut = !mn_isnan(stock[c]) && !mn_isnan(f) && f >= stock[c] - MN_LEVEL_TOLERANCE;
+        lifted[c] = uncut ? mn_max(f, safe) : f;
+    }
+}
+
 /* The node nearest in XY to the tool among the nodes without a predecessor, or the first such
  * node before the program starts. */
 static int nearest_node(const float* x, const float* y, int count, const int* pending, const mn_writer* writer)
@@ -764,9 +813,10 @@ static int nearest_node(const float* x, const float* y, int count, const int* pe
     return best < 0 ? 0 : best;
 }
 
-/* Solves one route over the nodes and writes it: travel to the first node, follow the rest. The
- * guard supplies the precedence pairs of the route (none when it is off). */
-static int route_nodes(const mn_route_grid* grid, const float* x, const float* y, const float* z, int count, const mn_guard* guard, mn_budget* budget, int64_t nodes_left, const volatile int32_t* cancel, mn_writer* writer)
+/* Solves one route over the nodes and writes it: travel to the first node, follow the rest, both over
+ * the route floor with the uncut stock lifted to the safe plane. The guard supplies the precedence
+ * pairs of the route (none when it is off). */
+static int route_nodes(const mn_context* context, const mn_route_grid* grid, float* lifted_floor, const float* x, const float* y, const float* z, int count, const mn_guard* guard, mn_budget* budget, int64_t nodes_left, const volatile int32_t* cancel, mn_writer* writer)
 {
     if (count == 0) {
         return MN_OK;
@@ -775,8 +825,10 @@ static int route_nodes(const mn_route_grid* grid, const float* x, const float* y
     if (order == NULL) {
         return mn_fail(MN_ERR_MEMORY, "Out of memory for a route of %d nodes.", count);
     }
+    lift_uncut(context, grid->floor, lifted_floor);
+    mn_route_grid lifted = { grid->g, lifted_floor, grid->floor };
     mn_problem problem;
-    problem.grid = *grid;
+    problem.grid = lifted;
     problem.x = x;
     problem.y = y;
     problem.z = z;
@@ -789,9 +841,9 @@ static int route_nodes(const mn_route_grid* grid, const float* x, const float* y
     int status = mn_solve(&problem, start, mn_share(budget, count, nodes_left), cancel, order, &evaluations);
     if (status == MN_OK) {
         budget->used += evaluations;
-        status = mn_writer_travel_to(writer, mn_problem_node(&problem, order[0]), grid);
+        status = mn_writer_travel_to(writer, mn_problem_node(&problem, order[0]), &lifted);
         for (int k = 1; k < count && status == MN_OK; k++) {
-            status = mn_writer_follow_to(writer, mn_problem_node(&problem, order[k]), grid);
+            status = mn_writer_follow_to(writer, mn_problem_node(&problem, order[k]), &lifted);
         }
     }
     free(order);
@@ -819,13 +871,13 @@ static void footprint_touches(const mn_grid* g, const mn_profile* profile, const
 /* One route over the pass cells in `inside` at max(their tip, floor_level): the pass cells take that
  * height as the route floor and keep it in `planned` afterwards. The node arrays must hold
  * cut->count entries. */
-static int tip_route(const mn_context* context, const uint8_t* inside, const mn_ints* cut, float floor_level, float* planned, float* clearance, float* xs, float* ys, float* zs, mn_guard* guard,
-    int allow_clearing, mn_budget* budget, int64_t nodes_left, const mn_monitor* monitor, mn_writer* writer);
+static int tip_route(const mn_context* context, const uint8_t* inside, const mn_ints* cut, float floor_level, float* planned, float* clearance, float* lifted, float* xs, float* ys, float* zs,
+    mn_guard* guard, int allow_clearing, mn_budget* budget, int64_t nodes_left, const mn_monitor* monitor, mn_writer* writer);
 
 /* The clearing route of the guard: every position whose footprint holds a clearing cell, at
  * max(tip, floor_level), before the route that needs the cells lowered. */
-static int clearing_route(const mn_context* context, mn_guard* guard, float floor_level, float* planned, float* clearance, uint8_t* inside, mn_budget* budget, int64_t nodes_left,
-    const mn_monitor* monitor, mn_writer* writer)
+static int clearing_route(const mn_context* context, mn_guard* guard, float floor_level, float* planned, float* clearance, float* lifted, uint8_t* inside, mn_budget* budget,
+    int64_t nodes_left, const mn_monitor* monitor, mn_writer* writer)
 {
     if (!guard->enabled || guard->clearing.count == 0) {
         return MN_OK;
@@ -861,7 +913,7 @@ static int clearing_route(const mn_context* context, mn_guard* guard, float floo
         if (xs == NULL || ys == NULL || zs == NULL) {
             status = mn_fail(MN_ERR_MEMORY, "Out of memory for a clearing route of %d nodes.", cut.count);
         } else {
-            status = tip_route(context, inside, &cut, floor_level, planned, clearance, xs, ys, zs, guard, 0, budget, nodes_left, monitor, writer);
+            status = tip_route(context, inside, &cut, floor_level, planned, clearance, lifted, xs, ys, zs, guard, 0, budget, nodes_left, monitor, writer);
         }
     }
     free(xs);
@@ -871,8 +923,8 @@ static int clearing_route(const mn_context* context, mn_guard* guard, float floo
     return status;
 }
 
-static int tip_route(const mn_context* context, const uint8_t* inside, const mn_ints* cut, float floor_level, float* planned, float* clearance, float* xs, float* ys, float* zs, mn_guard* guard,
-    int allow_clearing, mn_budget* budget, int64_t nodes_left, const mn_monitor* monitor, mn_writer* writer)
+static int tip_route(const mn_context* context, const uint8_t* inside, const mn_ints* cut, float floor_level, float* planned, float* clearance, float* lifted, float* xs, float* ys, float* zs,
+    mn_guard* guard, int allow_clearing, mn_budget* budget, int64_t nodes_left, const mn_monitor* monitor, mn_writer* writer)
 {
     const mn_grid* g = &context->grid;
     int cells = mn_cells(g);
@@ -891,7 +943,7 @@ static int tip_route(const mn_context* context, const uint8_t* inside, const mn_
         if (scratch == NULL) {
             return mn_fail(MN_ERR_MEMORY, "Out of memory for the clearing route.");
         }
-        int status = clearing_route(context, guard, floor_level, planned, clearance, scratch, budget, nodes_left, monitor, writer);
+        int status = clearing_route(context, guard, floor_level, planned, clearance, lifted, scratch, budget, nodes_left, monitor, writer);
         free(scratch);
         MN_CHECK(status);
         MN_CHECK(guard_evaluate(guard, xs, ys, zs, &count, NAN, 0, NULL, NULL, 0));
@@ -899,8 +951,8 @@ static int tip_route(const mn_context* context, const uint8_t* inside, const mn_
     for (int k = 0; k < cells; k++) {
         clearance[k] = guard_floor(guard, k, inside[k] ? mn_max(context->effective_tip[k], floor_level) : planned[k]);
     }
-    mn_route_grid grid = { *g, clearance };
-    int status = route_nodes(&grid, xs, ys, zs, count, guard, budget, nodes_left, monitor != NULL ? monitor->cancel : NULL, writer);
+    mn_route_grid grid = { *g, clearance, clearance };
+    int status = route_nodes(context, &grid, lifted, xs, ys, zs, count, guard, budget, nodes_left, monitor != NULL ? monitor->cancel : NULL, writer);
     guard_stamp(guard, xs, ys, zs, count);
     memcpy(planned, clearance, (size_t)cells * sizeof(float));
     return status;
@@ -964,6 +1016,7 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
     mn_ints* cut_nodes = (mn_ints*)mn_alloc((size_t)(tree.cave_count > 0 ? tree.cave_count : 1), sizeof(mn_ints));
     uint8_t* touches = (uint8_t*)mn_alloc((size_t)cells, 1);
     uint8_t* inside = (uint8_t*)mn_alloc((size_t)cells, 1);
+    uint8_t* covered = (uint8_t*)mn_alloc((size_t)cells, 1);
     float* planned = (float*)mn_alloc((size_t)cells, sizeof(float));
     float* clearance = (float*)mn_alloc((size_t)cells, sizeof(float));
     mn_ints pending = { 0 };
@@ -975,15 +1028,17 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
     int* list_end = NULL;
     mn_writer* writer = NULL;
     mn_profile profile = { 0 };
-    if (nodes == NULL || cut_nodes == NULL || touches == NULL || inside == NULL || planned == NULL || clearance == NULL) {
+    float* lifted = NULL;
+    if (nodes == NULL || cut_nodes == NULL || touches == NULL || inside == NULL || covered == NULL || planned == NULL || clearance == NULL) {
         status = mn_fail(MN_ERR_MEMORY, "Out of memory for the layer strategy.");
         goto done;
     }
+    lifted = (float*)mn_alloc((size_t)cells, sizeof(float));
+    status = lifted == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the route floor of %d cells.", cells) : mn_profile_build(&context->tool, g->cell_size, &profile);
+    if (status != MN_OK) {
+        goto done;
+    }
     if (context->should_cut != NULL) {
-        status = mn_profile_build(&context->tool, g->cell_size, &profile);
-        if (status != MN_OK) {
-            goto done;
-        }
         footprint_touches(g, &profile, context->should_cut, touches);
     }
 
@@ -1005,6 +1060,9 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
             inside[k] = (uint8_t)(labels[k] == id);
         }
         status = mn_lattice(inside, width, g->height, step, &nodes[c]);
+        if (status == MN_OK) {
+            status = cover_gaps(inside, g, &profile, &nodes[c], covered);
+        }
         nodes_left += nodes[c].count;
         pass_count += nodes[c].count > 0 ? 1 : 0;
         max_nodes = mn_maxi(max_nodes, nodes[c].count);
@@ -1045,7 +1103,7 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
     if (top_nodes.count > 0) {
         pass++;
         top_band_cells(context, touches, inside);
-        status = tip_route(context, inside, &top_nodes, plan->levels[0], planned, clearance, xs, ys, zs, &guard, 1, &budget, nodes_left, monitor, writer);
+        status = tip_route(context, inside, &top_nodes, plan->levels[0], planned, clearance, lifted, xs, ys, zs, &guard, 1, &budget, nodes_left, monitor, writer);
         nodes_left -= top_nodes.count;
         if (status == MN_OK) {
             mn_report(monitor, pass, pass_count, (float)(total - nodes_left) / (float)total);
@@ -1133,7 +1191,7 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
             }
             status = guard_evaluate(&guard, xs, ys, zs, &count, level, 1, clearance, cave_cells, cave->cells_count);
             if (status == MN_OK && guard.clearing.count > 0) {
-                status = clearing_route(context, &guard, level, planned, clearance, inside, &budget, nodes_left, monitor, writer);
+                status = clearing_route(context, &guard, level, planned, clearance, lifted, inside, &budget, nodes_left, monitor, writer);
                 if (status == MN_OK) {
                     memcpy(clearance, planned, (size_t)cells * sizeof(float));
                     for (int m = 0; m < cave->cells_count; m++) {
@@ -1148,8 +1206,8 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
                     int cell = cave_cells[m];
                     clearance[cell] = guard_floor(&guard, cell, level);
                 }
-                mn_route_grid grid = { *g, clearance };
-                status = route_nodes(&grid, xs, ys, zs, count, &guard, &budget, nodes_left, monitor != NULL ? monitor->cancel : NULL, writer);
+                mn_route_grid grid = { *g, clearance, clearance };
+                status = route_nodes(context, &grid, lifted, xs, ys, zs, count, &guard, &budget, nodes_left, monitor != NULL ? monitor->cancel : NULL, writer);
                 guard_stamp(&guard, xs, ys, zs, count);
             }
             nodes_left -= cave_nodes->count;
@@ -1168,7 +1226,7 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
             float next_level = cave->level + 1 < plan->count ? plan->levels[cave->level + 1] : -INFINITY;
             memset(inside, 0, (size_t)cells);
             should_cut_cells(context->effective_tip, touches, cave_cells, cave->cells_count, level, next_level, inside);
-            status = tip_route(context, inside, cut, -INFINITY, planned, clearance, xs, ys, zs, &guard, 1, &budget, nodes_left, monitor, writer);
+            status = tip_route(context, inside, cut, -INFINITY, planned, clearance, lifted, xs, ys, zs, &guard, 1, &budget, nodes_left, monitor, writer);
             nodes_left -= cut->count;
             if (status == MN_OK) {
                 mn_report(monitor, pass, pass_count, (float)(total - nodes_left) / (float)total);
@@ -1205,6 +1263,7 @@ done:
     free(cut_nodes);
     free(touches);
     free(inside);
+    free(covered);
     free(planned);
     free(clearance);
     free(xs);
@@ -1213,6 +1272,7 @@ done:
     mn_ints_free(&pending);
     mn_ints_free(&top_nodes);
     mn_profile_free(&profile);
+    free(lifted);
     mn_writer_free(writer);
     guard_free(&guard);
     cave_tree_free(&tree);
@@ -1292,8 +1352,15 @@ int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, 
     float* ys = NULL;
     float* zs = NULL;
     mn_writer* writer = NULL;
+    mn_profile profile = { 0 };
+    float* lifted = NULL;
     if (passes == NULL || level_maps == NULL || inside == NULL || marked == NULL) {
         status = mn_fail(MN_ERR_MEMORY, "Out of memory for the 3 axis strategy.");
+        goto done;
+    }
+    lifted = (float*)mn_alloc((size_t)cells, sizeof(float));
+    status = lifted == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the route floor of %d cells.", cells) : mn_profile_build(&context->tool, g->cell_size, &profile);
+    if (status != MN_OK) {
         goto done;
     }
     if (guard.enabled) {
@@ -1337,6 +1404,9 @@ int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, 
                     status = mn_ints_push(&passes[l], c);
                 }
             }
+        }
+        if (status == MN_OK) {
+            status = cover_gaps(inside, g, &profile, &passes[l], marked);
         }
         if (passes[l].count > 1) {
             qsort(passes[l].items, (size_t)passes[l].count, sizeof(int), compare_ints);
@@ -1399,7 +1469,7 @@ int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, 
                 /* The clearing route runs over the material the previous level left. */
                 const float* previous = l > 0 ? level_maps + (size_t)(l - 1) * (size_t)cells : stock;
                 memcpy(planned, previous, (size_t)cells * sizeof(float));
-                status = clearing_route(context, &guard, plan->levels[l], planned, clearance, inside, &budget, nodes_left, monitor, writer);
+                status = clearing_route(context, &guard, plan->levels[l], planned, clearance, lifted, inside, &budget, nodes_left, monitor, writer);
                 if (status == MN_OK) {
                     status = guard_evaluate(&guard, xs, ys, zs, &count, plan->levels[l], 0, level_map, region.items, region.count);
                 }
@@ -1412,8 +1482,8 @@ int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, 
                     }
                     floor = clearance;
                 }
-                mn_route_grid grid = { *g, floor };
-                status = route_nodes(&grid, xs, ys, zs, count, &guard, &budget, nodes_left, monitor != NULL ? monitor->cancel : NULL, writer);
+                mn_route_grid grid = { *g, floor, floor };
+                status = route_nodes(context, &grid, lifted, xs, ys, zs, count, &guard, &budget, nodes_left, monitor != NULL ? monitor->cancel : NULL, writer);
                 guard_stamp(&guard, xs, ys, zs, count);
             }
             nodes_left -= passes[l].count;
@@ -1443,6 +1513,8 @@ done:
     free(xs);
     free(ys);
     free(zs);
+    mn_profile_free(&profile);
+    free(lifted);
     mn_writer_free(writer);
     guard_free(&guard);
     return status;
