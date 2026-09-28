@@ -771,19 +771,30 @@ static int cover_gaps(const uint8_t* inside, const mn_grid* g, const mn_profile*
     return MN_OK;
 }
 
-/* The route floor over material no route has taken: a move through such a cell at the stock top
- * grazes uncut stock, so a cell whose floor still stands at its stock height rises to the safe plane
- * (stock top plus the safe height). The unlifted floor stays the touch floor of the route grid, so a
- * diagonal step between neighbouring nodes that meets an uncut cell only at its corner keeps low. */
-static void lift_uncut(const mn_context* context, const float* floor, float* lifted)
+/* The route floor and touch floor (`lifted`, cells each) over material no route has taken, whose
+ * floor still stands at its stock height. A move through such a cell would run on the stock top, so
+ * the cell rises to the safe plane (stock top plus the safe height). A point on its edge or corner, a
+ * diagonal step between neighbouring nodes, only has to stay above what must remain there, the
+ * strategy tip under the raises: the footprints of the nodes cut that stock anyway. Where what must
+ * remain reaches the stock top (a model face or standing stock flush with it), the point takes the
+ * safe plane as well; nothing moves on the stock top. */
+static void lift_uncut(const mn_context* context, const mn_guard* guard, const float* floor, float* lifted)
 {
     int cells = mn_cells(&context->grid);
     const float* stock = context->stock;
     float safe = context->stock_top + context->parameters.safe_height;
+    float* touch = lifted + cells;
     for (int c = 0; c < cells; c++) {
         float f = floor[c];
-        int uncut = !mn_isnan(stock[c]) && !mn_isnan(f) && f >= stock[c] - MN_LEVEL_TOLERANCE;
-        lifted[c] = uncut ? mn_max(f, safe) : f;
+        float s = stock[c];
+        if (mn_isnan(s) || mn_isnan(f) || f < s - MN_LEVEL_TOLERANCE) {
+            lifted[c] = f;
+            touch[c] = f;
+            continue;
+        }
+        float remains = guard_floor(guard, c, context->effective_tip[c]);
+        lifted[c] = mn_max(f, safe);
+        touch[c] = !mn_isnan(remains) && remains >= s - MN_LEVEL_TOLERANCE ? mn_max(remains, safe) : remains;
     }
 }
 
@@ -814,8 +825,9 @@ static int nearest_node(const float* x, const float* y, int count, const int* pe
 }
 
 /* Solves one route over the nodes and writes it: travel to the first node, follow the rest, both over
- * the route floor with the uncut stock lifted to the safe plane. The guard supplies the precedence
- * pairs of the route (none when it is off). */
+ * the route floor with the uncut stock lifted to the safe plane (`lifted_floor` receives the lifted
+ * route and touch floors, cells each). The guard supplies the precedence pairs of the route (none when
+ * it is off). */
 static int route_nodes(const mn_context* context, const mn_route_grid* grid, float* lifted_floor, const float* x, const float* y, const float* z, int count, const mn_guard* guard, mn_budget* budget, int64_t nodes_left, const volatile int32_t* cancel, mn_writer* writer)
 {
     if (count == 0) {
@@ -825,8 +837,8 @@ static int route_nodes(const mn_context* context, const mn_route_grid* grid, flo
     if (order == NULL) {
         return mn_fail(MN_ERR_MEMORY, "Out of memory for a route of %d nodes.", count);
     }
-    lift_uncut(context, grid->floor, lifted_floor);
-    mn_route_grid lifted = { grid->g, lifted_floor, grid->floor };
+    lift_uncut(context, guard, grid->floor, lifted_floor);
+    mn_route_grid lifted = { grid->g, lifted_floor, lifted_floor + mn_cells(&grid->g) };
     mn_problem problem;
     problem.grid = lifted;
     problem.x = x;
@@ -1033,7 +1045,7 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
         status = mn_fail(MN_ERR_MEMORY, "Out of memory for the layer strategy.");
         goto done;
     }
-    lifted = (float*)mn_alloc((size_t)cells, sizeof(float));
+    lifted = (float*)mn_alloc(2 * (size_t)cells, sizeof(float));
     status = lifted == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the route floor of %d cells.", cells) : mn_profile_build(&context->tool, g->cell_size, &profile);
     if (status != MN_OK) {
         goto done;
@@ -1358,7 +1370,7 @@ int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, 
         status = mn_fail(MN_ERR_MEMORY, "Out of memory for the 3 axis strategy.");
         goto done;
     }
-    lifted = (float*)mn_alloc((size_t)cells, sizeof(float));
+    lifted = (float*)mn_alloc(2 * (size_t)cells, sizeof(float));
     status = lifted == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the route floor of %d cells.", cells) : mn_profile_build(&context->tool, g->cell_size, &profile);
     if (status != MN_OK) {
         goto done;
