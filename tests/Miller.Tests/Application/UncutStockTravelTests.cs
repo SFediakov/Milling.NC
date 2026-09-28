@@ -54,4 +54,67 @@ public sealed class UncutStockTravelTests
         var (wi, wj) = stock.CellOf(20f, 10f);
         Assert.Equal(top, stock[wi, wj], 3);
     }
+
+    // A truncated pyramid turned by 45 degrees with its flat top flush with the stock top: the routes
+    // along its sloped edge step diagonally past the corners of top cells. Such a corner used to lift
+    // the tool onto the top plane itself; a point that has to rise onto material standing at the stock
+    // top now takes the safe height, and a corner of stock the footprints cut anyway lifts nothing.
+    private static PipelineResult RunFlushPyramid(string strategy, float safeHeight)
+    {
+        var project = MillingProject.Default();
+        project.RoutingStrategyId = strategy;
+        project.Parameters.SafeHeight = safeHeight;
+        project.Stock.SizeX = 40;
+        project.Stock.SizeY = 40;
+        project.Stock.SizeZ = 6;
+        project.Parameters.CellSize = 0.5f;
+        project.Models.Add(new ModelPlacement { StlPath = "pyramid.stl", RotationZ = 45 });
+        return new PipelineService().Run(project, new[] { TruncatedPyramid(24f, 10f, 6f) }, null, CancellationToken.None);
+    }
+
+    [Theory]
+    [InlineData(ZLayerByLayerStrategy.StrategyId, 5f)]
+    [InlineData(ThreeAxisFreedomStrategy.StrategyId, 5f)]
+    [InlineData(ThreeAxisFreedomStrategy.StrategyId, 2f)]
+    public void FlushModelTop_NoMoveRunsBetweenTheStockTopAndTheSafePlane(string strategy, float safeHeight)
+    {
+        var result = RunFlushPyramid(strategy, safeHeight);
+        var top = result.Stock.StockTop;
+        Assert.Equal(top + safeHeight, result.SafeZ, 4);
+        var near = result.Toolpath.Segments.Where(s => Vector2.Distance(new Vector2(s.Start.X, s.Start.Y), new Vector2(s.End.X, s.End.Y)) > 1e-3f)
+            .Where(s => MathF.Max(s.Start.Z, s.End.Z) >= top - 1e-3f && MathF.Max(s.Start.Z, s.End.Z) < result.SafeZ - 1e-3f)
+            .ToList();
+        Assert.True(near.Count == 0, $"{near.Count} moves between the stock top and the safe plane, first {near.FirstOrDefault()}");
+        Assert.Empty(result.Collisions.Report!.Events);
+        Assert.Empty(GougeChecker.Verify(result.Toolpath, result.EffectiveTip, result.Tolerance));
+    }
+
+    // Square frustum: `bottom` wide at z = 0, `top` wide at z = height, centred.
+    private static Miller.Core.Geometry.Mesh TruncatedPyramid(float bottom, float top, float height)
+    {
+        var inset = (bottom - top) / 2f;
+        var p = new Vector3[8];
+        for (var i = 0; i < 8; i++)
+        {
+            var upper = (i & 4) != 0;
+            var lo = upper ? inset : 0f;
+            var hi = upper ? inset + top : bottom;
+            p[i] = new Vector3((i & 1) == 0 ? lo : hi, (i & 2) == 0 ? lo : hi, upper ? height : 0f);
+        }
+
+        var t = new List<Miller.Core.Geometry.Triangle>(12);
+        void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d)
+        {
+            t.Add(new Miller.Core.Geometry.Triangle(a, b, c));
+            t.Add(new Miller.Core.Geometry.Triangle(a, c, d));
+        }
+
+        Quad(p[0], p[2], p[3], p[1]);
+        Quad(p[4], p[5], p[7], p[6]);
+        Quad(p[0], p[1], p[5], p[4]);
+        Quad(p[2], p[6], p[7], p[3]);
+        Quad(p[0], p[4], p[6], p[2]);
+        Quad(p[1], p[3], p[7], p[5]);
+        return new Miller.Core.Geometry.Mesh(t);
+    }
 }
