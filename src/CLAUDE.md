@@ -50,6 +50,9 @@
 - The head-limited mask and map of the result now hold the raised positions of the collision
   handling (recursion: forbidden positions and their propagation; one run: dropped nodes and lifted
   region cells), not a limit computed before routing; `HeadClearance` stays as the facade of the formula.
+- The holding bridges (separation scope) are part of the generation cluster, not a cluster of their own:
+  `mn_bridges.c` reads the cut scope's strategy tip and replaces the pass plan, so it runs inside the
+  native pass between the cut scope and the routing (user request: all generation in the C library).
 - The model scale (per axis, linked option) is not a cluster of its own: it is one factor of the
   placement transform in `ModelLayout.TurnMatrix`, which the viewport, the native generation, the
   alignment and the validator share; a separate cluster would be a second transform path.
@@ -533,3 +536,14 @@
   failed 2 of 3 runs against the old order.
 - Model scale: the factors act on the oriented model axes before the turn about Z; scaling after the
   turn shears a turned model. `LinkedScale` is an editing rule only, the transform always reads `Scale`.
+- The Z layer strategy cuts every cave flat at its level (`zs = level`) over the plan masks, which the
+  slicer built from the tip before any later lift; lifting only the strategy tip (holding bridges) was
+  ignored by it and the bridges were cut to the floor while 3 axis freedom kept them. A lift after
+  slicing must also take the lifted positions out of the masks below it and give the plan a level at
+  the lifted height.
+- With the 50 percent reach rule the cut band is narrower at convex corners; choosing bridges by the
+  shortest crossing put the bridges of two sectors into one corner. Bridges take the cell nearest the
+  sector centre among crossings at most one cutter diameter longer than the shortest.
+- A ball tip holds the bridge top at cell centres only; between them the simulated stock dips by up to
+  the project tolerance (0.28 against 0.30 measured), the rule the model surface follows as well. A
+  flat tip leaves the bridge exactly at its height.
