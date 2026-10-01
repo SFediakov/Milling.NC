@@ -50,6 +50,9 @@
 - The head-limited mask and map of the result now hold the raised positions of the collision
   handling (recursion: forbidden positions and their propagation; one run: dropped nodes and lifted
   region cells), not a limit computed before routing; `HeadClearance` stays as the facade of the formula.
+- The model scale (per axis, linked option) is not a cluster of its own: it is one factor of the
+  placement transform in `ModelLayout.TurnMatrix`, which the viewport, the native generation, the
+  alignment and the validator share; a separate cluster would be a second transform path.
 - "Sent only after the previous command's execution is confirmed" is implemented as Grbl's
   send-response protocol: the next line goes after `ok`/`error`, which Grbl sends once it has
   executed the line (a move is then in its planner). Waiting for every move to stop would halt the
@@ -523,3 +526,10 @@
 - Removed volume is no measure of the terrace fix while the model is flush with the stock top: the
   recursion collar beside the model differs per head and dominates (a 24 mm cylinder head never
   reached the floor there); the test puts the model on the stock bottom.
+- Bug that existed before this session, fixed: `MachineController` completed `Ready` before publishing
+  the snapshot; `Ready` runs continuations asynchronously, so `MachineService.ConnectAsync` sometimes read
+  no error and reported "closed before the controller answered" (about one full test run in four). State
+  is published first, then `Ready` completes; `Ready_CompletesOnlyAfterTheSnapshotCarriesTheOutcome`
+  failed 2 of 3 runs against the old order.
+- Model scale: the factors act on the oriented model axes before the turn about Z; scaling after the
+  turn shears a turned model. `LinkedScale` is an editing rule only, the transform always reads `Scale`.
