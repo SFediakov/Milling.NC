@@ -108,6 +108,54 @@ public sealed class CoordinateEntryTests
         }
     }
 
+    // A linked factor typed one character at a time into one scale field: every axis follows, the
+    // field keeps the focus, and unticking Linked reaches the placement.
+    [AvaloniaFact]
+    public async Task ModelsTab_LinkedScaleField_TakesAFactorTypedCharacterByCharacter()
+    {
+        const string typed = "0.25";
+        var root = Path.Combine(Path.GetTempPath(), $"miller-scale-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var vm = TestServices.MainWindowViewModel(root);
+        var stl = Path.Combine(root, "box.stl");
+        File.WriteAllText(stl, TestMeshes.AsciiCubeText());
+        Assert.True(await vm.OpenStlFileAsync(stl));
+        var view = new ModelsView { DataContext = vm.Models };
+        var window = new Window { Width = 400, Height = 900, Content = view };
+        window.Show();
+        window.UpdateLayout();
+        try
+        {
+            var placement = vm.Project.Current.Models[0];
+            var box = view.FindControl<NumericBox>("ScaleYBox")!;
+            Assert.True(box.IsEnabled);
+            box.Focus();
+            box.SelectAll();
+            for (var k = 1; k <= typed.Length; k++)
+            {
+                window.KeyTextInput(typed[k - 1].ToString());
+                var soFar = typed[..k];
+                Assert.Equal(soFar, box.Text);
+                Assert.True(box.IsFocused, $"focus lost after '{soFar}'");
+                Assert.True(NumericBox.TryParse(soFar, out var factor));
+                Assert.Equal(new Vector3(factor), placement.Scale);
+            }
+
+            Assert.Equal(0.25f, view.FindControl<NumericBox>("ScaleXBox")!.Value);
+            Assert.Equal(0.25f, view.FindControl<NumericBox>("ScaleZBox")!.Value);
+            Assert.Null(vm.Models.ScaleError);
+
+            view.FindControl<CheckBox>("LinkedScaleBox")!.IsChecked = false;
+            Assert.False(placement.LinkedScale);
+            Assert.Equal(0, vm.Models.SelectedIndex);
+        }
+        finally
+        {
+            window.Close();
+            Directory.Delete(root, true);
+        }
+    }
+
     // Replaces the field content the way a user does: select all, then one key per character. After
     // every key the text is what was typed so far, the box is still focused and the project holds
     // the number typed so far (the sign alone leaves the previous value).

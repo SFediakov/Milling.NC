@@ -1,3 +1,4 @@
+using System.Numerics;
 using Miller.Application.Progress;
 using Miller.Application.Services;
 using Miller.Application.Validation;
@@ -165,6 +166,25 @@ public sealed class PipelineServiceTests
         var ex = await Assert.ThrowsAsync<ValidationException>(() => new PipelineService().RunAsync(project, new[] { Box() }, null, CancellationToken.None));
         Assert.Contains("Parameters.Stepdown", ex.Message);
         Assert.Contains(ex.Result.Errors, e => e.Field == "Parameters.Stepdown");
+    }
+
+    // The scale reaches the native generation through the machine matrices, and a zero factor is
+    // stopped by the validator before it.
+    [Fact]
+    public async Task ModelScale_ReachesTheGeneration_AndAZeroFactorIsRejected()
+    {
+        var project = BoxProject();
+        project.Models[0].Scale = new Vector3(1.5f, 1.5f, 1f);
+        var result = await new PipelineService().RunAsync(project, new[] { Box() }, null, CancellationToken.None);
+        var size = result.MachineMesh.Bounds.Size;
+        Assert.Equal(15f, size.X, 3);
+        Assert.Equal(15f, size.Y, 3);
+        Assert.Equal(5f, size.Z, 3);
+        Assert.Empty(GougeChecker.Verify(result.Toolpath, result.EffectiveTip, result.Parameters.Tolerance));
+
+        project.Models[0].Scale = new Vector3(0f);
+        var ex = await Assert.ThrowsAsync<ValidationException>(() => new PipelineService().RunAsync(project, new[] { Box() }, null, CancellationToken.None));
+        Assert.Contains(ex.Result.Errors, e => e.Field == "Models.Scale");
     }
 
     [Fact]

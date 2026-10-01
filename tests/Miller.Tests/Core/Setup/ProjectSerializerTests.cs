@@ -246,6 +246,29 @@ public sealed class ProjectSerializerTests
     }
 
     [Fact]
+    public void RoundTrip_KeepsTheScaleAndTheLink()
+    {
+        var original = FullyCustomized();
+        original.Models[0].Scale = new Vector3(1.25f, 0.5f, 3f);
+        original.Models[0].LinkedScale = false;
+        var model = Assert.Single(ProjectSerializer.Deserialize(ProjectSerializer.Serialize(original)).Models);
+        Assert.Equal(new Vector3(1.25f, 0.5f, 3f), model.Scale);
+        Assert.False(model.LinkedScale);
+    }
+
+    // A file written before the scale existed loads every model at factor one, linked.
+    [Fact]
+    public void Deserialize_ModelWithoutScale_LoadsFactorOneLinked()
+    {
+        var project = ProjectSerializer.Deserialize(
+            "{ \"SchemaVersion\": 3, \"Models\": [ { \"StlPath\": \"a.stl\", \"Offset\": { \"X\": 1, \"Y\": 2, \"Z\": 3 }, \"RotationZ\": 15 } ] }");
+        var model = Assert.Single(project.Models);
+        Assert.Equal(Vector3.One, model.Scale);
+        Assert.True(model.LinkedScale);
+        Assert.Equal(new Vector3(1, 2, 3), model.Offset);
+    }
+
+    [Fact]
     public void Deserialize_SchemaOne_MigratesTheStlPathIntoTheModelList()
     {
         var project = ProjectSerializer.Deserialize("{ \"SchemaVersion\": 1, \"StlPath\": \"parts/heart.stl\" }");
