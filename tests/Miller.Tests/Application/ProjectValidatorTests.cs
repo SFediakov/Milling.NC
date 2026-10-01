@@ -283,6 +283,38 @@ public sealed class ProjectValidatorTests
         AssertValid(p => p.Models.Add(new ModelPlacement { StlPath = "a.stl" }));
     }
 
+    [Fact]
+    public void Bridges_CountIsAWholeNumberInRange_WidthAndHeightArePositive_HeightBelowTheStock()
+    {
+        foreach (var bad in new[] { -1f, 2.5f, MillingProject.MaxBridgeCount + 1f, float.NaN, float.PositiveInfinity })
+        {
+            AssertSingleError(p => p.BridgeCount = bad, "Strategy.BridgeCount");
+        }
+
+        AssertValid(p => p.BridgeCount = 0f);
+        AssertValid(p => p.BridgeCount = MillingProject.MaxBridgeCount);
+        foreach (var bad in new[] { 0f, -0.5f, float.NaN, float.PositiveInfinity })
+        {
+            AssertSingleError(p => p.BridgeWidth = bad, "Strategy.BridgeWidth");
+            AssertSingleError(p => p.BridgeHeight = bad, "Strategy.BridgeHeight");
+        }
+
+        // The default stock is 30 mm high: a bridge as high as the stock keeps everything.
+        AssertSingleError(p => p.BridgeHeight = StockDefinition.DefaultSizeZ, "Strategy.BridgeHeight");
+        AssertValid(p => p.BridgeHeight = StockDefinition.DefaultSizeZ - 1f);
+        Assert.Equal(new[] { 4f, 0.5f, 0.3f }, new[] { MillingProject.DefaultBridgeCount, MillingProject.DefaultBridgeWidth, MillingProject.DefaultBridgeHeight });
+    }
+
+    [Fact]
+    public void BridgeWidth_BelowTheCellSize_OnlyWarns()
+    {
+        var result = Validate(p => p.BridgeWidth = 0.1f);
+        Assert.True(result.IsValid);
+        var warning = Assert.Single(result.Warnings, w => w.Field == "Strategy.BridgeWidth");
+        Assert.Contains("one cell", warning.Message);
+        Assert.Empty(Validate(p => p.BridgeWidth = 0.2f).Warnings);
+    }
+
     private static ValidationResult Validate(Action<MillingProject> change)
     {
         var project = MillingProject.Default();

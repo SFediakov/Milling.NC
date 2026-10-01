@@ -414,7 +414,7 @@ MN_API float mn_head_margin(float cell_size, float tolerance) { return mn_adjace
 /* How far the head reaches beyond the cutter edge; the widest head radius for a frustum. */
 MN_API float mn_head_overhang(const mn_tool* tool) { return mn_head_radius(tool) - tool->cutter_diameter / 2.0f; }
 
-static int touches_outside(const int* cells, int count, const mn_grid* g, const float* stock)
+int mn_touches_outside(const int* cells, int count, const mn_grid* g, const float* stock)
 {
     for (int n = 0; n < count; n++) {
         int i = cells[n] % g->width;
@@ -468,7 +468,7 @@ int mn_islands(const mn_grid* g, const float* standing, const float* effective_t
     for (int c = 0; c < total && status == MN_OK; c++) {
         const int* list = components.items + component_offsets.items[c];
         int size = component_offsets.items[c + 1] - component_offsets.items[c];
-        if (touches_outside(list, size, g, stock)) {
+        if (mn_touches_outside(list, size, g, stock)) {
             continue;
         }
         float volume = 0.0f;

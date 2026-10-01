@@ -70,6 +70,8 @@ static inline int mn_reachable_at_level(float reach_floor, float level) { return
 int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* stock, const mn_tool* tool, float tolerance, float stock_top, float floor, float min_island_volume, float* standing, mn_ints* island_cells, mn_ints* island_offsets, float** island_volumes, int* island_count);
 int mn_islands(const mn_grid* g, const float* standing, const float* effective_tip, const float* stock, float tolerance, mn_ints* cells, mn_ints* offsets, float** volumes, int* count);
 int mn_components(const uint8_t* mask, int width, int height, int* labels, mn_ints* cells, mn_ints* offsets);
+/* Whether a cell of the list borders the grid edge or a cell without stock (8-neighbourhood). */
+int mn_touches_outside(const int* cells, int count, const mn_grid* g, const float* stock);
 int mn_within_radius(const uint8_t* marked, int width, int height, float cell_size, float radius, uint8_t* result);
 
 /* ---- routing ---- */
@@ -231,7 +233,23 @@ int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const
 int mn_resolve(const mn_grid* g, const mn_profile* profile, float cutter_length, const float* model, const float* effective, const float* material, float floor, float tolerance,
     float ratio, const mn_hits* hits, uint8_t* status, float* raised);
 
+/* ---- holding bridges (separation scope) ---- */
+
+typedef struct mn_bridge_counts {
+    int parts;
+    int wanted;
+    int placed;
+} mn_bridge_counts;
+
+/* Clears MN_CELL_BRIDGE, places up to `count` bridges per part the cut frees (see mn_bridges.c), sets
+ * MN_CELL_BRIDGE on their cells, lifts `tip` (the strategy tip, in place) over them and replaces the
+ * plan with one whose levels below the bridge top skip the lifted positions. */
+int mn_bridges_place(const mn_grid* g, const float* stock, const float* model, const mn_profile* profile, float cutter_diameter, float floor, float width, float height, int count,
+    float* tip, mn_plan** plan, uint8_t* status, mn_bridge_counts* counts);
+
 /* ---- strategies and checks ---- */
+
+float mn_distance_to(mn_v3 p, mn_v3 a, mn_v3 b);
 
 int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result);
 int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, mn_segments* result);

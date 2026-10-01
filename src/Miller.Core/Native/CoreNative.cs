@@ -154,6 +154,9 @@ internal static unsafe class CoreNative
         public int CollisionMode;
         public float RecursionRatio;
         public float OneRunRatio;
+        public int BridgeCount;
+        public float BridgeWidth;
+        public float BridgeHeight;
     }
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -244,6 +247,7 @@ internal static unsafe class CoreNative
     [DllImport(Library)] public static extern void mn_result_statistics(IntPtr result, Statistics* statistics);
     [DllImport(Library)] public static extern int mn_result_passes(IntPtr result);
     [DllImport(Library)] public static extern void mn_result_pass_counts(IntPtr result, int* entered, int* events);
+    [DllImport(Library)] public static extern void mn_result_bridges(IntPtr result, int* parts, int* wanted, int* placed);
     [DllImport(Library)] public static extern int mn_result_collision_count(IntPtr result);
     [DllImport(Library)] public static extern void mn_result_collisions(IntPtr result, Collision* collisions);
     [DllImport(Library)] public static extern void mn_result_profile(IntPtr result, int* offsetCount, int* annulusCount);

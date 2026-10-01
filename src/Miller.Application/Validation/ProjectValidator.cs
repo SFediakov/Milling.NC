@@ -90,6 +90,29 @@ public static class ProjectValidator
         Positive(errors, "Parameters.RapidRate", p.RapidRate);
         Positive(errors, "Parameters.SpindleRpm", p.SpindleRpm);
         NonNegative(errors, "Strategy.MinIslandVolume", project.MinIslandVolume);
+        var bridges = project.BridgeCount;
+        if (!(bridges >= 0 && bridges <= MillingProject.MaxBridgeCount && bridges == MathF.Floor(bridges)))
+        {
+            errors.Add(new ValidationMessage("Strategy.BridgeCount",
+                $"Bridges per part must be a whole number from 0 to {MillingProject.MaxBridgeCount}, got {F(bridges)}."));
+        }
+
+        if (!(float.IsFinite(project.BridgeWidth) && project.BridgeWidth > 0))
+        {
+            errors.Add(new ValidationMessage("Strategy.BridgeWidth", $"Bridge width must be a finite number greater than 0, got {F(project.BridgeWidth)}."));
+        }
+        else if (p.CellSize > 0 && project.BridgeWidth < p.CellSize)
+        {
+            warnings.Add(new ValidationMessage("Strategy.BridgeWidth",
+                $"Bridge width {F(project.BridgeWidth)} is below the cell size {F(p.CellSize)}: every bridge is one cell wide."));
+        }
+
+        // Compared with the stock height only when that height is valid; an invalid stock reports itself.
+        if (!(float.IsFinite(project.BridgeHeight) && project.BridgeHeight > 0) || (stockSize.Z > 0 && project.BridgeHeight >= stockSize.Z))
+        {
+            errors.Add(new ValidationMessage("Strategy.BridgeHeight",
+                $"Bridge height must be greater than 0 and below the stock height {F(stockSize.Z)}, got {F(project.BridgeHeight)}."));
+        }
         if (!Enum.IsDefined(project.CollisionMode))
         {
             errors.Add(new ValidationMessage("Strategy.CollisionMode", $"Unknown collision mode {project.CollisionMode}."));

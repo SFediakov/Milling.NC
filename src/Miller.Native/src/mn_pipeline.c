@@ -23,6 +23,7 @@ typedef struct mn_pass {
     mn_segments toolpath;
     mn_statistics statistics;
     mn_collisions events;
+    mn_bridge_counts bridges;
     int entered;
     int valid;
 } mn_pass;
@@ -170,9 +171,10 @@ static int prepare(const mn_job* job, stage_monitor* stage, const volatile int32
     return MN_OK;
 }
 
-/* One pass: the tip under the raised map, slicing and cut scope, routing, simplification, statistics
- * and the check. `status` holds the MODEL and SHOULD_REMOVE bits the pass runs with and receives the
- * COLLISION bits of its check; `hits` receives the check's aggregation when given. */
+/* One pass: the tip under the raised map, slicing and cut scope, holding bridges, routing,
+ * simplification, statistics and the check. `status` holds the MODEL and SHOULD_REMOVE bits the pass
+ * runs with and receives the BRIDGE bits of its bridges and the COLLISION bits of its check; `hits`
+ * receives the check's aggregation when given. */
 static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int32_t* cancel, const mn_result* r, const float* raised, uint8_t* status, mn_hits* hits, mn_pass* pass)
 {
     const mn_parameters* p = &job->parameters;
@@ -233,6 +235,16 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
         return status_code;
     }
     mn_apply_limit(pass->effective.z, pass->standing.z, cells, pass->strategy_tip.z);
+    /* Holding bridges belong to the trench of the separation scope; they lift the strategy tip only,
+     * so the next pass builds its trench without them. */
+    if (job->cut_scope == MN_SCOPE_SEPARATION) {
+        status_code = mn_bridges_place(g, r->stock.z, r->model.z, &r->profile, job->tool.cutter_diameter, r->floor, job->bridge_width, job->bridge_height, job->bridge_count,
+            pass->strategy_tip.z, &pass->plan, status, &pass->bridges);
+        if (status_code != MN_OK) {
+            free(should_cut);
+            return status_code;
+        }
+    }
     if (cancelled(cancel)) {
         free(should_cut);
         return mn_fail(MN_ERR_CANCELLED, "Cancelled.");
@@ -332,6 +344,12 @@ static int generate(const mn_job* job, stage_monitor* stage, const volatile int3
     }
     if (!(job->recursion_ratio >= 0) || !(job->one_run_ratio >= 0)) {
         return mn_fail(MN_ERR_ARGUMENT, "The collision ratios must be zero or positive.");
+    }
+    if (job->bridge_count < 0 || job->bridge_count > MN_MAX_BRIDGES) {
+        return mn_fail(MN_ERR_ARGUMENT, "The bridge count must be 0 to %d, got %d.", MN_MAX_BRIDGES, job->bridge_count);
+    }
+    if (job->bridge_count > 0 && !(job->bridge_width > 0 && job->bridge_width < INFINITY && job->bridge_height > 0 && job->bridge_height < INFINITY)) {
+        return mn_fail(MN_ERR_ARGUMENT, "The bridge width and height must be finite and greater than 0.");
     }
     stage->pass = 1;
     MN_CHECK(prepare(job, stage, cancel, r));
@@ -506,6 +524,13 @@ MN_API void mn_result_pass_counts(const mn_result* result, int32_t* entered, int
         entered[k] = result->pass_entered[k];
         events[k] = result->pass_events[k];
     }
+}
+
+MN_API void mn_result_bridges(const mn_result* result, int32_t* parts, int32_t* wanted, int32_t* placed)
+{
+    *parts = result->best.bridges.parts;
+    *wanted = result->best.bridges.wanted;
+    *placed = result->best.bridges.placed;
 }
 
 MN_API int32_t mn_result_collision_count(const mn_result* result) { return result->best.events.count; }
