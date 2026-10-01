@@ -50,7 +50,8 @@ public sealed class CutScopeTests
 
         // The band beside the model wall is cut to the floor by the footprint of positions one radius
         // out (the wall line itself is never entered, so nothing is gouged), the model top is finished.
-        var (bi, bj) = stock.CellOf(20f + 5f + 0.75f, 20f);
+        // y = 23: the +X holding bridge lies on y = 20.
+        var (bi, bj) = stock.CellOf(20f + 5f + 0.75f, 23f);
         Assert.Equal(separation.Floor, stock[bi, bj], 3);
         var analysis = FinalModelAnalyzer.Analyze(stock, separation.Model, separation.Floor, separation.Tolerance);
         Assert.Equal(0, analysis.GougeCells);
@@ -78,7 +79,8 @@ public sealed class CutScopeTests
         Assert.Empty(simulation.Events);
         var stock = simulation.Stock!;
         Assert.Equal(result.Stock.StockTop, stock[0, 0], 3);
-        var (bi, bj) = stock.CellOf(20f + 5f + 0.75f, 20f);
+        // y = 23: the +X holding bridge lies on y = 20.
+        var (bi, bj) = stock.CellOf(20f + 5f + 0.75f, 23f);
         Assert.Equal(result.Floor, stock[bi, bj], 3);
         var (mi, mj) = stock.CellOf(20f, 20f);
         Assert.Equal(5f, stock[mi, mj], 2);
@@ -158,8 +160,9 @@ public sealed class CutScopeTests
         Assert.Empty(simulation.Events);
         var stock = simulation.Stock!;
         Assert.Equal(result.Stock.StockTop, stock[0, 0], 3);
-        // The trench reaches the floor beyond the collar the head limit keeps beside the box.
-        var (ti, tj) = stock.CellOf(20f + 5f + 5f + 0.75f, 20f);
+        // The trench reaches the floor beyond the collar the head limit keeps beside the box (y = 23:
+        // the +X holding bridge lies on y = 20).
+        var (ti, tj) = stock.CellOf(20f + 5f + 5f + 0.75f, 23f);
         Assert.Equal(result.Floor, stock[ti, tj], 3);
         // Terrace: at half depth the trench is wider than at the floor.
         int TrenchCells(float z)

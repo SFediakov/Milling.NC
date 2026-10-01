@@ -52,6 +52,9 @@ public sealed record PipelineResult(
     public int Passes { get; init; } = 1;
 
     public IReadOnlyList<PassCollisions> PassCollisions { get; init; } = Array.Empty<PassCollisions>();
+
+    // Holding bridges of the kept pass (separation scope); their cells carry CellStatus.Bridge.
+    public BridgeReport Bridges { get; init; }
 }
 
 // Runs the stages of docs/ARCHITECTURE.md 5.1 in order: the validation here, every later stage in one
@@ -130,6 +133,7 @@ public sealed class PipelineService
             Collisions = CollisionService.Of(generated.Collisions),
             Passes = generated.Passes,
             PassCollisions = generated.PassCollisions,
+            Bridges = generated.Bridges,
         };
     }
 

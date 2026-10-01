@@ -76,6 +76,20 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
 
     public string? MinIslandVolumeError => ErrorFor("Strategy.MinIslandVolume");
 
+    public float BridgeCount { get => Current.BridgeCount; set => Edit(p => p.BridgeCount = value); }
+
+    public string? BridgeCountError => ErrorFor("Strategy.BridgeCount");
+
+    public float BridgeWidth { get => Current.BridgeWidth; set => Edit(p => p.BridgeWidth = value); }
+
+    public string? BridgeWidthError => ErrorFor("Strategy.BridgeWidth");
+
+    public string? BridgeWidthWarning => WarningFor("Strategy.BridgeWidth");
+
+    public float BridgeHeight { get => Current.BridgeHeight; set => Edit(p => p.BridgeHeight = value); }
+
+    public string? BridgeHeightError => ErrorFor("Strategy.BridgeHeight");
+
     public float ReachPercent { get => Current.ReachPercent; set => Edit(p => p.ReachPercent = value); }
 
     public string? ReachPercentError => ErrorFor("Strategy.ReachPercent");
@@ -111,6 +125,8 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
 
     public IReadOnlyList<PassCollisions> PassCollisions { get; private set; } = Array.Empty<PassCollisions>();
 
+    public BridgeReport Bridges { get; private set; }
+
     public string StatisticsText
     {
         get
@@ -126,6 +142,11 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Estimated time: {Statistics.EstimatedMinutes:0.0} min, retracts: {Statistics.RetractCount}\n"));
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Levels: {Plan.Levels}, lowest level: {Plan.LowestLevel:0.000} mm\n"));
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Generation passes: {Passes}, collisions per pass: {string.Join(", ", PassCollisions.Select(p => p.Events.ToString(CultureInfo.InvariantCulture)))}"));
+            if (Bridges.Wanted > 0)
+            {
+                text.Append(string.Create(CultureInfo.InvariantCulture, $"\nBridges: {Bridges.Placed} of {Bridges.Wanted} placed on {Bridges.Parts} freed part(s)"));
+            }
+
             return text.ToString();
         }
     }
@@ -137,6 +158,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         Plan = result.Plan;
         Passes = result.Passes;
         PassCollisions = result.PassCollisions;
+        Bridges = result.Bridges;
         RaiseStatistics();
     }
 
@@ -146,6 +168,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         Plan = null;
         Passes = 0;
         PassCollisions = Array.Empty<PassCollisions>();
+        Bridges = default;
         RaiseStatistics();
     }
 
@@ -157,6 +180,9 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         OnPropertyChanged(nameof(IsSeparation));
         OnPropertyChanged(nameof(MinIslandVolume));
         OnPropertyChanged(nameof(MinIslandVolumeError));
+        OnPropertyChanged(nameof(BridgeCount));
+        OnPropertyChanged(nameof(BridgeWidth));
+        OnPropertyChanged(nameof(BridgeHeight));
         OnPropertyChanged(nameof(ReachPercent));
         OnPropertyChanged(nameof(ReachPercentError));
         OnPropertyChanged(nameof(CollisionMode));
@@ -172,6 +198,10 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
     {
         base.OnErrorsChanged();
         OnPropertyChanged(nameof(MinIslandVolumeError));
+        OnPropertyChanged(nameof(BridgeCountError));
+        OnPropertyChanged(nameof(BridgeWidthError));
+        OnPropertyChanged(nameof(BridgeWidthWarning));
+        OnPropertyChanged(nameof(BridgeHeightError));
         OnPropertyChanged(nameof(ReachPercentError));
         OnPropertyChanged(nameof(RecursionRatioError));
         OnPropertyChanged(nameof(OneRunRatioError));

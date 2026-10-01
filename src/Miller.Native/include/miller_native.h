@@ -205,11 +205,13 @@ MN_API void mn_writer_free(mn_writer* writer);
 /* One byte per cell. MODEL: shouldn't be removed (the model stands above the floor). SHOULD_REMOVE:
  * stock the head hit; cut to its closing before the tool goes deeper beside it. COLLISION: the head
  * or a rapid entered the cell in the last check and it stayed unresolved (a model cell, or stock that
- * could not be removed). FORBIDDEN: a tool position raised until its head clears. */
+ * could not be removed). FORBIDDEN: a tool position raised until its head clears. BRIDGE: a cut-through
+ * cell of a holding bridge, shouldn't be cut below the bridge top (separation scope). */
 #define MN_CELL_MODEL 1
 #define MN_CELL_SHOULD_REMOVE 2
 #define MN_CELL_COLLISION 4
 #define MN_CELL_FORBIDDEN 8
+#define MN_CELL_BRIDGE 16
 
 /* Recursion: generate, check, resolve and generate again while collisions decrease. One run: the
  * strategies evaluate every node against the standing material before its route (T-150). */
@@ -305,7 +307,14 @@ typedef struct mn_job {
     int32_t collision_mode;
     float recursion_ratio;
     float one_run_ratio;
+    /* Separation scope: holding bridges per part the trench frees (0 to MN_MAX_BRIDGES, 0 for none),
+     * their width and the material they keep above the floor. */
+    int32_t bridge_count;
+    float bridge_width;
+    float bridge_height;
 } mn_job;
+
+#define MN_MAX_BRIDGES 32
 
 typedef struct mn_result mn_result;
 
@@ -358,6 +367,9 @@ MN_API void mn_result_statistics(const mn_result* result, mn_statistics* statist
 MN_API int32_t mn_result_passes(const mn_result* result);
 /* Per pass (mn_result_passes entries): the distinct cells its check entered and its events. */
 MN_API void mn_result_pass_counts(const mn_result* result, int32_t* entered, int32_t* events);
+/* Holding bridges of the kept pass: the parts the trench frees, the bridges wanted (parts times the
+ * count) and the bridges placed. */
+MN_API void mn_result_bridges(const mn_result* result, int32_t* parts, int32_t* wanted, int32_t* placed);
 MN_API int32_t mn_result_collision_count(const mn_result* result);
 MN_API void mn_result_collisions(const mn_result* result, mn_collision* collisions);
 MN_API void mn_result_profile(const mn_result* result, int32_t* offset_count, int32_t* annulus_count);

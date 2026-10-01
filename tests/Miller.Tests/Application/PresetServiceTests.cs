@@ -94,6 +94,30 @@ public sealed class PresetServiceTests : IDisposable
     }
 
     [Fact]
+    public void Bridges_TravelWithThePreset_AndOlderPresetsLoadTheDefaults()
+    {
+        var source = Sample();
+        source.BridgeCount = 2f;
+        source.BridgeWidth = 1.5f;
+        source.BridgeHeight = 0.6f;
+        var service = new PresetService(_root);
+        service.Load();
+        service.Save(MillingPreset.FromProject(source, "B"));
+        var reloaded = new PresetService(_root);
+        reloaded.Load();
+        var target = MillingProject.Default();
+        reloaded.Find("B")!.ApplyTo(target);
+        Assert.Equal(2f, target.BridgeCount);
+        Assert.Equal(1.5f, target.BridgeWidth);
+        Assert.Equal(0.6f, target.BridgeHeight);
+
+        var older = new MillingPreset { Name = "old" };
+        Assert.Equal(MillingProject.DefaultBridgeCount, older.BridgeCount);
+        Assert.Equal(MillingProject.DefaultBridgeWidth, older.BridgeWidth);
+        Assert.Equal(MillingProject.DefaultBridgeHeight, older.BridgeHeight);
+    }
+
+    [Fact]
     public void ApplyTo_CopiesTheFourGroups_AndLeavesStockAndModelsAlone()
     {
         var preset = MillingPreset.FromProject(Sample(), "P");

@@ -33,14 +33,19 @@ public sealed record GenerationResult(
     CellStatus[] Status,
     CollisionReport Collisions,
     int Passes,
-    IReadOnlyList<PassCollisions> PassCollisions);
+    IReadOnlyList<PassCollisions> PassCollisions,
+    BridgeReport Bridges);
 
 // What one generation pass's check found: the distinct entered cells and the events.
 public readonly record struct PassCollisions(int EnteredCells, int Events);
 
+// Holding bridges of the kept pass (separation scope): the parts the trench frees at the floor, the
+// bridges wanted (parts times the bridge count) and the bridges placed.
+public readonly record struct BridgeReport(int Parts, int Wanted, int Placed);
+
 // The whole toolpath generation in one call of the native library (mn_generate): transform, stock,
-// model map, reach map, then per pass the raised tips, slicing and cut scope, routing,
-// simplification, statistics and the dynamic collision check; recursion mode repeats the pass
+// model map, reach map, then per pass the raised tips, slicing and cut scope, the holding bridges of
+// the separation scope, routing, simplification, statistics and the dynamic collision check; recursion mode repeats the pass
 // while the collisions decrease. The placement of the models (machine matrices) and the stock box
 // come from the setup classes, which the viewport shares; the progress reports carry the pass and
 // the stage index of the pipeline table (1 transform .. 10 collision check).
@@ -125,6 +130,9 @@ public static class ToolpathGeneration
                 CollisionMode = (int)project.CollisionMode,
                 RecursionRatio = project.RecursionRatio,
                 OneRunRatio = project.OneRunRatio,
+                BridgeCount = (int)project.BridgeCount,
+                BridgeWidth = project.BridgeWidth,
+                BridgeHeight = project.BridgeHeight,
             };
             CoreNative.Check(CoreNative.mn_generate(&job, callbackPointer, IntPtr.Zero, cancel.Pointer, &result), cancellation);
         }
@@ -254,6 +262,9 @@ public static class ToolpathGeneration
             passCollisions[k] = new PassCollisions(entered[k], passEvents[k]);
         }
 
+        int parts, wanted, placed;
+        CoreNative.mn_result_bridges(result, &parts, &wanted, &placed);
+
         var collisionCount = CoreNative.mn_result_collision_count(result);
         var collisions = new CoreNative.Collision[Math.Max(collisionCount, 1)];
         CollisionReport report;
@@ -281,6 +292,7 @@ public static class ToolpathGeneration
             status,
             report,
             passes,
-            passCollisions);
+            passCollisions,
+            new BridgeReport(parts, wanted, placed));
     }
 }

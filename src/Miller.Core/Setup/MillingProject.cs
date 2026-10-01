@@ -33,6 +33,13 @@ public sealed class MillingProject
     // only it finishes outnumber the met ones by more than the ratio times.
     public const float DefaultCollisionRatio = 10f;
 
+    public const float DefaultBridgeCount = 4f;
+    public const float DefaultBridgeWidth = 0.5f;
+    public const float DefaultBridgeHeight = 0.3f;
+
+    // The native library's MN_MAX_BRIDGES.
+    public const int MaxBridgeCount = 32;
+
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
     public List<ModelPlacement> Models { get; set; } = new();
@@ -65,6 +72,14 @@ public sealed class MillingProject
     // Separation scope only: the smallest island of standing stock (enclosed by the trench, mm3)
     // that stays; smaller islands are milled out. 0 keeps every island.
     public float MinIslandVolume { get; set; }
+
+    // Separation scope only: holding bridges per part the trench frees at the floor (a whole number,
+    // 0 for none), their width (mm) and the material they keep above the floor (mm).
+    public float BridgeCount { get; set; } = DefaultBridgeCount;
+
+    public float BridgeWidth { get; set; } = DefaultBridgeWidth;
+
+    public float BridgeHeight { get; set; } = DefaultBridgeHeight;
 
     // Reach rule (ReachMap): the share of the footprint cells that must be free of model for the
     // tool to enter a position, in percent. 50 is the majority rule, 100 never cuts the model.

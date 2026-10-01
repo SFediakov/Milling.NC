@@ -245,6 +245,25 @@ public sealed class ProjectSerializerTests
         Assert.Equal(10f, MillingProject.DefaultCollisionRatio);
     }
 
+    // A file written before the holding bridges loads the defaults; set values round-trip.
+    [Fact]
+    public void Bridges_LoadTheDefaultsWhenMissing_AndRoundTrip()
+    {
+        var old = ProjectSerializer.Deserialize("{ \"SchemaVersion\": 3, \"CutScope\": \"Separation\" }");
+        Assert.Equal(MillingProject.DefaultBridgeCount, old.BridgeCount);
+        Assert.Equal(MillingProject.DefaultBridgeWidth, old.BridgeWidth);
+        Assert.Equal(MillingProject.DefaultBridgeHeight, old.BridgeHeight);
+
+        var original = FullyCustomized();
+        original.BridgeCount = 6;
+        original.BridgeWidth = 0.8f;
+        original.BridgeHeight = 0.45f;
+        var copy = ProjectSerializer.Deserialize(ProjectSerializer.Serialize(original));
+        Assert.Equal(6f, copy.BridgeCount);
+        Assert.Equal(0.8f, copy.BridgeWidth);
+        Assert.Equal(0.45f, copy.BridgeHeight);
+    }
+
     [Fact]
     public void RoundTrip_KeepsTheScaleAndTheLink()
     {
