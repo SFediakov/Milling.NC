@@ -219,4 +219,119 @@ public sealed class ModelsViewModelTests : IDisposable
         Assert.Equal(3, namesRaised);
         Assert.Empty(vm.Models.Names);
     }
+
+    [Fact]
+    public async Task LinkedScale_SetsEveryAxis_OfTheSelectedModelOnly_AndTheViewportFollows()
+    {
+        var vm = await WithTwoCubesAsync();
+        vm.Models.SelectedIndex = 1;
+        Assert.True(vm.Models.LinkedScale);
+        Assert.Equal(1f, vm.Models.ScaleX);
+
+        vm.Models.ScaleY = 2f;
+        Assert.Equal(new Vector3(2f), vm.Project.Current.Models[1].Scale);
+        Assert.Equal(2f, vm.Models.ScaleX);
+        Assert.Equal(2f, vm.Models.ScaleZ);
+        Assert.Equal(Vector3.One, vm.Project.Current.Models[0].Scale);
+        Assert.True(vm.Project.IsDirty);
+        Assert.Null(vm.Models.ScaleError);
+        var scaled = vm.Viewport.Meshes[1].Bounds.Size;
+        Assert.Equal(2f, scaled.X, 3);
+        Assert.Equal(2f, scaled.Y, 3);
+        Assert.Equal(2f, scaled.Z, 3);
+        Assert.Equal(1f, vm.Viewport.Meshes[0].Bounds.Size.X, 3);
+    }
+
+    [Fact]
+    public async Task UnlinkedScale_ChangesOneAxis_AndLinkingGivesAllAxesTheXFactor()
+    {
+        var vm = await WithTwoCubesAsync();
+        vm.Models.SelectedIndex = 0;
+        var placement = vm.Project.Current.Models[0];
+        vm.Models.LinkedScale = false;
+        Assert.False(placement.LinkedScale);
+
+        vm.Models.ScaleX = 3f;
+        vm.Models.ScaleZ = 0.5f;
+        Assert.Equal(new Vector3(3f, 1f, 0.5f), placement.Scale);
+        var size = vm.Viewport.Meshes[0].Bounds.Size;
+        Assert.Equal(3f, size.X, 3);
+        Assert.Equal(1f, size.Y, 3);
+        Assert.Equal(0.5f, size.Z, 3);
+
+        vm.Models.LinkedScale = true;
+        Assert.True(placement.LinkedScale);
+        Assert.Equal(new Vector3(3f), placement.Scale);
+        Assert.Equal(3f, vm.Models.ScaleY);
+        Assert.Equal(3f, vm.Models.ScaleZ);
+    }
+
+    [Fact]
+    public async Task ScaleFields_ShowTheSelectedModel_AndIgnoreEditsWithoutASelection()
+    {
+        var vm = await WithTwoCubesAsync();
+        vm.Models.SelectedIndex = 1;
+        vm.Models.LinkedScale = false;
+        vm.Models.ScaleX = 2f;
+        var raised = new List<string?>();
+        vm.Models.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.Models.SelectedIndex = 0;
+        Assert.Equal(1f, vm.Models.ScaleX);
+        Assert.True(vm.Models.LinkedScale);
+        Assert.Contains(nameof(ModelsViewModel.ScaleX), raised);
+        Assert.Contains(nameof(ModelsViewModel.LinkedScale), raised);
+        vm.Models.SelectedIndex = 1;
+        Assert.Equal(2f, vm.Models.ScaleX);
+        Assert.False(vm.Models.LinkedScale);
+
+        vm.Models.SelectedIndex = -1;
+        vm.Models.ScaleX = 5f;
+        vm.Models.LinkedScale = true;
+        Assert.Equal(1f, vm.Models.ScaleX);
+        Assert.False(vm.Models.LinkedScale);
+        Assert.Equal(new Vector3(2f, 1f, 1f), vm.Project.Current.Models[1].Scale);
+        Assert.False(vm.Project.Current.Models[1].LinkedScale);
+        Assert.Equal(Vector3.One, vm.Project.Current.Models[0].Scale);
+    }
+
+    // A zero typed on the way to 0.5 must not throw anywhere; the validator names it until a valid
+    // factor replaces it.
+    [Fact]
+    public async Task ZeroScale_ShowsAnError_InsteadOfThrowing_AndAValidFactorClearsIt()
+    {
+        var vm = await WithTwoCubesAsync();
+        vm.Models.SelectedIndex = 1;
+        vm.Models.ScaleX = 0f;
+        Assert.Equal(Vector3.Zero, vm.Project.Current.Models[1].Scale);
+        Assert.NotNull(vm.Models.ScaleError);
+        Assert.Contains("second.stl", vm.Models.ScaleError);
+        Assert.Equal(2, vm.Viewport.Meshes.Count);
+
+        vm.Models.ScaleX = 0.5f;
+        Assert.Null(vm.Models.ScaleError);
+        Assert.Equal(0.5f, vm.Viewport.Meshes[1].Bounds.Size.Z, 3);
+        Assert.Empty(_errors.Shown);
+    }
+
+    [Fact]
+    public async Task SaveAndReopen_KeepsTheScaleAndTheLink()
+    {
+        var vm = await WithTwoCubesAsync();
+        vm.Models.SelectedIndex = 1;
+        vm.Models.LinkedScale = false;
+        vm.Models.ScaleY = 2.5f;
+        var projectPath = Path.Combine(_root, "scaled.miller.json");
+        _dialogs.SaveResults.Enqueue(projectPath);
+        await vm.SaveProjectAsCommand.ExecuteAsync(null);
+
+        var reopened = TestServices.MainWindowViewModel(_root, _dialogs, _errors);
+        _dialogs.OpenResults.Enqueue(projectPath);
+        await reopened.OpenProjectCommand.ExecuteAsync(null);
+        Assert.Equal(new Vector3(1f, 2.5f, 1f), reopened.Project.Current.Models[1].Scale);
+        Assert.False(reopened.Project.Current.Models[1].LinkedScale);
+        Assert.True(reopened.Project.Current.Models[0].LinkedScale);
+        Assert.Equal(2.5f, reopened.Viewport.Meshes[1].Bounds.Size.Y, 3);
+        Assert.Empty(_errors.Shown);
+    }
 }

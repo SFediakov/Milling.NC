@@ -3,8 +3,8 @@ using Miller.Core.Geometry;
 
 namespace Miller.Core.Setup;
 
-// Where every model of a project ends up in machine space. Placement (orientation, rotation about
-// Z around the oriented center, offset) is per model. The stock is anchored to the union of the
+// Where every model of a project ends up in machine space. Placement (orientation, scale and
+// rotation about Z around the oriented center, offset) is per model. The stock is anchored to the union of the
 // models before their offsets (AnchorBounds), so an offset moves a model inside the stock and never
 // drags the stock along; machine zero comes from the stock corner around that anchor and is shared,
 // so one model with a zero placement lands exactly where AxisSetup.ToMatrix used to put it.
@@ -12,14 +12,15 @@ public static class ModelLayout
 {
     private const float DegToRad = MathF.PI / 180f;
 
-    // Orientation and the turn about Z around the oriented center; the offset comes on top of it.
+    // Orientation, then the scale and the turn about Z around the oriented center; the offset comes
+    // on top of it. Scaling before the turn keeps a turned model undistorted (its own axes stretch).
     public static Matrix4x4 TurnMatrix(AxisSetup axes, ModelPlacement placement, BoundingBox modelBounds)
     {
         ArgumentNullException.ThrowIfNull(axes);
         ArgumentNullException.ThrowIfNull(placement);
         var orientation = axes.ToOrientationMatrix();
         var center = AxisSetup.TransformBounds(modelBounds, orientation).Center;
-        var turn = Matrix4x4.CreateTranslation(-center) * Matrix4x4.CreateRotationZ(placement.RotationZ * DegToRad) * Matrix4x4.CreateTranslation(center);
+        var turn = Matrix4x4.CreateTranslation(-center) * Matrix4x4.CreateScale(placement.Scale) * Matrix4x4.CreateRotationZ(placement.RotationZ * DegToRad) * Matrix4x4.CreateTranslation(center);
         return orientation * turn;
     }
 

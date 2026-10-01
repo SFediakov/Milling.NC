@@ -120,6 +120,16 @@ public static class ProjectValidator
             errors.Add(new ValidationMessage("Stock.Margin", $"Margin {F(stock.Margin)} must not be negative."));
         }
 
+        foreach (var placement in project.Models)
+        {
+            var s = placement.Scale;
+            if (!(float.IsFinite(s.X) && s.X > 0 && float.IsFinite(s.Y) && s.Y > 0 && float.IsFinite(s.Z) && s.Z > 0))
+            {
+                errors.Add(new ValidationMessage("Models.Scale",
+                    $"Scale of {placement.DisplayName} must be a finite factor greater than 0 on every axis, got {F(s.X)}, {F(s.Y)}, {F(s.Z)}."));
+            }
+        }
+
         if (modelBoundsMachine is { IsEmpty: false } model && !StockContains(project, model))
         {
             warnings.Add(new ValidationMessage("Stock.Placement",

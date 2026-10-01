@@ -267,6 +267,22 @@ public sealed class ProjectValidatorTests
         Assert.Contains("Parameters.Stepdown", ex.Message);
     }
 
+    [Fact]
+    public void ModelScale_MustBeFiniteAndPositiveOnEveryAxis()
+    {
+        foreach (var bad in new[] { 0f, -1f, float.NaN, float.PositiveInfinity, float.NegativeInfinity })
+        {
+            AssertSingleError(p => p.Models.Add(new ModelPlacement { StlPath = "a.stl", Scale = new Vector3(1, bad, 1) }), "Models.Scale");
+            AssertSingleError(p => p.Models.Add(new ModelPlacement { StlPath = "a.stl", Scale = new Vector3(bad) }), "Models.Scale");
+        }
+
+        var result = Validate(p => p.Models.Add(new ModelPlacement { StlPath = "parts/b.stl", Scale = new Vector3(2, 0, 1) }));
+        Assert.Contains("b.stl", Assert.Single(result.Errors).Message);
+
+        AssertValid(p => p.Models.Add(new ModelPlacement { StlPath = "a.stl", Scale = new Vector3(0.001f, 2.5f, 1000f) }));
+        AssertValid(p => p.Models.Add(new ModelPlacement { StlPath = "a.stl" }));
+    }
+
     private static ValidationResult Validate(Action<MillingProject> change)
     {
         var project = MillingProject.Default();

@@ -21,17 +21,19 @@ public enum AlignTarget
 }
 
 // The models on the table: list, add and remove, the auto-fit alignment of the stock around all
-// models per axis, and the placement (offset, rotation about Z) of the selected one, including
-// aligning it to the stock minimum, middle or maximum on one axis at a time and moving it by a
-// viewport drag. Selection is shared with the viewport through SelectedIndex.
+// models per axis, and the placement (offset, rotation about Z, scale per axis) of the selected one,
+// including aligning it to the stock minimum, middle or maximum on one axis at a time and moving it
+// by a viewport drag. Selection is shared with the viewport through SelectedIndex.
 public sealed partial class ModelsViewModel : SettingsViewModelBase
 {
     public const string FieldPrefixModels = "Models";
+    public const string FieldScale = "Models.Scale";
     public const string NoSelectionText = "Select a model to place it.";
 
     private static readonly string[] PlacementProperties =
     {
-        nameof(HasSelection), nameof(OffsetX), nameof(OffsetY), nameof(OffsetZ), nameof(RotationZ), nameof(SelectedName), nameof(PlacementText),
+        nameof(HasSelection), nameof(OffsetX), nameof(OffsetY), nameof(OffsetZ), nameof(RotationZ),
+        nameof(ScaleX), nameof(ScaleY), nameof(ScaleZ), nameof(LinkedScale), nameof(SelectedName), nameof(PlacementText),
     };
 
     private static readonly string[] StockProperties =
@@ -80,7 +82,7 @@ public sealed partial class ModelsViewModel : SettingsViewModelBase
 
     public string SelectedName => HasSelection ? Current.Models[SelectedIndex].DisplayName : string.Empty;
 
-    public string PlacementText => HasSelection ? $"Placement of {SelectedName} (mm, degrees)" : NoSelectionText;
+    public string PlacementText => HasSelection ? $"Placement of {SelectedName} (mm, degrees, factors)" : NoSelectionText;
 
     public float OffsetX
     {
@@ -112,6 +114,50 @@ public sealed partial class ModelsViewModel : SettingsViewModelBase
             }
         }
     }
+
+    public float ScaleX
+    {
+        get => HasSelection ? Current.Models[SelectedIndex].Scale.X : 1f;
+        set => EditScale(value, s => new Vector3(value, s.Y, s.Z));
+    }
+
+    public float ScaleY
+    {
+        get => HasSelection ? Current.Models[SelectedIndex].Scale.Y : 1f;
+        set => EditScale(value, s => new Vector3(s.X, value, s.Z));
+    }
+
+    public float ScaleZ
+    {
+        get => HasSelection ? Current.Models[SelectedIndex].Scale.Z : 1f;
+        set => EditScale(value, s => new Vector3(s.X, s.Y, value));
+    }
+
+    // Linking gives all three axes the X factor at once; from then on every scale edit sets all three.
+    public bool LinkedScale
+    {
+        get => HasSelection && Current.Models[SelectedIndex].LinkedScale;
+        set
+        {
+            if (!HasSelection || value == Current.Models[SelectedIndex].LinkedScale)
+            {
+                return;
+            }
+
+            var index = SelectedIndex;
+            Edit(p =>
+            {
+                var placement = p.Models[index];
+                placement.LinkedScale = value;
+                if (value)
+                {
+                    placement.Scale = new Vector3(placement.Scale.X);
+                }
+            });
+        }
+    }
+
+    public string? ScaleError => ErrorFor(FieldScale);
 
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void Remove()
@@ -188,6 +234,23 @@ public sealed partial class ModelsViewModel : SettingsViewModelBase
 
         var index = SelectedIndex;
         Edit(p => p.Models[index].Offset = change(p.Models[index].Offset), property);
+    }
+
+    private void EditScale(float value, Func<Vector3, Vector3> change, [System.Runtime.CompilerServices.CallerMemberName] string? property = null)
+    {
+        if (!HasSelection)
+        {
+            return;
+        }
+
+        var index = SelectedIndex;
+        Edit(p => p.Models[index].Scale = p.Models[index].LinkedScale ? new Vector3(value) : change(p.Models[index].Scale), property);
+    }
+
+    protected override void OnErrorsChanged()
+    {
+        base.OnErrorsChanged();
+        OnPropertyChanged(nameof(ScaleError));
     }
 
     private void RefreshNames()
