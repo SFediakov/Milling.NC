@@ -219,11 +219,12 @@ public sealed class MachineController : IDisposable
             }
 
             _linkState = LinkState.Closed;
-            _ready.TrySetResult(false);
             Publish();
+            _ready.TrySetResult(false);
         }
     }
 
+    // The snapshot is published before Ready completes: the awaiting caller reads the reason from it.
     private void Fail(string message)
     {
         _error = message;
@@ -234,6 +235,7 @@ public sealed class MachineController : IDisposable
             FinishJob(JobState.Failed, message);
         }
 
+        Publish();
         _ready.TrySetResult(false);
     }
 
@@ -552,6 +554,7 @@ public sealed class MachineController : IDisposable
         _lastStatusAt = now;
         _nextPollAt = now;
         Log.Add(LogKind.Info, $"Connected to {_link.Name}{(_version is null ? string.Empty : $", Grbl {_version}")}");
+        Publish();
         _ready.TrySetResult(true);
     }
 
