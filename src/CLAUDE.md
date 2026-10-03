@@ -606,3 +606,14 @@
 - Beside the model the collision handling of either mode leaves a few cells differently from one
   schedule to the next (a cell at 1 against 0 within the head radius of the box, both above the
   reach floor): tests compare final stocks of different schedules only outside that ring.
+- Moves one cell long along every wall are the tolerance below the cell size, not the solver (T-158):
+  every outline cell is a node, the route visits them in contour order, and the staircase of a wall
+  joins into chords only when the tolerance reaches the cell size, because its corners alternate
+  between two lines one cell apart and Douglas-Peucker chords run vertex to vertex. The fine cannot
+  change that; it only decides the order of nodes the strategy demands. Read the move length
+  distribution of the .nc file before blaming the solver (`nc_stats.py` in the session scratchpad
+  did it: 82 percent of the moves were one cell).
+- An XY simplification floor (one cell, tried for T-158) is unsafe: the chord along the inner
+  corner family shifts the cutter a cell away from the wall and leaves a strip of wall standing at
+  full level height (LevelCoverage and CollisionModes tests), the chord along the outer family
+  gouges. At cell resolution the staircase is the wall; smoother moves cost the tolerance.
