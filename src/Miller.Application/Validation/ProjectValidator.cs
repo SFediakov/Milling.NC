@@ -67,6 +67,11 @@ public static class ProjectValidator
             errors.Add(new ValidationMessage("Parameters.FarStepdown",
                 $"Far stepdown {F(p.FarStepdown)} must be 0 (none) or a whole multiple of the stepdown {F(p.Stepdown)} of at least twice it."));
         }
+        else if (p.Stepdown > 0 && p.FarStepdown > tool.CutterLength + Slicer.LevelTolerance)
+        {
+            warnings.Add(new ValidationMessage("Parameters.FarStepdown",
+                $"Far stepdown {F(p.FarStepdown)} exceeds the cutter length {F(tool.CutterLength)}: no single step can go deeper, so the far area is cut in steps of at most the cutter length, each over the positions the head clears."));
+        }
 
         var stockSize = AxisSetup.StockBoundingSize(stock);
         Positive(errors, "Parameters.SafeHeight", p.SafeHeight);

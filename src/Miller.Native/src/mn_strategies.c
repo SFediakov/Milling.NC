@@ -130,7 +130,15 @@ static int cave_tree_build(const mn_plan* plan, mn_cave_tree* tree)
             cave->cells_first = offsets.items[id];
             cave->cells_count = offsets.items[id + 1] - offsets.items[id];
             int index = tree->cave_count++;
-            int parent = k > 0 ? tree->labels[(size_t)(k - 1) * (size_t)cells + (size_t)tree->cells.items[cave->cells_first]] : -1;
+            /* The parent holds any cell of the cave: with nested masks that is the first cell, in a
+             * group plan (T-157) a far cell rejoins the masks below its step and has no cave above. */
+            int parent = -1;
+            if (k > 0) {
+                const int* above = tree->labels + (size_t)(k - 1) * (size_t)cells;
+                for (int m = 0; m < cave->cells_count && parent < 0; m++) {
+                    parent = above[tree->cells.items[cave->cells_first + m]];
+                }
+            }
             if (parent >= 0) {
                 status = mn_ints_push(&tree->caves[tree->level_first[k - 1] + parent].children, index);
             } else {
@@ -1005,9 +1013,10 @@ static void top_band_cells(const mn_context* context, const uint8_t* touches, ui
  * should-cut route first. Without should-cut cells there is no such route. In one run mode every
  * route passes the guard first (T-150). With a far stepdown (T-156, k times the stepdown) the levels
  * form groups of k: the far region of the group's bottom level (its mask at a distance of at least the
- * stepover from everything that stays above that level) is routed first, in one step down from where
- * the material stands, then the caves of the group's levels without the far cells run as above, and
- * the next group starts at the level the far pass reached; a group of one level has no far pass. */
+ * stepover from everything that stays above that level) is routed first, in steps of at most the
+ * cutter length from where the material stands (T-157, far_steps_of), then the caves of the group's
+ * levels without the far cells run as above, and the next group starts at the level the far block
+ * reached; a group of one level has no far block. */
 
 /* Every should-cut pass cell is a node: the head limit counts on the tool at the tip of every
  * position over should-cut stock, and a lattice at the finishing stepover left the stock higher. */
@@ -1038,10 +1047,19 @@ typedef struct mn_z_state {
     int step;
 } mn_z_state;
 
+/* One step of the far block: its plan level, the far positions cut to it in one step, their nodes
+ * and their should-cut nodes. */
+typedef struct mn_z_step {
+    int level;
+    mn_ints cells;
+    mn_ints nodes;
+    mn_ints cut_nodes;
+} mn_z_step;
+
 /* One group of levels: its plan (the context's plan itself without a far stepdown; otherwise the
- * group's levels with the far cells taken out of the masks, plus the next level with an empty mask
- * that only names the next level for the should-cut routes), its cave tree, the nodes and the
- * should-cut nodes per cave, and the far region of its bottom level with its nodes. */
+ * group's levels with the far cells taken out of the masks down to the step that cuts them, plus the
+ * next level with an empty mask that only names the next level for the should-cut routes), its cave
+ * tree, the nodes and the should-cut nodes per cave, and the steps of its far block. */
 typedef struct mn_z_group {
     mn_plan plan;
     int owns_plan;
@@ -1050,9 +1068,8 @@ typedef struct mn_z_group {
     mn_cave_tree tree;
     mn_ints* nodes;
     mn_ints* cut_nodes;
-    mn_ints far_cells;
-    mn_ints far_nodes;
-    mn_ints far_cut_nodes;
+    mn_z_step* steps;
+    int step_count;
 } mn_z_group;
 
 static void z_group_free(mn_z_group* group)
@@ -1072,9 +1089,12 @@ static void z_group_free(mn_z_group* group)
         free(group->plan.levels);
         free(group->plan.masks);
     }
-    mn_ints_free(&group->far_cells);
-    mn_ints_free(&group->far_nodes);
-    mn_ints_free(&group->far_cut_nodes);
+    for (int t = 0; t < group->step_count; t++) {
+        mn_ints_free(&group->steps[t].cells);
+        mn_ints_free(&group->steps[t].nodes);
+        mn_ints_free(&group->steps[t].cut_nodes);
+    }
+    free(group->steps);
     memset(group, 0, sizeof(*group));
 }
 
@@ -1132,6 +1152,119 @@ static void count_pass(mn_z_state* s, const mn_ints* nodes, int* max_nodes)
     *max_nodes = mn_maxi(*max_nodes, nodes->count);
 }
 
+/* The steps of a group's far block (T-157). A single step can never go deeper than the cutter length:
+ * the head is wider than the cutter and meets the uncut material ahead of it, whatever the order of
+ * the nodes. So the far region is cut in steps of the largest multiple of the stepdown within the
+ * cutter length (one step when the far stepdown fits), each over the positions far enough from the
+ * material that stands at `standing_top` during the far block (the band nearer than the stepover,
+ * the model, everything no far footprint covers) and from what the shallower steps leave standing:
+ * with D_t the depth of step t below the standing top, c the cutter length, r the cutter radius,
+ * R(h) the head radius at height h above the head bottom and m the head margin, a position belongs
+ * to every step whose threshold it reaches, delta_t = max(R(D_t - c) + m, max over steps u with
+ * D_t - D_u > c of delta_(u+1) + r + R(D_t - D_u - c) + m), 0 while D_t is within c, so every route
+ * drops at most one step below the material the previous route left. Its cells leave the walk masks
+ * down to its deepest step's level only; the walk cuts the rest once the near band is down. */
+static int far_steps_of(mn_z_state* s, mn_z_group* group, const mn_ints* far, float standing_top, int* max_nodes)
+{
+    const mn_context* context = s->context;
+    const mn_plan* plan = context->plan;
+    const mn_grid* g = &context->grid;
+    int cells = mn_cells(g);
+    int first = group->first;
+    int last = group->last;
+    float stepdown = context->parameters.stepdown;
+    float cutter_length = context->tool.cutter_length;
+    float cutter_radius = context->tool.cutter_diameter / 2.0f;
+    float margin = mn_head_margin(g->cell_size, context->parameters.tolerance);
+    int per_step = mn_maxi(1, mn_f2i(floorf((cutter_length + MN_LEVEL_TOLERANCE) / stepdown)));
+    int count = (last - first + per_step) / per_step;
+    group->steps = (mn_z_step*)mn_alloc((size_t)count, sizeof(mn_z_step));
+    float* depth = (float*)mn_alloc((size_t)count, sizeof(float));
+    float* threshold = (float*)mn_alloc((size_t)count, sizeof(float));
+    float* distance = (float*)mn_alloc((size_t)cells, sizeof(float));
+    int status = MN_OK;
+    if (group->steps == NULL || depth == NULL || threshold == NULL || distance == NULL) {
+        status = mn_fail(MN_ERR_MEMORY, "Out of memory for the far block of %d steps.", count);
+        goto done;
+    }
+    group->step_count = count;
+    for (int t = 0; t < count; t++) {
+        int level = mn_mini(first + (t + 1) * per_step - 1, last);
+        group->steps[t].level = level;
+        depth[t] = standing_top - plan->levels[level];
+    }
+    for (int t = 0; t < count; t++) {
+        float value = 0.0f;
+        if (depth[t] > cutter_length + MN_LEVEL_TOLERANCE) {
+            value = mn_head_radius_at(&context->tool, depth[t] - cutter_length) + margin;
+            for (int u = 0; u + 1 < t; u++) {
+                float slab = depth[t] - depth[u] - cutter_length;
+                if (slab > MN_LEVEL_TOLERANCE) {
+                    value = mn_max(value, threshold[u + 1] + cutter_radius + mn_head_radius_at(&context->tool, slab) + margin);
+                }
+            }
+        }
+        threshold[t] = value;
+    }
+
+    memset(s->covered, 0, (size_t)cells);
+    for (int m = 0; m < far->count; m++) {
+        cover_footprint(g, s->profile, far->items[m], s->covered);
+    }
+    for (int c = 0; c < cells; c++) {
+        s->inside[c] = (uint8_t)(!mn_isnan(context->stock[c]) && !s->covered[c]);
+    }
+    status = mn_distance_transform(s->inside, g->width, g->height, g->cell_size, distance);
+    for (int m = 0; m < far->count && status == MN_OK; m++) {
+        int c = far->items[m];
+        int t = -1;
+        for (int k = 0; k < count; k++) {
+            if (distance[c] >= threshold[k]) {
+                t = k;
+            }
+        }
+        if (t < 0) {
+            continue;
+        }
+        /* Every step down to the deepest one reached: a route never drops more than one step. */
+        for (int k = 0; k <= t && status == MN_OK; k++) {
+            status = mn_ints_push(&group->steps[k].cells, c);
+        }
+        for (int k = 0; k <= group->steps[t].level - first; k++) {
+            group->plan.masks[(size_t)k * (size_t)cells + (size_t)c] = 0;
+        }
+    }
+    for (int t = 0; t < count && status == MN_OK; t++) {
+        mn_z_step* step = &group->steps[t];
+        if (step->cells.count == 0) {
+            continue;
+        }
+        memset(s->inside, 0, (size_t)cells);
+        for (int m = 0; m < step->cells.count; m++) {
+            s->inside[step->cells.items[m]] = 1;
+        }
+        status = region_nodes(s, s->inside, &step->nodes);
+        if (status != MN_OK) {
+            break;
+        }
+        count_pass(s, &step->nodes, max_nodes);
+        if (context->should_cut != NULL) {
+            float level = plan->levels[step->level];
+            float next_level = step->level + 1 < plan->count ? plan->levels[step->level + 1] : -INFINITY;
+            status = region_cut_nodes(s, step->cells.items, step->cells.count, level, next_level, &step->cut_nodes);
+            if (status == MN_OK) {
+                count_pass(s, &step->cut_nodes, max_nodes);
+            }
+        }
+    }
+
+done:
+    free(depth);
+    free(threshold);
+    free(distance);
+    return status;
+}
+
 /* Prepares the group of the plan levels first..last: its plan, its far region, its cave tree and the
  * nodes of every route. */
 static int z_group_prepare(mn_z_state* s, int first, int last, int far_on, mn_z_group* group, int* max_nodes)
@@ -1164,25 +1297,14 @@ static int z_group_prepare(mn_z_state* s, int first, int last, int far_on, mn_z_
             }
         }
         if (last > first) {
-            float level = plan->levels[last];
-            float next_level = last + 1 < plan->count ? plan->levels[last + 1] : -INFINITY;
-            MN_CHECK(far_cells_of(context, plan->masks + (size_t)last * (size_t)cells, level, &group->far_cells));
-            memset(s->inside, 0, (size_t)cells);
-            for (int m = 0; m < group->far_cells.count; m++) {
-                int c = group->far_cells.items[m];
-                s->inside[c] = 1;
-                for (int k = 0; k <= last - first; k++) {
-                    group->plan.masks[(size_t)k * (size_t)cells + (size_t)c] = 0;
-                }
+            mn_ints far = { 0 };
+            int status = far_cells_of(context, plan->masks + (size_t)last * (size_t)cells, plan->levels[last], &far);
+            if (status == MN_OK) {
+                float standing_top = first > 0 ? plan->levels[first - 1] : context->stock_top;
+                status = far_steps_of(s, group, &far, standing_top, max_nodes);
             }
-            if (group->far_cells.count > 0) {
-                MN_CHECK(region_nodes(s, s->inside, &group->far_nodes));
-                count_pass(s, &group->far_nodes, max_nodes);
-                if (context->should_cut != NULL) {
-                    MN_CHECK(region_cut_nodes(s, group->far_cells.items, group->far_cells.count, level, next_level, &group->far_cut_nodes));
-                    count_pass(s, &group->far_cut_nodes, max_nodes);
-                }
-            }
+            mn_ints_free(&far);
+            MN_CHECK(status);
         }
     }
     MN_CHECK(cave_tree_build(&group->plan, &group->tree));
@@ -1479,10 +1601,14 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
     }
     for (int gi = 0; gi < group_count && status == MN_OK; gi++) {
         mn_z_group* group = &groups[gi];
-        if (group->far_cells.count > 0) {
-            float level = plan->levels[group->last];
-            float next_level = group->last + 1 < plan->count ? plan->levels[group->last + 1] : -INFINITY;
-            status = z_level_block(&s, level, next_level, group->far_cells.items, group->far_cells.count, &group->far_nodes, &group->far_cut_nodes);
+        for (int t = 0; t < group->step_count && status == MN_OK; t++) {
+            const mn_z_step* step = &group->steps[t];
+            if (step->cells.count == 0) {
+                continue;
+            }
+            float level = plan->levels[step->level];
+            float next_level = step->level + 1 < plan->count ? plan->levels[step->level + 1] : -INFINITY;
+            status = z_level_block(&s, level, next_level, step->cells.items, step->cells.count, &step->nodes, &step->cut_nodes);
         }
         if (status == MN_OK) {
             status = z_walk(&s, group);
