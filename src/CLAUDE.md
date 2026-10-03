@@ -212,8 +212,14 @@
   third_party/nuget plus build.sh on either system, and Linux checks run on a Linux machine.
 - `Miller.cmd` in the root is the one `.cmd` file (user request: a launcher in the root folder).
   The bash-only rule of the guide covers build and tool scripts; a Windows user double-clicks a
-  `.cmd`, not a `.sh`. `Miller.sh` next to it serves Linux and Git Bash. Both only start
-  `dist/`; they do not build.
+  `.cmd`, not a `.sh`. Since the user's request after T-157 it starts the Release build
+  `src/Miller.App/bin/Release/net10.0/Miller.exe`, which every `dotnet build` refreshes; `Miller.sh`
+  next to it serves Linux and Git Bash and starts `dist/`. Neither builds.
+- Every change must end with the latest version in `dist/win-x64` as well: `dotnet build` refreshes
+  only `src/*/bin`, and `dist/` kept `Build_1.0.106` through four tasks while the user started it,
+  so the new settings were invisible. The last step of a task is `bash build.sh` (or `--no-test`
+  once the suite has passed), and `dist/win-x64/Miller.exe --version` must print the build of the
+  session.
 - Head collisions had two causes, not one: the head limit ignored rest material, and raster rows
   skip the row nearest a wall (row step equals the cutter radius), so a strip beside every wall
   was never cut at all. The fix pairs a profile pass per level (layer-complete strategy, now the
