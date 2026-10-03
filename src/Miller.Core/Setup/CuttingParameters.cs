@@ -11,6 +11,7 @@ public sealed class CuttingParameters
     public const float DefaultStepover = 3f;
     public const float DefaultFinishingStepover = 0.5f;
     public const float DefaultStepdown = 2f;
+    public const float DefaultFarStepdown = 0f;
     public const float DefaultSafeHeight = 5f;
     public const float DefaultCellSize = 0.2f;
     public const float DefaultTolerance = 0.05f;
@@ -28,6 +29,11 @@ public sealed class CuttingParameters
     public float FinishingStepover { get; set; } = DefaultFinishingStepover;
 
     public float Stepdown { get; set; } = DefaultStepdown;
+
+    // "Z layer by layer" only: material at least the Stepover away from everything that stays is cut
+    // this much deeper in one step, the band nearer to it level by level at the Stepdown; a whole
+    // multiple of the Stepdown of at least twice it, 0 for none.
+    public float FarStepdown { get; set; } = DefaultFarStepdown;
 
     // Clearance above the stock top for rapid moves; the absolute rapid Z is stock top + SafeHeight.
     public float SafeHeight { get; set; } = DefaultSafeHeight;

@@ -30,6 +30,9 @@
       <TextBlock Classes="label" Text="Stepdown per level (mm)" />
       <c:NumericBox Name="StepdownBox" Classes="numeric" Value="{Binding Stepdown}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding StepdownError}" IsVisible="{Binding StepdownError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Classes="label" Text="Far stepdown of Z layer by layer (mm, a multiple of the stepdown, 0 for none)" />
+      <c:NumericBox Name="FarStepdownBox" Classes="numeric" Value="{Binding FarStepdown}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding FarStepdownError}" IsVisible="{Binding FarStepdownError, Converter={x:Static ObjectConverters.IsNotNull}}" TextWrapping="Wrap" />
       <TextBlock Classes="label" Text="Safe height above the stock top (mm)" />
       <c:NumericBox Name="SafeHeightBox" Classes="numeric" Value="{Binding SafeHeight}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding SafeHeightError}" IsVisible="{Binding SafeHeightError, Converter={x:Static ObjectConverters.IsNotNull}}" />

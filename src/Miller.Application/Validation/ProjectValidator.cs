@@ -3,6 +3,7 @@ using System.Numerics;
 using Miller.Core.Geometry;
 using Miller.Core.HeightMaps;
 using Miller.Core.Setup;
+using Miller.Core.Slicing;
 
 namespace Miller.Application.Validation;
 
@@ -61,6 +62,11 @@ public static class ProjectValidator
         InRange(errors, "Parameters.Stepover", p.Stepover, tool.CutterDiameter);
         InRange(errors, "Parameters.FinishingStepover", p.FinishingStepover, tool.CutterDiameter);
         Positive(errors, "Parameters.Stepdown", p.Stepdown);
+        if (p.Stepdown > 0 && p.FarStepdown != 0 && !IsFarStepdown(p.FarStepdown, p.Stepdown))
+        {
+            errors.Add(new ValidationMessage("Parameters.FarStepdown",
+                $"Far stepdown {F(p.FarStepdown)} must be 0 (none) or a whole multiple of the stepdown {F(p.Stepdown)} of at least twice it."));
+        }
 
         var stockSize = AxisSetup.StockBoundingSize(stock);
         Positive(errors, "Parameters.SafeHeight", p.SafeHeight);
@@ -193,6 +199,18 @@ public static class ProjectValidator
         }
 
         return true;
+    }
+
+    // A whole multiple of the stepdown of at least twice it, within the level tolerance.
+    public static bool IsFarStepdown(float farStepdown, float stepdown)
+    {
+        if (!(float.IsFinite(farStepdown) && farStepdown > stepdown))
+        {
+            return false;
+        }
+
+        var k = MathF.Round(farStepdown / stepdown);
+        return k >= 2 && MathF.Abs(farStepdown - k * stepdown) <= Slicer.LevelTolerance;
     }
 
     private static void Positive(List<ValidationMessage> errors, string field, float value)
