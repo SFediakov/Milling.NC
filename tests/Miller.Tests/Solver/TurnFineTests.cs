@@ -4,7 +4,7 @@ using Xunit;
 namespace Miller.Tests.Solver;
 
 // T-153: every node where the XY direction changes starts a new movement (any angle, on circles as on
-// corners); the first and last 5 mm of a movement run at 0.3 of the speed, a millimetre is slow once
+// corners); the first and last 5 mm of a movement run at a third of the speed, a millimetre is slow once
 // where zones overlap, route ends clip them, and straight nodes are not fined. The fine is charged on
 // XY travel.
 public sealed class TurnFineTests
@@ -90,7 +90,7 @@ public sealed class TurnFineTests
         var problem = Corner(90f);
         Assert.Equal(10f, Slow(problem), 4);
         Assert.Equal(10f * TurnFine.PerSlowMillimetre, TurnFine.Fine(problem, InOrder(problem)), 4);
-        // 0.3 of the speed: the slow 10 mm take 10 / 0.3 instead of 10 mm of XY travel.
+        // A third of the speed: the slow 10 mm take 30 mm worth of XY travel instead of 10.
         Assert.Equal((10f / TurnFine.SlowSpeedFactor - 10f) / RouteCost.XySpeedFactor, TurnFine.Fine(problem, InOrder(problem)), 4);
     }
 

@@ -288,10 +288,15 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
     }
     mn_head_limited_mask(r->tip.z, pass->limit.z, cells, p->tolerance, pass->head_limited);
 
-    /* simplify */
+    /* simplify, then the slow zones of every movement (the turn fine the route solver billed). */
     begin(stage, MN_STAGE_SIMPLIFY);
-    status_code = mn_simplify_path(&routed, g, pass->strategy_tip.z, p->tolerance, &pass->layers, &pass->toolpath);
+    mn_segments simplified = { 0 };
+    status_code = mn_simplify_path(&routed, g, pass->strategy_tip.z, p->tolerance, &pass->layers, &simplified);
     mn_segments_free(&routed);
+    if (status_code == MN_OK) {
+        status_code = mn_slow_zones(&simplified, &pass->layers, &pass->toolpath);
+    }
+    mn_segments_free(&simplified);
     MN_CHECK(status_code);
     MN_STOP_IF_CANCELLED();
 
