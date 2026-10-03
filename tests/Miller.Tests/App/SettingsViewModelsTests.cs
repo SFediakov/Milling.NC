@@ -159,6 +159,18 @@ public sealed class SettingsViewModelsTests : IDisposable
     }
 
     [Fact]
+    public void Cutting_FarStepdown_BeyondTheCutterLength_Warns()
+    {
+        _vm.Tool.CutterLength = 2f;
+        _vm.Cutting.FarStepdown = 8f;
+        Assert.Null(_vm.Cutting.FarStepdownError);
+        Assert.NotNull(_vm.Cutting.FarStepdownWarning);
+        Assert.Contains("steps", _vm.Cutting.FarStepdownWarning);
+        _vm.Tool.CutterLength = 20f;
+        Assert.Null(_vm.Cutting.FarStepdownWarning);
+    }
+
+    [Fact]
     public void Strategy_ListsTheRegistriesAndWritesIds()
     {
         Assert.Equal(new[] { "z-layer-by-layer", "three-axis-freedom" }, StrategySelectionViewModel.Strategies.Select(s => s.Id));

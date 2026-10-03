@@ -153,6 +153,18 @@ public sealed class ProjectValidatorTests
     }
 
     [Fact]
+    public void FarStepdown_BeyondTheCutterLength_WarnsAboutTheSteps()
+    {
+        var result = Validate(p => { p.Tool.CutterLength = 2; p.Parameters.FarStepdown = 8; });
+        Assert.True(result.IsValid);
+        var warning = Assert.Single(result.Warnings, w => w.Field == "Parameters.FarStepdown");
+        Assert.Contains("cutter length", warning.Message);
+        Assert.Empty(Validate(p => p.Parameters.FarStepdown = 8).Warnings);
+        Assert.Empty(Validate(p => { p.Tool.CutterLength = 8; p.Parameters.FarStepdown = 8; }).Warnings);
+        Assert.Empty(Validate(p => { p.Tool.CutterLength = 2; p.Parameters.FarStepdown = 3; }).Warnings);
+    }
+
+    [Fact]
     public void SafeHeight_IsAClearanceAboveTheStockTop()
     {
         AssertSingleError(p => p.Parameters.SafeHeight = 0, "Parameters.SafeHeight");

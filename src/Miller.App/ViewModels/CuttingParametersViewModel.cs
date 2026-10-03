@@ -17,7 +17,7 @@ public sealed class CuttingParametersViewModel : SettingsViewModelBase
     private static readonly string[] ErrorProperties =
     {
         nameof(FeedRateError), nameof(PlungeRateError), nameof(RapidRateError), nameof(SpindleRpmError), nameof(StepoverError),
-        nameof(FinishingStepoverError), nameof(StepdownError), nameof(FarStepdownError), nameof(SafeHeightError), nameof(CellSizeError), nameof(CellSizeWarning),
+        nameof(FinishingStepoverError), nameof(StepdownError), nameof(FarStepdownError), nameof(FarStepdownWarning), nameof(SafeHeightError), nameof(CellSizeError), nameof(CellSizeWarning),
     };
 
     public CuttingParametersViewModel(ProjectService project)
@@ -71,6 +71,8 @@ public sealed class CuttingParametersViewModel : SettingsViewModelBase
     public string? StepdownError => ErrorFor("Parameters.Stepdown");
 
     public string? FarStepdownError => ErrorFor("Parameters.FarStepdown");
+
+    public string? FarStepdownWarning => WarningFor("Parameters.FarStepdown");
 
     public string? SafeHeightError => ErrorFor("Parameters.SafeHeight");
 
