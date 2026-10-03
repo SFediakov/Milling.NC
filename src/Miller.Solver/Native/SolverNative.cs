@@ -65,6 +65,12 @@ internal static unsafe class SolverNative
     public static extern float mn_turn_overlap(int zonesA, int zonesB, float gap);
 
     [DllImport(Library)]
+    public static extern float mn_turn_slow_speed_factor();
+
+    [DllImport(Library)]
+    public static extern float mn_turn_per_slow_millimetre();
+
+    [DllImport(Library)]
     public static extern long mn_budget_share(long remaining, int nodes, long nodesLeft);
 
     [DllImport(Library)]

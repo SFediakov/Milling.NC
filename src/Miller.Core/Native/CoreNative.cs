@@ -230,6 +230,7 @@ internal static unsafe class CoreNative
     [DllImport(Library)] public static extern int mn_gouge_is_clear(Segment* segment, Grid* grid, float* effectiveTip, float tolerance);
     [DllImport(Library)] public static extern int mn_simplify(Segment* segments, int count, Grid* grid, float* effectiveTip, float tolerance, Segment** result, int* resultCount);
     [DllImport(Library)] public static extern int mn_kept_indices(float* points, int count, Grid* grid, float* effectiveTip, float tolerance, float feedRate, int** kept, int* keptCount);
+    [DllImport(Library)] public static extern int mn_slow_zones_apply(Segment* segments, int count, Segment** result, int* resultCount);
     [DllImport(Library)] public static extern float mn_distance_to_segment(float* p, float* a, float* b);
     [DllImport(Library)] public static extern int mn_statistics_compute(Segment* segments, int count, float rapidRate, Statistics* statistics);
     [DllImport(Library)] public static extern int mn_collision_check(Segment* segments, int count, Grid* grid, float* stock, float* model, float floor, Tool* tool, float tolerance, byte* status, Collision** events, int* eventCount);

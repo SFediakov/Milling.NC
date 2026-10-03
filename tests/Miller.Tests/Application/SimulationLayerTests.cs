@@ -129,9 +129,11 @@ public sealed class SimulationLayerTests
         Assert.Equal(layers.Count, service.CompletedLayers);
         Assert.False(service.IsPlaying);
         var whole = Loaded(result);
-        whole.SeekTo(1f);
+        whole.RunToEnd();
         Assert.Equal(whole.Stock!.Z, service.Stock!.Z);
+        Assert.True(whole.ElapsedSimulated > 0, "run to end sets the clock to the total");
         Assert.Equal(whole.ElapsedSimulated, service.ElapsedSimulated, 6);
+        Assert.Equal(result.Statistics.EstimatedMinutes * 60, service.ElapsedSimulated, 1);
         Assert.Equal(whole.Events.Count, service.Events.Count);
 
         var back = service.SeekToPreviousLayer();

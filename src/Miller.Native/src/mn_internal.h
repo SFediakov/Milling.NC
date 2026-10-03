@@ -121,16 +121,11 @@ typedef struct mn_problem {
 
 static inline mn_v3 mn_problem_node(const mn_problem* p, int k) { return mn_v3_make(p->x[k], p->y[k], p->z[k]); }
 
-/* TurnFine constants; the fine per slow millimetre is the float the C# implementation computed in
- * double. */
-static inline float mn_float_from_bits(uint32_t bits)
-{
-    float value;
-    memcpy(&value, &bits, sizeof(value));
-    return value;
-}
-
-#define MN_PER_SLOW_MILLIMETRE mn_float_from_bits(0x3F471C71u)
+/* TurnFine constants: the slow zones of a movement run at MN_SLOW_SPEED_FACTOR of the speed (three
+ * times slower); the fine per slow millimetre is computed in double from the float factor and rounded
+ * once, exactly as TurnFine.PerSlowMillimetre is. */
+#define MN_SLOW_SPEED_FACTOR (1.0f / 3.0f)
+#define MN_PER_SLOW_MILLIMETRE ((float)((1.0 / (double)MN_SLOW_SPEED_FACTOR - 1.0) / (double)MN_XY_SPEED_FACTOR))
 #define MN_SLOW_ZONE 5.0f
 #define MN_MIN_CHORD 1e-5f
 /* A direction change whose sine lies within this is straight on: float noise of the node coordinates,

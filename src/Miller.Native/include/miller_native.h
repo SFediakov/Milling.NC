@@ -181,6 +181,10 @@ MN_API int32_t mn_turn_fined_at(const float* x, const float* y, const int32_t* o
 MN_API float mn_turn_slow_length(const float* x, const float* y, const int32_t* order, int32_t count);
 MN_API float mn_turn_overlap(int32_t zones_a, int32_t zones_b, float gap);
 MN_API float mn_turn_fine(const float* x, const float* y, const int32_t* order, int32_t count);
+/* The slow factor of the zones (a third: three times slower) and the fine per slow millimetre in
+ * route cost units, as the solver and the slow zones use them. */
+MN_API float mn_turn_slow_speed_factor(void);
+MN_API float mn_turn_per_slow_millimetre(void);
 MN_API int64_t mn_budget_share(int64_t remaining, int32_t nodes, int64_t nodes_left);
 /* Precedence pairs (T-150): pair k orders node before[k] ahead of node after[k]; pair_count 0 means no
  * pairs. The start must have no predecessor and the pairs must be acyclic. */
@@ -272,6 +276,11 @@ MN_API int32_t mn_strategy_generate(int32_t strategy, const mn_context* context,
 MN_API int32_t mn_gouge_verify(const mn_segment* segments, int32_t count, const mn_grid* grid, const float* effective_tip, float tolerance, int32_t** segment_index, float** positions, float** depths, int32_t* violation_count);
 MN_API int32_t mn_gouge_is_clear(const mn_segment* segment, const mn_grid* grid, const float* effective_tip, float tolerance);
 MN_API int32_t mn_simplify(const mn_segment* segments, int32_t count, const mn_grid* grid, const float* effective_tip, float tolerance, mn_segment** result, int32_t* result_count);
+/* Slow zones (the turn fine in the toolpath): every movement, a run of feeds straight on in XY, gets
+ * its first and last 5 mm of XY travel at the slow factor of the rate, a movement shorter than 10 mm
+ * wholly; rapids, plunges, feeds without XY travel and direction changes end a movement. The pipeline
+ * runs it after the simplifier. */
+MN_API int32_t mn_slow_zones_apply(const mn_segment* segments, int32_t count, mn_segment** result, int32_t* result_count);
 MN_API int32_t mn_kept_indices(const float* points, int32_t count, const mn_grid* grid, const float* effective_tip, float tolerance, float feed_rate, int32_t** kept, int32_t* kept_count);
 MN_API float mn_distance_to_segment(const float* p, const float* a, const float* b);
 MN_API int32_t mn_statistics_compute(const mn_segment* segments, int32_t count, float rapid_rate, mn_statistics* statistics);

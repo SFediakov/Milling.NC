@@ -4,17 +4,18 @@ namespace Miller.Solver;
 
 // The time fine of a direction change (T-153). A movement is the stretch between two nodes where the
 // XY direction of the chords changes (any angle, on circles as on corners) or a route end; its first
-// and last SlowZone millimetres run at SlowSpeedFactor of the speed, so every new coordinate set slows
-// the SlowZone before and after it, a millimetre is slow once when zones overlap (a movement shorter
-// than two zones is slow over its whole length) and route ends clip the zones. Short steps therefore
-// run slow along their whole length and the solver keeps long straight moves. A node straight on
-// (sine of the change within StraightSine, reversing excluded) is not fined. The fine is charged on
-// XY travel; Z travel keeps the Z speed of RouteCost. Computed by the native library.
+// and last SlowZone millimetres run at SlowSpeedFactor of the speed (three times slower), so every
+// new coordinate set slows the SlowZone before and after it, a millimetre is slow once when zones
+// overlap (a movement shorter than two zones is slow over its whole length) and route ends clip the
+// zones. Short steps therefore run slow along their whole length and the solver keeps long straight
+// moves. A node straight on (sine of the change within StraightSine, reversing excluded) is not
+// fined. The fine is charged on XY travel; Z travel keeps the Z speed of RouteCost. Computed by the
+// native library, which also writes the zones into the toolpath (SlowZones in Miller.Core).
 public static class TurnFine
 {
     public const float SlowZone = 5f;
 
-    public const float SlowSpeedFactor = 0.3f;
+    public const float SlowSpeedFactor = 1f / 3f;
 
     // A direction change with a smaller sine is straight on: float noise of the node coordinates.
     public const float StraightSine = 1e-3f;
@@ -22,8 +23,14 @@ public static class TurnFine
     // A chord shorter than this has no direction, so no turn is measured at its ends.
     public const float MinChord = 1e-5f;
 
-    // RouteCost units a slow millimetre of XY travel costs on top of its normal cost.
-    public const float PerSlowMillimetre = (1f / SlowSpeedFactor - 1f) / RouteCost.XySpeedFactor;
+    // RouteCost units a slow millimetre of XY travel costs on top of its normal cost, computed in double
+    // from the float factor and rounded once; the native library computes the same bits.
+    public const float PerSlowMillimetre = (float)((1.0 / SlowSpeedFactor - 1.0) / RouteCost.XySpeedFactor);
+
+    // The constants as the native library holds them.
+    public static float NativeSlowSpeedFactor => SolverNative.mn_turn_slow_speed_factor();
+
+    public static float NativePerSlowMillimetre => SolverNative.mn_turn_per_slow_millimetre();
 
     // Whether the node at `position` of the route `order` is fined. The reversed route gives the same
     // answer for the same node.

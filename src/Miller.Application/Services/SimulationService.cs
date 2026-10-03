@@ -189,12 +189,15 @@ public sealed class SimulationService
         engine.Reset(Stock);
     }
 
-    // Pauses first so a UI timer tick cannot step the engine while this runs on another thread.
+    // Pauses first so a UI timer tick cannot step the engine while this runs on another thread; the
+    // clock takes the engine's elapsed time afterwards, like a seek, so the readout shows the total.
     public SimulationSnapshot RunToEnd()
     {
         var engine = Require();
         _clock.Pause();
-        return Snapshot(engine.RunToEnd());
+        var result = engine.RunToEnd();
+        _clock.Seek(engine.ElapsedSeconds);
+        return Snapshot(result);
     }
 
     // Real seconds since the last call; nothing moves while paused or before Load.
