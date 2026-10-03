@@ -478,9 +478,29 @@ Uncuttable classification (`UncuttableRegions`):
   and whatever is reachable only above the bottom level), and the next group
   starts at the level the far pass reached. A group of one level has no far
   pass. With `FarStepdown` 0 the walk runs over the whole plan in one group,
-  unchanged. A far step deeper than the cutter length brings the head beside the
-  standing near band; the collision handling of T-147 to T-150 lifts or clears
-  such positions as for any other route.
+  unchanged.
+- Far block steps (T-157): a single step can never go deeper than the cutter
+  length, because the head is wider than the cutter and meets the uncut material
+  ahead of it whatever the order of the nodes. The far block therefore cuts the
+  far region in steps of the largest multiple of the Stepdown within the cutter
+  length (one step when the far stepdown fits). With D_t the depth of step t
+  below the material standing at the group's top, c the cutter length, r the
+  cutter radius, R(h) the head radius at height h above the head bottom
+  (`mn_head_radius_at`) and m the head margin (`mn_head_margin`), a position of
+  the far region belongs to every step whose threshold its distance to the
+  standing material reaches: delta_t = max(R(D_t - c) + m, max over earlier steps
+  u with D_t - D_u > c of delta_(u+1) + r + R(D_t - D_u - c) + m), 0 while D_t
+  is within c. The standing material is every cell no far footprint covers (the
+  band nearer than the Stepover, the model, the stock over it), assumed at the
+  group's top; the steps run shallow to deep, so no route drops more than one
+  step below what the previous route left, and the thresholds keep the head
+  clear of the standing material and of what the shallower steps leave. The
+  cells of a position rejoin the walk masks below its deepest step, and the cave
+  tree takes as parent the cave above that holds any cell of a child (a rejoined
+  far cell has none), so the near band still runs top down. The validator warns
+  when the far stepdown exceeds the cutter length. Both collision modes see
+  nothing to fix in the far block; beside the model they decide as without a far
+  stepdown.
 - One run (`CollisionMode.OneRun`, T-150): both strategies keep the material as
   their routes leave it (the footprint of every visited node stamped into a copy
   of the stock) and evaluate every node of a route against it before the route
@@ -607,6 +627,7 @@ M30
 | `0 < FinishingStepover <= CutterDiameter` | Parameters.FinishingStepover |
 | `Stepdown > 0` | Parameters.Stepdown |
 | `FarStepdown == 0` or a whole multiple of `Stepdown` of at least `2 * Stepdown` (within `Slicer.LevelTolerance`) | Parameters.FarStepdown |
+| `FarStepdown <= CutterLength` (warning, not error: the far block then steps by the cutter length) | Parameters.FarStepdown |
 | `SafeHeight > 0` (clearance above the stock top) | Parameters.SafeHeight |
 | `0.01 <= CellSize <= 5` | Parameters.CellSize |
 | `FeedRate, PlungeRate, RapidRate > 0` | Parameters.* |
@@ -1967,6 +1988,14 @@ check that decides done.
 - Input: user request (a "far stepdown" parameter on the Cutting tab, larger than the stepdown and divisible by it; in "layer by layer" the area at least a stepover away from the model is cut with the far stepdown in one layer below, the tool returns in Z and cuts the left fragments at the normal stepdown, and at the level the far cut reached the far cut is applied again)
 - Output: `CuttingParameters.FarStepdown` (0 for none) with the validation rule of section 6.7, the Cutting tab box, the project file and the presets; the rule of section 6.4 (groups of k levels, far region per group routed first, the caves of the group over the reduced masks, the walk as a function over a group plan); 3 axis freedom unchanged
 - Acceptance: 0, 4, 6 and 0.6 over 0.2 accepted, 1, 2, 3, negative, NaN and infinite refused on `Parameters.FarStepdown`, an invalid stepdown reports itself only; the member round-trips, a file without it loads 0, a preset carries it; on a 10 x 10 x 5 box in a 40 x 40 stock (levels 3, 1, 0, far 4) the cutting levels run 1, 3, 1, 0, after the far pass every cell within the cutter radius of a far position is at level 1 and every cell more than a cell beyond that is untouched (1,000+ and 600+ cells), the group ends in the plain strategy's state before its first move below level 1, both end at the same stock; a 9 mm stock (levels 7, 5, 3, 1, 0) runs 5, 7, 5, 1, 3, 1, 0; a far stepdown that is no multiple is refused by the native library; through the pipeline the final stock equals the plain one within two tolerances with zero gouges and zero events in both collision modes, the layers read 1, 3, 1, 0 and 3 axis freedom gives identical segments; the heart golden is unchanged; the heart sample with far stepdown 4: 6,938 segments and 13.7 min against 4,954 and 10.8 (informative, more direction changes at the far region's edge)
+- Status: done
+
+#### T-157 Far block steps within the cutter length
+- Depends on: T-156
+- Files: `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.App/ViewModels/CuttingParametersViewModel.cs`, `src/Miller.App/Views/CuttingParametersView.axaml`, `tests/Miller.Tests/Core/Toolpath/FarStepdownStepTests.cs`, `tests/Miller.Tests/Application/FarStepdownPipelineTests.cs`, `tests/Miller.Tests/Application/ProjectValidatorTests.cs`, `tests/Miller.Tests/App/SettingsViewModelsTests.cs`
+- Input: user request (far step deep collision prevention for both collision approaches)
+- Output: the rule of section 6.4 (far block steps): steps of the largest multiple of the stepdown within the cutter length, thresholds on the distance to the standing material from the head radius at the slab height, cumulative step regions, cells rejoining the walk masks below their deepest step, the cave tree parent from any cell of a child; the validator warning of section 6.7 on the Cutting tab
+- Acceptance: with a cutter longer than the far stepdown one step at the bottom level, the far stepdown tests and the heart golden unchanged; a 2 mm cutter under a 10 mm cylinder head with far stepdown 8 over stepdown 2 on a 10 x 10 x 2 box in a 40 x 40 x 9 stock: thresholds 0, 5.76, 14.51 and 23.27, steps at 7, 5 and 3 before the walk 7, 5, 3, 1 and the last level 0, every far position at most at its step level after the far block and exactly there where no deeper position lies within the cutter radius, nothing below the deepest step; a frustum head (7 to 20 mm over 10 mm) reaches a third step and cuts more cells to level 5 than a 20 mm cylinder, which stops after the second step; through the pipeline in recursion and one run mode, cylinder and frustum: the layers descend 7, 5, 3 then return to 7, before every step route no annulus cell of any tip of the route stands above the head underside in the simulated stock, no event inside the far block, no more events than without a far stepdown, zero gouges, and the final stock differs from the plain one only within the head radius of the box (at most 60 cells, the collision handling's choice); the warning appears for far stepdown 8 with a 2 mm cutter and not with 8 or 20 mm; 784 tests pass
 - Status: done
 
 ### M8 Packaging and release

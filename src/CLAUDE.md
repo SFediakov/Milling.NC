@@ -580,3 +580,23 @@
 - Two strategies' intermediate stocks are compared before the first move that goes below a level,
   not at the first move ending exactly on the next level: a descent ramps through vertices at
   intermediate heights (0.875 between levels 1 and 0 on the box), which the exact-level search skips.
+- No single route can go deeper than the cutter length into a flat region, whatever the order of its
+  nodes: the head is wider than the cutter and meets the uncut material ahead of it. A rim terrace
+  around a deep flat pass does not help, the pass itself collides. The far block (T-157) therefore
+  steps by the cutter length with cumulative regions; a first version that routed every far position
+  once at its deepest step dropped two cutter lengths in one go and collided at once.
+- Intended behaviour change of the cave tree (T-157): the parent of a cave is the cave above that
+  holds any of its cells, not the one holding its first cell. With nested masks both are the same;
+  in a group plan a rejoined far cell is the first cell of a near-band cave and has no cave above,
+  which made every near-band cave a root and let the walk cut the deeper band before the shallower.
+- A level sequence read from segment ends counts travel feeds too: the step 3 route travels between
+  the stock corners over the step 2 floor at level 5, so "5" appears between the "3"s. Order tests
+  compare first and last occurrences, not every entry.
+- A short-cutter fixture needs a model lower than the cutter length: beside a 9 mm box a 2 mm cutter
+  under a 7 to 10 mm head cannot cut the near band below 7 at all, the one-run guard then runs into
+  cyclic pairs and the recursion keeps events, with or without a far stepdown. A 2 mm box on the floor
+  of a 9 mm stock keeps the far block hazard (the band and the stock over the box stand at the top)
+  without the impossible wall.
+- Beside the model the collision handling of either mode leaves a few cells differently from one
+  schedule to the next (a cell at 1 against 0 within the head radius of the box, both above the
+  reach floor): tests compare final stocks of different schedules only outside that ring.
