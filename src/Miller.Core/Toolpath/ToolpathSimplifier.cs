@@ -13,7 +13,9 @@ namespace Miller.Core.Toolpaths;
 // merge pass then drops every kept vertex whose neighbours' chord still holds all vertices between
 // them. A flat or constant-slope row therefore becomes one segment, a circle becomes chords whose
 // sagitta is the tolerance, and the first and last point of every run, every rapid and every plunge
-// stay exactly where the strategy put them.
+// stay exactly where the strategy put them. The tolerance is the one threshold in XY and Z: a wall
+// traced cell by cell is a staircase whose corners alternate between two lines one cell apart, so it
+// joins into chords only when the tolerance reaches the cell size (T-158).
 public static class ToolpathSimplifier
 {
     public static unsafe Toolpath Simplify(Toolpath toolpath, HeightMap effectiveTip, float tolerance)

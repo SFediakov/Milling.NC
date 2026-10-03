@@ -164,7 +164,10 @@ static int split(const mn_v3* points, int a, int b, const mn_grid* g, const floa
     return farthest_distance > 0 ? farthest : (a + b) / 2;
 }
 
-/* Indices kept by Douglas-Peucker (ascending, 0 and the last included) after the merge pass. */
+/* Indices kept by Douglas-Peucker (ascending, 0 and the last included) after the merge pass. The
+ * tolerance is the one threshold in XY and Z: a traced wall is a staircase of cells whose corners
+ * alternate between two lines one cell apart, so it joins into chords only when the tolerance reaches
+ * the cell size (T-158); a looser XY threshold shifted the cutter off the closing it must cut. */
 static int kept_indices(const mn_v3* points, int count, const mn_grid* g, const float* tip, float tolerance, float feed_rate, mn_ints* kept)
 {
     uint8_t* keep = (uint8_t*)mn_alloc((size_t)count, 1);

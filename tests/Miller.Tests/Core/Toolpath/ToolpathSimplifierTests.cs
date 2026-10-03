@@ -67,22 +67,30 @@ public sealed class ToolpathSimplifierTests
         Assert.Equal(new[] { points[0], points[2], points[3], points[4], points[5], points[7] }, Points(simplified));
     }
 
+    private const float CircleRadius = 8f;
+
+    private static Vector3[] CirclePoints()
+    {
+        var center = new Vector2(15, 15);
+        var count = (int)MathF.Ceiling(2 * MathF.PI * CircleRadius / CellSize);
+        return Enumerable.Range(0, count + 1)
+            .Select(k => 2 * MathF.PI * k / count)
+            .Select(a => new Vector3(center.X + CircleRadius * MathF.Cos(a), center.Y + CircleRadius * MathF.Sin(a), 1f))
+            .ToArray();
+    }
+
+    // Sagitta rule: a chord of length c over radius R deviates by R - sqrt(R^2 - c^2 / 4).
+    private static float LongestChord(float deviation) => 2 * MathF.Sqrt(2 * CircleRadius * deviation - deviation * deviation);
+
     [Fact]
     public void Circle_IsReducedToChordsWithinTheTolerance()
     {
-        const float radius = 8f;
-        var center = new Vector2(15, 15);
-        var count = (int)MathF.Ceiling(2 * MathF.PI * radius / CellSize);
-        var points = Enumerable.Range(0, count + 1)
-            .Select(k => 2 * MathF.PI * k / count)
-            .Select(a => new Vector3(center.X + radius * MathF.Cos(a), center.Y + radius * MathF.Sin(a), 1f))
-            .ToArray();
+        var points = CirclePoints();
         var original = Chain(MoveKind.Feed, Feed, points);
         var simplified = ToolpathSimplifier.Simplify(original, Flat, Tolerance);
 
         Assert.True(simplified.Count * 3 <= original.Count, $"{simplified.Count} chords for {original.Count} polygon edges");
-        // Sagitta rule: a chord of length c over radius R deviates by R - sqrt(R^2 - c^2 / 4).
-        var longestChord = 2 * MathF.Sqrt(2 * radius * Tolerance - Tolerance * Tolerance);
+        var longestChord = LongestChord(Tolerance);
         Assert.All(simplified.Segments, s => Assert.True(s.Length <= longestChord + 1e-3f, $"chord {s.Length} longer than {longestChord}"));
         Assert.True(MaxDeviation(points, simplified) <= Tolerance + 1e-4f);
         Assert.Equal(points[0], simplified.Segments[0].Start);
@@ -194,5 +202,44 @@ public sealed class ToolpathSimplifierTests
         Assert.Equal(new Vector3(3, 1, 0), simplified.Segments[0].End);
         Assert.Equal(path.Segments[3], simplified.Segments[1]);
         Assert.Equal(path.Segments[4], simplified.Segments[2]);
+    }
+
+    // A wall of slope one in six traced cell by cell at Z 1: six cells along, one cell up, eight times,
+    // starting and ending at the start of a run so that the chord runs along the run starts and the
+    // run ends lie one cell below it.
+    private static Vector3[] Staircase(float x0, float y0, int runs)
+    {
+        var points = new List<Vector3> { new(x0, y0, 1f) };
+        var x = x0;
+        var y = y0;
+        for (var k = 0; k < runs; k++)
+        {
+            x += 6 * CellSize;
+            points.Add(new Vector3(x, y, 1f));
+            y += CellSize;
+            points.Add(new Vector3(x, y, 1f));
+        }
+
+        return points.ToArray();
+    }
+
+    // T-158: the tolerance is the one threshold in XY and Z. The corners of a staircase alternate between
+    // two lines one cell apart, so a tolerance below the cell size keeps every corner (one move per cell,
+    // what a project with a tolerance below its cell size sees along every wall), and a tolerance of the
+    // cell size joins the staircase into one chord along the run starts, the run ends one cell off it.
+    [Fact]
+    public void Staircase_OfAWallTracedCellByCell_JoinsOnlyWhenTheToleranceReachesTheCellSize()
+    {
+        var points = Staircase(1.125f, 1.125f, 8);
+        var original = Chain(MoveKind.Feed, Feed, points);
+        var kept = ToolpathSimplifier.Simplify(original, Flat, Tolerance);
+        Assert.Equal(points, Points(kept));
+
+        var joined = ToolpathSimplifier.Simplify(original, Flat, CellSize);
+        var only = Assert.Single(joined.Segments);
+        Assert.Equal(points[0], only.Start);
+        Assert.Equal(points[^1], only.End);
+        var deviation = MaxDeviation(points, joined);
+        Assert.True(deviation <= CellSize + 1e-4f && deviation > CellSize * 0.9f, $"deviation {deviation}");
     }
 }
