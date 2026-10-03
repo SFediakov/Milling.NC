@@ -13,6 +13,7 @@ struct mn_writer {
     mn_parameters parameters;
     float safe_z;
     mn_segments path;
+    mn_marks marks;
     mn_points buffer;
     mn_segments scratch;
     int has_position;
@@ -93,6 +94,51 @@ void mn_segments_free(mn_segments* list)
     list->capacity = 0;
 }
 
+int mn_marks_push(mn_marks* list, int segment, float level)
+{
+    if (list->count == list->capacity) {
+        int capacity = list->capacity == 0 ? 16 : list->capacity * 2;
+        int* segments = (int*)realloc(list->segment, (size_t)capacity * sizeof(int));
+        float* levels = (float*)realloc(list->level, (size_t)capacity * sizeof(float));
+        if (segments != NULL) {
+            list->segment = segments;
+        }
+        if (levels != NULL) {
+            list->level = levels;
+        }
+        if (segments == NULL || levels == NULL) {
+            return mn_fail(MN_ERR_MEMORY, "Out of memory for %d layer marks.", capacity);
+        }
+        list->capacity = capacity;
+    }
+    list->segment[list->count] = segment;
+    list->level[list->count] = level;
+    list->count++;
+    return MN_OK;
+}
+
+void mn_marks_free(mn_marks* list)
+{
+    free(list->segment);
+    free(list->level);
+    list->segment = NULL;
+    list->level = NULL;
+    list->count = 0;
+    list->capacity = 0;
+}
+
+int mn_writer_mark(mn_writer* writer, float level)
+{
+    mn_marks* m = &writer->marks;
+    if (m->count > 0 && m->segment[m->count - 1] == writer->path.count) {
+        m->count--;
+    }
+    if (m->count > 0 && m->level[m->count - 1] == level) {
+        return MN_OK;
+    }
+    return mn_marks_push(m, writer->path.count, level);
+}
+
 static mn_v3 seg_start(const mn_segment* s) { return mn_v3_make(s->start_x, s->start_y, s->start_z); }
 
 static mn_v3 seg_end(const mn_segment* s) { return mn_v3_make(s->end_x, s->end_y, s->end_z); }
@@ -134,6 +180,7 @@ MN_API void mn_writer_free(mn_writer* writer)
         return;
     }
     mn_segments_free(&writer->path);
+    mn_marks_free(&writer->marks);
     mn_segments_free(&writer->scratch);
     mn_points_free(&writer->buffer);
     free(writer);
@@ -267,15 +314,25 @@ int mn_writer_has_position(const mn_writer* writer, mn_v3* position)
     return writer->has_position;
 }
 
-/* Finish: the retract to safe Z, then the segments move to `result`. */
-int mn_writer_take(mn_writer* w, mn_segments* result)
+int mn_writer_take(mn_writer* w, mn_segments* result, mn_marks* marks)
 {
     if (w->has_position) {
         mn_v3 last = w->position;
         MN_CHECK(add(w, make_segment(last, mn_v3_make(last.x, last.y, w->safe_z), MN_MOVE_RAPID, w->parameters.rapid_rate)));
     }
+    /* A mark after the last segment belongs to a route that wrote nothing. */
+    while (w->marks.count > 0 && w->marks.segment[w->marks.count - 1] >= w->path.count) {
+        w->marks.count--;
+    }
     *result = w->path;
     memset(&w->path, 0, sizeof(w->path));
+    if (marks != NULL) {
+        mn_marks_free(marks);
+        *marks = w->marks;
+        memset(&w->marks, 0, sizeof(w->marks));
+    } else {
+        w->marks.count = 0;
+    }
     return MN_OK;
 }
 
@@ -308,7 +365,7 @@ MN_API int32_t mn_writer_count(const mn_writer* writer) { return writer->path.co
 MN_API int32_t mn_writer_finish(mn_writer* writer, mn_segment** segments, int32_t* count)
 {
     mn_segments result;
-    MN_CHECK(mn_writer_take(writer, &result));
+    MN_CHECK(mn_writer_take(writer, &result, NULL));
     *segments = result.items != NULL ? result.items : (mn_segment*)mn_alloc(1, sizeof(mn_segment));
     *count = result.count;
     return MN_OK;

@@ -14,7 +14,8 @@ namespace Miller.Core.Generation;
 // Everything one generation produced. HeadLimitedMask marks the positions the collision handling
 // raised (the head, not the cutter, decides the depth there); ShouldCut the stock the dynamic check
 // found in the way of the head; Status the native status byte per cell; Collisions the check of the
-// kept pass with the rule of the simulation panel; Passes how many passes ran.
+// kept pass with the rule of the simulation panel; Passes how many passes ran; Layers the layers of
+// the toolpath (ToolpathLayer).
 public sealed record GenerationResult(
     Mesh MachineMesh,
     StockGeometry Stock,
@@ -34,7 +35,8 @@ public sealed record GenerationResult(
     CollisionReport Collisions,
     int Passes,
     IReadOnlyList<PassCollisions> PassCollisions,
-    BridgeReport Bridges);
+    BridgeReport Bridges,
+    IReadOnlyList<ToolpathLayer> Layers);
 
 // What one generation pass's check found: the distinct entered cells and the events.
 public readonly record struct PassCollisions(int EnteredCells, int Events);
@@ -231,6 +233,21 @@ public static class ToolpathGeneration
 
         CoreNative.Statistics statistics;
         CoreNative.mn_result_statistics(result, &statistics);
+        var layerCount = CoreNative.mn_result_layer_count(result);
+        var layerSegments = new int[Math.Max(layerCount, 1)];
+        var layerLevels = new float[Math.Max(layerCount, 1)];
+        fixed (int* ls = layerSegments)
+        fixed (float* ll = layerLevels)
+        {
+            CoreNative.mn_result_layers(result, ls, ll);
+        }
+
+        var layers = new ToolpathLayer[layerCount];
+        for (var k = 0; k < layerCount; k++)
+        {
+            layers[k] = new ToolpathLayer(layerSegments[k], layerLevels[k]);
+        }
+
         var stock = new StockGeometry(Map(0), top, bottom, stockBounds);
         var headLimited = Mask(CoreNative.MaskHeadLimited);
         var shouldCut = Mask(CoreNative.MaskShouldCut);
@@ -293,6 +310,7 @@ public static class ToolpathGeneration
             report,
             passes,
             passCollisions,
-            new BridgeReport(parts, wanted, placed));
+            new BridgeReport(parts, wanted, placed),
+            layers);
     }
 }

@@ -18,6 +18,11 @@
         <Button Name="StepButton" Content="Step" Command="{Binding StepCommand}" />
       </StackPanel>
       <Button Name="RunToEndButton" Content="Run to end" Command="{Binding RunToEndCommand}" HorizontalAlignment="Left" />
+      <StackPanel Orientation="Horizontal" Spacing="6">
+        <Button Name="PreviousLayerButton" Content="Previous layer" Command="{Binding PreviousLayerCommand}" />
+        <Button Name="NextLayerButton" Content="Next layer" Command="{Binding NextLayerCommand}" />
+      </StackPanel>
+      <TextBlock Name="LayerText" Text="{Binding LayerText}" TextWrapping="Wrap" />
 
       <TextBlock Classes="header" Text="Speed (0.1x to 1000x)" />
       <Slider Name="SpeedSlider" Minimum="0" Maximum="1" Value="{Binding SpeedFactor, Converter={StaticResource LogSlider}}" TickFrequency="0.25" IsSnapToTickEnabled="False" />

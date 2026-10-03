@@ -21,6 +21,7 @@ typedef struct mn_pass {
     uint8_t* contacts;
     mn_plan* plan;
     mn_segments toolpath;
+    mn_marks layers;
     mn_statistics statistics;
     mn_collisions events;
     mn_bridge_counts bridges;
@@ -79,6 +80,7 @@ static void pass_free(mn_pass* pass)
     free(pass->contacts);
     mn_plan_free(pass->plan);
     mn_segments_free(&pass->toolpath);
+    mn_marks_free(&pass->layers);
     mn_collisions_free(&pass->events);
     memset(pass, 0, sizeof(*pass));
 }
@@ -270,9 +272,9 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
     context.raised = job->collision_mode == MN_COLLISION_ONE_RUN ? pass->limit.z : NULL;
     mn_segments routed = { 0 };
     if (job->strategy == MN_STRATEGY_Z_LAYER) {
-        status_code = mn_z_layer(&context, &monitor, &routed);
+        status_code = mn_z_layer(&context, &monitor, &routed, &pass->layers);
     } else if (job->strategy == MN_STRATEGY_THREE_AXIS_FREEDOM) {
-        status_code = mn_three_axis_freedom(&context, &monitor, &routed);
+        status_code = mn_three_axis_freedom(&context, &monitor, &routed, &pass->layers);
     } else {
         status_code = mn_fail(MN_ERR_ARGUMENT, "Unknown strategy %d.", job->strategy);
     }
@@ -288,7 +290,7 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
 
     /* simplify */
     begin(stage, MN_STAGE_SIMPLIFY);
-    status_code = mn_simplify_path(&routed, g, pass->strategy_tip.z, p->tolerance, &pass->toolpath);
+    status_code = mn_simplify_path(&routed, g, pass->strategy_tip.z, p->tolerance, &pass->layers, &pass->toolpath);
     mn_segments_free(&routed);
     MN_CHECK(status_code);
     MN_STOP_IF_CANCELLED();
@@ -515,6 +517,15 @@ MN_API void mn_result_segments(const mn_result* result, mn_segment* segments)
 }
 
 MN_API void mn_result_statistics(const mn_result* result, mn_statistics* statistics) { *statistics = result->best.statistics; }
+
+MN_API int32_t mn_result_layer_count(const mn_result* result) { return result->best.layers.count; }
+
+MN_API void mn_result_layers(const mn_result* result, int32_t* segment, float* level)
+{
+    const mn_marks* layers = &result->best.layers;
+    memcpy(segment, layers->segment, (size_t)layers->count * sizeof(int32_t));
+    memcpy(level, layers->level, (size_t)layers->count * sizeof(float));
+}
 
 MN_API int32_t mn_result_passes(const mn_result* result) { return result->passes; }
 

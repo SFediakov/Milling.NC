@@ -245,6 +245,8 @@ internal static unsafe class CoreNative
     [DllImport(Library)] public static extern int mn_result_segment_count(IntPtr result);
     [DllImport(Library)] public static extern void mn_result_segments(IntPtr result, Segment* segments);
     [DllImport(Library)] public static extern void mn_result_statistics(IntPtr result, Statistics* statistics);
+    [DllImport(Library)] public static extern int mn_result_layer_count(IntPtr result);
+    [DllImport(Library)] public static extern void mn_result_layers(IntPtr result, int* segment, float* level);
     [DllImport(Library)] public static extern int mn_result_passes(IntPtr result);
     [DllImport(Library)] public static extern void mn_result_pass_counts(IntPtr result, int* entered, int* events);
     [DllImport(Library)] public static extern void mn_result_bridges(IntPtr result, int* parts, int* wanted, int* placed);

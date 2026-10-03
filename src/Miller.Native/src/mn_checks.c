@@ -238,27 +238,33 @@ static int continues(const mn_segment* previous, const mn_segment* next)
 }
 
 /* A maximal run of consecutive feeds at one rate is a polyline reduced to the kept vertices; rapids,
- * plunges and the ends of every run stay where the strategy put them. */
-int mn_simplify_path(const mn_segments* input, const mn_grid* g, const float* effective_tip, float tolerance, mn_segments* result)
+ * plunges, the ends of every run and every marked segment start stay where the strategy put them. */
+int mn_simplify_path(const mn_segments* input, const mn_grid* g, const float* effective_tip, float tolerance, mn_marks* marks, mn_segments* result)
 {
     if (!(tolerance >= 0)) {
         return mn_fail(MN_ERR_OUT_OF_RANGE, "Tolerance must be zero or positive.");
     }
     const mn_segment* segments = input->items;
     int count = input->count;
+    int mark_count = marks != NULL ? marks->count : 0;
     mn_points points = { 0 };
     mn_ints kept = { 0 };
     int status = MN_OK;
+    int next_mark = 0;
     int k = 0;
     while (k < count && status == MN_OK) {
+        while (next_mark < mark_count && marks->segment[next_mark] <= k) {
+            marks->segment[next_mark++] = result->count;
+        }
         const mn_segment* first = &segments[k];
         if (first->kind != MN_MOVE_FEED) {
             status = mn_segments_push(result, *first);
             k++;
             continue;
         }
+        int stop = next_mark < mark_count ? marks->segment[next_mark] : count;
         int end = k + 1;
-        while (end < count && continues(&segments[end - 1], &segments[end])) {
+        while (end < count && end != stop && continues(&segments[end - 1], &segments[end])) {
             end++;
         }
         points.count = 0;
@@ -280,6 +286,9 @@ int mn_simplify_path(const mn_segments* input, const mn_grid* g, const float* ef
         }
         k = end;
     }
+    while (next_mark < mark_count) {
+        marks->segment[next_mark++] = result->count;
+    }
     mn_points_free(&points);
     mn_ints_free(&kept);
     return status;
@@ -289,7 +298,7 @@ MN_API int32_t mn_simplify(const mn_segment* segments, int32_t count, const mn_g
 {
     mn_segments input = { (mn_segment*)segments, count, count };
     mn_segments output = { 0 };
-    int status = mn_simplify_path(&input, grid, effective_tip, tolerance, &output);
+    int status = mn_simplify_path(&input, grid, effective_tip, tolerance, NULL, &output);
     if (status != MN_OK) {
         mn_segments_free(&output);
         return status;

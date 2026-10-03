@@ -1004,7 +1004,7 @@ static void top_band_cells(const mn_context* context, const uint8_t* touches, ui
  * beside it; the band between the stock top and the first level, which belongs to no cave, gets its
  * should-cut route first. Without should-cut cells there is no such route. In one run mode every
  * route passes the guard first (T-150). */
-int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result)
+int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks)
 {
     const mn_grid* g = &context->grid;
     const mn_plan* plan = context->plan;
@@ -1115,7 +1115,10 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
     if (top_nodes.count > 0) {
         pass++;
         top_band_cells(context, touches, inside);
-        status = tip_route(context, inside, &top_nodes, plan->levels[0], planned, clearance, lifted, xs, ys, zs, &guard, 1, &budget, nodes_left, monitor, writer);
+        status = mn_writer_mark(writer, plan->levels[0]);
+        if (status == MN_OK) {
+            status = tip_route(context, inside, &top_nodes, plan->levels[0], planned, clearance, lifted, xs, ys, zs, &guard, 1, &budget, nodes_left, monitor, writer);
+        }
         nodes_left -= top_nodes.count;
         if (status == MN_OK) {
             mn_report(monitor, pass, pass_count, (float)(total - nodes_left) / (float)total);
@@ -1188,7 +1191,8 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
         float level = plan->levels[cave->level];
         const mn_ints* cave_nodes = &nodes[cave_index];
         const int* cave_cells = tree.cells.items + cave->cells_first;
-        if (cave_nodes->count > 0) {
+        status = mn_writer_mark(writer, level);
+        if (status == MN_OK && cave_nodes->count > 0) {
             pass++;
             int count = cave_nodes->count;
             for (int k = 0; k < count; k++) {
@@ -1255,7 +1259,7 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
     }
 
     if (status == MN_OK) {
-        status = mn_writer_take(writer, result);
+        status = mn_writer_take(writer, result, marks);
     }
 
 done:
@@ -1337,7 +1341,7 @@ static int compare_ints(const void* left, const void* right)
  * cell of the level map max(tip, L)), each at max(tip, L); one route per level over that level map.
  * In one run mode the guard evaluates the nodes of every level against the material the previous
  * levels left; a clearing route runs over the previous level map first when it needs one. */
-int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, mn_segments* result)
+int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks)
 {
     const mn_grid* g = &context->grid;
     const mn_plan* plan = context->plan;
@@ -1455,6 +1459,7 @@ int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, 
                 continue;
             }
             pass++;
+            status = mn_writer_mark(writer, plan->levels[l]);
             const float* level_map = level_maps + (size_t)l * (size_t)cells;
             int count = passes[l].count;
             for (int k = 0; k < count; k++) {
@@ -1506,7 +1511,7 @@ int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, 
     }
 
     if (status == MN_OK) {
-        status = mn_writer_take(writer, result);
+        status = mn_writer_take(writer, result, marks);
     }
 
 done:
@@ -1547,9 +1552,9 @@ MN_API int32_t mn_strategy_generate(int32_t strategy, const mn_context* context,
     mn_segments result = { 0 };
     int status;
     if (strategy == MN_STRATEGY_Z_LAYER) {
-        status = mn_z_layer(context, &monitor, &result);
+        status = mn_z_layer(context, &monitor, &result, NULL);
     } else if (strategy == MN_STRATEGY_THREE_AXIS_FREEDOM) {
-        status = mn_three_axis_freedom(context, &monitor, &result);
+        status = mn_three_axis_freedom(context, &monitor, &result, NULL);
     } else {
         status = mn_fail(MN_ERR_ARGUMENT, "Unknown strategy %d.", strategy);
     }

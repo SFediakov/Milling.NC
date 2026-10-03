@@ -19,7 +19,7 @@ public sealed class MainWindowHeadlessTests
     {
         "OpenStlItem", "OpenProjectItem", "SaveProjectItem", "SaveProjectAsItem", "ExportNcItem", "ExitItem", "GenerateItem", "CancelGenerateItem",
         "ResetCameraItem", "ShowModelItem", "ShowStockItem", "ShowToolpathItem", "ShowToolItem",
-        "PlayItem", "PauseItem", "StopItem", "RunToEndItem", "AboutItem",
+        "PlayItem", "PauseItem", "StopItem", "RunToEndItem", "NextLayerItem", "PreviousLayerItem", "AboutItem",
         "MachineConnectItem", "MachineDisconnectItem", "MachineStartItem", "MachinePauseItem", "MachineResumeItem", "MachineStopItem",
         "MachineHomeItem", "MachineUnlockItem", "MachineResetItem",
     };
@@ -93,6 +93,50 @@ public sealed class MainWindowHeadlessTests
             // The menu still announces the gestures.
             var item = window.GetLogicalDescendants().OfType<MenuItem>().First(m => m.Name == "ShowStockItem");
             Assert.Equal("Ctrl+D2", item.InputGesture?.ToString());
+        }
+        finally
+        {
+            window.Close();
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task SimulationMenu_StepsLayersThroughThePanelCommands()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"miller-headless-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var viewModel = TestServices.MainWindowViewModel(root);
+        var window = new MainWindow { DataContext = viewModel };
+        try
+        {
+            var stl = Path.Combine(root, "box.stl");
+            File.WriteAllText(stl, TestMeshes.AsciiCubeText());
+            Assert.True(await viewModel.OpenStlFileAsync(stl));
+            viewModel.Stock.SizeX = 10;
+            viewModel.Stock.SizeY = 10;
+            viewModel.Stock.SizeZ = 3;
+            viewModel.Cutting.CellSize = 0.5f;
+            await viewModel.GenerateCommand.ExecuteAsync(null);
+            window.Show();
+
+            var items = window.GetLogicalDescendants().OfType<MenuItem>().Distinct().ToDictionary(m => m.Name ?? string.Empty);
+            var next = items["NextLayerItem"];
+            var previous = items["PreviousLayerItem"];
+            Assert.Same(viewModel.SimulationPanel.NextLayerCommand, next.Command);
+            Assert.Same(viewModel.SimulationPanel.PreviousLayerCommand, previous.Command);
+            Assert.True(next.Command!.CanExecute(null));
+            Assert.False(previous.Command!.CanExecute(null));
+
+            next.Command.Execute(null);
+            var seek = viewModel.SimulationPanel.NextLayerCommand.ExecutionTask;
+            Assert.NotNull(seek);
+            await seek;
+            Assert.Equal(1, viewModel.Simulation.CompletedLayers);
+            Assert.True(previous.Command.CanExecute(null));
         }
         finally
         {

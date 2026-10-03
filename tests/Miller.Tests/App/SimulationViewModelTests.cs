@@ -218,4 +218,69 @@ public sealed class SimulationViewModelTests : IDisposable
         Assert.Equal("0:00.0 min", SimulationViewModel.FormatSeconds(0));
         Assert.Equal("2:05.5 min", SimulationViewModel.FormatSeconds(125.5));
     }
+
+    [Fact]
+    public void WithoutAToolpath_LayerCommandsAreDisabled()
+    {
+        Directory.CreateDirectory(_root);
+        var panel = TestServices.MainWindowViewModel(_root, _dialogs, _errors).SimulationPanel;
+        Assert.Equal(0, panel.LayerCount);
+        Assert.Equal(SimulationViewModel.NoLayersText, panel.LayerText);
+        Assert.False(panel.NextLayerCommand.CanExecute(null));
+        Assert.False(panel.PreviousLayerCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task NextAndPreviousLayer_StepTheSimulation_AndKeepTheReadout()
+    {
+        var vm = await LoadedAsync();
+        var panel = vm.SimulationPanel;
+        var count = panel.LayerCount;
+        Assert.True(count > 0);
+        Assert.StartsWith($"0 of {count} layers done, layer 1 at Z", panel.LayerText);
+        Assert.True(panel.NextLayerCommand.CanExecute(null));
+        Assert.False(panel.PreviousLayerCommand.CanExecute(null));
+
+        await panel.NextLayerCommand.ExecuteAsync(null);
+        Assert.False(panel.IsSeeking);
+        Assert.True(panel.Progress > 0f);
+        Assert.StartsWith($"1 of {count} layers done", panel.LayerText);
+        Assert.True(panel.PreviousLayerCommand.CanExecute(null));
+        Assert.Equal(vm.Simulation.SegmentsCompleted, vm.Viewport.ToolpathProgressIndex);
+        Assert.Same(vm.Simulation.Stock, vm.Viewport.StockMap);
+        Assert.NotEqual(SimulationViewModel.FormatSeconds(0), panel.ElapsedText);
+
+        var presses = 1;
+        while (!panel.IsFinished)
+        {
+            Assert.True(panel.NextLayerCommand.CanExecute(null));
+            Assert.Equal(SimulationViewModel.PausedStatus, vm.StatusText);
+            await panel.NextLayerCommand.ExecuteAsync(null);
+            presses++;
+        }
+
+        Assert.Equal(count, presses);
+        Assert.Equal($"{count} of {count} layers done", panel.LayerText);
+        Assert.Equal(1f, panel.Progress);
+        Assert.False(panel.NextLayerCommand.CanExecute(null));
+        Assert.True(panel.PreviousLayerCommand.CanExecute(null));
+        Assert.StartsWith(SimulationViewModel.FinishedStatus, vm.StatusText);
+
+        await panel.PreviousLayerCommand.ExecuteAsync(null);
+        Assert.False(panel.IsFinished);
+        Assert.StartsWith($"{count - 1} of {count} layers done, layer {count} at Z", panel.LayerText);
+        Assert.Equal(SimulationViewModel.PausedStatus, vm.StatusText);
+        Assert.True(panel.NextLayerCommand.CanExecute(null));
+        Assert.Same(vm.Simulation.Stock, vm.Viewport.StockMap);
+
+        panel.PlayCommand.Execute(null);
+        await panel.NextLayerCommand.ExecuteAsync(null);
+        Assert.True(panel.IsFinished, "the last layer ends the path");
+        Assert.False(panel.IsPlaying);
+
+        panel.StopCommand.Execute(null);
+        Assert.StartsWith($"0 of {count} layers done, layer 1 at Z", panel.LayerText);
+        Assert.False(panel.PreviousLayerCommand.CanExecute(null));
+        Assert.True(panel.NextLayerCommand.CanExecute(null));
+    }
 }
