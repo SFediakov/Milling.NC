@@ -465,6 +465,22 @@ Uncuttable classification (`UncuttableRegions`):
   Every such cell is a node (a lattice at the finishing stepover left the stock
   higher than the head limit counts on). Without should-cut cells the strategy is
   unchanged.
+- Far stepdown (`FarStepdown`, T-156, "Z layer by layer" only): 0 for none,
+  otherwise a whole multiple k of the Stepdown of at least twice it. The plan
+  levels form groups of k (the last group may be shorter). Per group the far
+  region of its bottom level, the positions of that level's mask at least the
+  Stepover away from every cell whose strategy tip stands above the level (the
+  model, the standing stock, the raised positions), is routed first at the bottom
+  level in one step down from where the material stands, with its should-cut
+  route; the footprints of those positions cover exactly the material at least
+  the Stepover away from what stays. Then the caves of the group's levels run as
+  above over the masks without the far cells (the band nearer than the Stepover
+  and whatever is reachable only above the bottom level), and the next group
+  starts at the level the far pass reached. A group of one level has no far
+  pass. With `FarStepdown` 0 the walk runs over the whole plan in one group,
+  unchanged. A far step deeper than the cutter length brings the head beside the
+  standing near band; the collision handling of T-147 to T-150 lifts or clears
+  such positions as for any other route.
 - One run (`CollisionMode.OneRun`, T-150): both strategies keep the material as
   their routes leave it (the footprint of every visited node stamped into a copy
   of the stock) and evaluate every node of a route against it before the route
@@ -590,6 +606,7 @@ M30
 | `0 < Stepover <= CutterDiameter` | Parameters.Stepover |
 | `0 < FinishingStepover <= CutterDiameter` | Parameters.FinishingStepover |
 | `Stepdown > 0` | Parameters.Stepdown |
+| `FarStepdown == 0` or a whole multiple of `Stepdown` of at least `2 * Stepdown` (within `Slicer.LevelTolerance`) | Parameters.FarStepdown |
 | `SafeHeight > 0` (clearance above the stock top) | Parameters.SafeHeight |
 | `0.01 <= CellSize <= 5` | Parameters.CellSize |
 | `FeedRate, PlungeRate, RapidRate > 0` | Parameters.* |
@@ -1942,6 +1959,14 @@ check that decides done.
 - Input: user request (the fines of the routing direction should define the machine movement in the .nc code: the first and last 5 mm of every command three times slower)
 - Output: the rule of section 6.4 (slow zones) applied after the simplifier; one slow factor of a third shared by the solver cost and the zones, the fine per slow millimetre computed from it in double on both sides; the statistics, the simulation and the .nc file carry the slow rates; `heart_grbl.nc` regenerated
 - Acceptance: a 20 mm straight feed becomes 5 slow, 10 fast, 5 slow; a right angle between two 20 mm feeds slows both sides of the corner; movements of 8 and 10 mm are one slow segment; collinear junctions (a kept vertex, a jog within the straight sine, a change of slope) continue the movement; a vertical feed, a plunge, a rapid and a reversal end it; the split path runs through every original vertex, joins up and keeps the length; on a route of three 30 mm legs the slow length is the solver's 20 mm plus the two route-end zones, with an 8 mm first leg 28 mm; the C and C# constants agree bit for bit; the box fixture has exactly the feed rate and a third of it among its feeds, its estimated minutes equal the sum of length over rate and the simulated time at the end, its G-code holds `F` words at both rates, zero gouges and zero simulated events; the heart golden 4,929 to 4,963 lines, 4,954 segments, 4.47 to 10.8 min (the outline staircases are short movements and run slow over their whole length, which the solver already billed)
+- Status: done
+
+#### T-156 Far stepdown in "Z layer by layer"
+- Depends on: T-154
+- Files: `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Core/Setup/CuttingParameters.cs`, `src/Miller.Core/Native/CoreNative.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.App/ViewModels/CuttingParametersViewModel.cs`, `src/Miller.App/Views/CuttingParametersView.axaml`, `tests/Miller.Tests/Core/Toolpath/FarStepdownStrategyTests.cs`, `tests/Miller.Tests/Application/FarStepdownPipelineTests.cs`, `tests/Miller.Tests/Core/Setup/FarStepdownParameterTests.cs`, `tests/Miller.Tests/Application/ProjectValidatorTests.cs`, `tests/Miller.Tests/App/SettingsViewModelsTests.cs`
+- Input: user request (a "far stepdown" parameter on the Cutting tab, larger than the stepdown and divisible by it; in "layer by layer" the area at least a stepover away from the model is cut with the far stepdown in one layer below, the tool returns in Z and cuts the left fragments at the normal stepdown, and at the level the far cut reached the far cut is applied again)
+- Output: `CuttingParameters.FarStepdown` (0 for none) with the validation rule of section 6.7, the Cutting tab box, the project file and the presets; the rule of section 6.4 (groups of k levels, far region per group routed first, the caves of the group over the reduced masks, the walk as a function over a group plan); 3 axis freedom unchanged
+- Acceptance: 0, 4, 6 and 0.6 over 0.2 accepted, 1, 2, 3, negative, NaN and infinite refused on `Parameters.FarStepdown`, an invalid stepdown reports itself only; the member round-trips, a file without it loads 0, a preset carries it; on a 10 x 10 x 5 box in a 40 x 40 stock (levels 3, 1, 0, far 4) the cutting levels run 1, 3, 1, 0, after the far pass every cell within the cutter radius of a far position is at level 1 and every cell more than a cell beyond that is untouched (1,000+ and 600+ cells), the group ends in the plain strategy's state before its first move below level 1, both end at the same stock; a 9 mm stock (levels 7, 5, 3, 1, 0) runs 5, 7, 5, 1, 3, 1, 0; a far stepdown that is no multiple is refused by the native library; through the pipeline the final stock equals the plain one within two tolerances with zero gouges and zero events in both collision modes, the layers read 1, 3, 1, 0 and 3 axis freedom gives identical segments; the heart golden is unchanged; the heart sample with far stepdown 4: 6,938 segments and 13.7 min against 4,954 and 10.8 (informative, more direction changes at the far region's edge)
 - Status: done
 
 ### M8 Packaging and release

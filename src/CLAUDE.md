@@ -60,6 +60,9 @@
   send-response protocol: the next line goes after `ok`/`error`, which Grbl sends once it has
   executed the line (a move is then in its planner). Waiting for every move to stop would halt the
   machine at every vertex; the physical end is confirmed once, by `G4 P0` at the end of a program.
+- The far stepdown (T-156) is not a cluster of its own: it is a schedule of the Z layer strategy
+  (groups of levels, the far region first), so it lives in `mn_z_layer`; a separate cluster would
+  need the cave walk twice.
 - The slow zones (T-155, `mn_slow.c`) and the layer marks (T-154) are not clusters of their own:
   both are stages of the native generation between the simplifier and the statistics (user request:
   all generation in the C library), and the layer stepping is part of the simulation cluster
@@ -568,3 +571,12 @@
 - The heart's outline staircases are movements under 10 mm and run slow over their whole length, so
   its estimated time went from 4.47 to 10.8 min once the zones were written into the path; the
   solver had billed exactly that, the statistics only reported length over rate before.
+- "Area at least the stepover from the model" is a rule on material, the strategy works on tool
+  positions: positions at least the stepover from the obstacles of a level (cells whose tip stands
+  above it, which already include the cutter radius round the model) have footprints that cover
+  exactly the material at least the stepover from what stays, and nothing nearer. Tests on the rule
+  compare material within the cutter radius of a far position and beyond radius plus a cell, not
+  the positions themselves.
+- Two strategies' intermediate stocks are compared before the first move that goes below a level,
+  not at the first move ending exactly on the next level: a descent ramps through vertices at
+  intermediate heights (0.875 between levels 1 and 0 on the box), which the exact-level search skips.
