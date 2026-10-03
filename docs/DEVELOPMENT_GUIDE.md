@@ -75,7 +75,7 @@ global.json                  SDK pin
 .editorconfig
 build.sh                     restore, build, test, publish (host RID), assemble dist/
 Miller.sh                    root start file for Linux and Git Bash: runs dist/<rid>/Miller with the arguments
-Miller.cmd                   root start file for Windows Explorer and cmd: starts dist\win-x64\Miller.exe detached, waits only for -- commands
+Miller.cmd                   root start file for Windows Explorer and cmd: starts src\Miller.App\bin\Release\net10.0\Miller.exe (the Release build) detached, waits only for -- commands
 launchers/Miller.sh          Linux start file (copied to dist/linux-x64/)
 scripts/vendor-packages.sh   one-time online download of packages into third_party/nuget/
 third_party/nuget/           vendored .nupkg files (git-ignored; only README.md is tracked)

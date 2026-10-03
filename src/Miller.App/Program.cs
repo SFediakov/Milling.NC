@@ -7,7 +7,7 @@ namespace Miller.App;
 
 public static class Program
 {
-    public const string AppVersion = "Build_1.0.110";
+    public const string AppVersion = "Build_1.0.111";
     public const string VersionFlag = "--version";
     public const string ExportFlag = "--export";
 

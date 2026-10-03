@@ -479,8 +479,11 @@ file test in `tests/Miller.Tests/Golden/`.
   compiler (Visual Studio Build Tools on Windows, `gcc` and `make` on Linux).
 - Windows start file: `dist/win-x64/Miller.exe`.
 - Linux start file: `dist/linux-x64/Miller.sh` (executable bit set by `build.sh`).
-- Root launchers `Miller.cmd` (Windows) and `Miller.sh` (Linux, Git Bash) run the published
-  binary from `dist/` with the given arguments and refuse with a hint when it is not built.
+- Root launchers: `Miller.cmd` (Windows) runs the Release build from
+  `src/Miller.App/bin/Release/net10.0`, which every `dotnet build` refreshes; `Miller.sh` (Linux,
+  Git Bash) runs the published binary from `dist/`. Both forward the given arguments and refuse
+  with a hint when the binary is not built. `dist/` is kept current by `bash build.sh` after
+  every change.
   `Miller.cmd` starts the window detached so its console closes; a `--` command runs in the
   console and waits for the result.
 - The Linux build also runs on Windows through WSLg; this is not the primary
