@@ -537,7 +537,16 @@ Uncuttable classification (`UncuttableRegions`):
   by Douglas-Peucker so that no dropped vertex lies farther than `Tolerance`
   from its chord, a merge pass drops kept vertices whose neighbours' chord still
   holds, and a chord that dips below the tip map by more than `Tolerance` is
-  split as well.
+  split as well. The tolerance is the one threshold in XY and Z (T-158): every
+  outline cell is a node, so a wall is traced as a staircase of cells whose
+  corners alternate between two lines one cell apart, and the staircase joins
+  into chords only when `Tolerance` reaches `CellSize`. Below that every wall is
+  one move per cell, whatever the route solver does (the user's heart at cell
+  0.025 and tolerance 0.0025: 1,257,006 moves, 1,031,101 of them one cell; at
+  tolerance 0.05: 69,628 moves, 1,433 one cell, 222 to 191 min). An XY floor of
+  one cell inside the simplifier was tried and rejected: a chord along one
+  corner family shifts the cutter a cell off the closing, which leaves a strip
+  of wall at full level height and brings the head onto standing stock.
 - `Stepover`, `FinishingStepover`: valid range `(0, CutterDiameter]`.
 - `SafeHeight`: clearance above the stock top for rapid moves. The absolute rapid Z is
   stock top + `SafeHeight`; the value must be > 0 and does not depend on the origin mode.
@@ -1996,6 +2005,14 @@ check that decides done.
 - Input: user request (far step deep collision prevention for both collision approaches)
 - Output: the rule of section 6.4 (far block steps): steps of the largest multiple of the stepdown within the cutter length, thresholds on the distance to the standing material from the head radius at the slab height, cumulative step regions, cells rejoining the walk masks below their deepest step, the cave tree parent from any cell of a child; the validator warning of section 6.7 on the Cutting tab
 - Acceptance: with a cutter longer than the far stepdown one step at the bottom level, the far stepdown tests and the heart golden unchanged; a 2 mm cutter under a 10 mm cylinder head with far stepdown 8 over stepdown 2 on a 10 x 10 x 2 box in a 40 x 40 x 9 stock: thresholds 0, 5.76, 14.51 and 23.27, steps at 7, 5 and 3 before the walk 7, 5, 3, 1 and the last level 0, every far position at most at its step level after the far block and exactly there where no deeper position lies within the cutter radius, nothing below the deepest step; a frustum head (7 to 20 mm over 10 mm) reaches a third step and cuts more cells to level 5 than a 20 mm cylinder, which stops after the second step; through the pipeline in recursion and one run mode, cylinder and frustum: the layers descend 7, 5, 3 then return to 7, before every step route no annulus cell of any tip of the route stands above the head underside in the simulated stock, no event inside the far block, no more events than without a far stepdown, zero gouges, and the final stock differs from the plain one only within the head radius of the box (at most 60 cells, the collision handling's choice); the warning appears for far stepdown 8 with a 2 mm cutter and not with 8 or 20 mm; 784 tests pass
+- Status: done
+
+#### T-158 Cell-size moves along walls: the tolerance rule of the simplifier
+- Depends on: T-153, T-155
+- Files: `src/Miller.Native/src/mn_checks.c`, `src/Miller.Core/Toolpath/ToolpathSimplifier.cs`, `src/Miller.App/Views/CuttingParametersView.axaml`, `tests/Miller.Tests/Core/Toolpath/ToolpathSimplifierTests.cs`
+- Input: user report (the .nc output of the heart at cell 0.025 and tolerance 0.0025 shows moves one cell long; the solver does not look for the longest directions, the fine does not work)
+- Output: no change of the fine or the solver; the cause is the tolerance below the cell size, documented in section 6.4 and on the Cutting tab label; an XY floor of one cell was implemented, failed the coverage and collision tests (uncut wall strips at full level height, head hits) and was reverted; the staircase rule is tested
+- Acceptance: a slope one-in-six staircase of eight runs at cell 0.25 keeps every corner at tolerance 0.05 and becomes one chord at tolerance 0.25 with a deviation between 0.9 and 1 cell; the circle test unchanged; the user's project measured with the statistics script: tolerance 0.0025 gives 1,257,006 moves (1,031,101 one cell, 59.2 m, 99.5 percent slow feed), tolerance 0.05 gives 69,628 moves (1,433 one cell, 49.4 m, 191 min against about 222); the heart golden unchanged; 785 tests pass
 - Status: done
 
 ### M8 Packaging and release
