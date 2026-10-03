@@ -417,12 +417,13 @@ Uncuttable classification (`UncuttableRegions`):
   changes starts a new coordinate set and so a new movement, whatever the angle,
   on circles as on corners; a node is straight on when the sine of the change is
   within 0.001 (float noise of the node coordinates) and the direction does not
-  reverse. The first and last 5 mm of every movement run at 0.3 of the speed: a
-  fined node slows the 5 mm before and after it, a millimetre is slow once where
-  zones overlap (a movement shorter than 10 mm is slow over its whole length) and
+  reverse. The first and last 5 mm of every movement run at a third of the
+  speed (`TurnFine.SlowSpeedFactor`, three times slower, T-155): a fined node
+  slows the 5 mm before and after it, a millimetre is slow once where zones
+  overlap (a movement shorter than 10 mm is slow over its whole length) and
   route ends clip the zones. Short steps therefore run slow along their whole
   length and the solver keeps long straight moves. The fine is charged on XY
-  travel, `(1 / 0.3 - 1) / 3` cost units per slow millimetre. A flat charge of
+  travel, `(1 / factor - 1) / 3` cost units per slow millimetre. A flat charge of
   10 mm per fined node, whatever the length of the movement, was tried first: it
   bills a 1 mm movement as 10 slow mm, and the solver then climbed over material
   and plunged back rather than follow a curved band (the user's project went from
@@ -432,8 +433,25 @@ Uncuttable classification (`UncuttableRegions`):
   fine window adds the overlap of their zones with the events up to 10 mm away,
   and the change is exact. The local search cannot turn a spiral into rows, so
   the start walk decides the turn structure; that is why the sweeps are among the
-  start walks. The toolpath statistics give length over rate and do not include
-  the slow zones.
+  start walks.
+- Slow zones (`SlowZones`, `mn_slow.c`, T-155): the fine is written into the
+  toolpath right after the simplifier. A movement is a run of feed segments
+  straight on in XY by the rule above (a feed junction with the same XY
+  direction continues it, whatever the Z slope); rapids, plunges, feeds without
+  XY travel and every direction change end a movement. The first and last 5 mm
+  of XY travel of every movement run at a third of the feed rate, a movement up
+  to 10 mm wholly, at route ends as well (the solver leaves those zones out of
+  its cost because every order of a route pays them). The chords are split at
+  the zone boundaries, the original vertices stay, and the statistics, the
+  simulation and the .nc file carry the slow rates. The layer marks are
+  rewritten for the split as for the simplification.
+- Layers (`ToolpathLayer`, `mn_result_layers`, T-154): the strategies mark the
+  first segment of every run of consecutive routes at one plan level (the top
+  band route and every cave block in "Z layer by layer", every level in "3 axis
+  freedom"); a mark at the level of the previous one joins it. The simplifier
+  ends a feed run at a mark, so the layer starts at a real segment, and rewrites
+  the index. The Z layer strategy visits caves depth first, so a level can come
+  back as a later layer; consecutive layers always differ in level.
 - "Z layer by layer": cave by cave. A cave is cut completely at its level, then
   the tool drops one level in place into the first child cave; a sibling is
   visited only when the whole subtree is done, nearest first. Every route is
@@ -509,7 +527,10 @@ M30
 ```
 
 - Numbers: invariant culture, 3 decimals, trailing zeros trimmed (`12.5`, `0`).
-- `F` is emitted only when the feed rate changes.
+- `F` is emitted only when the feed rate changes. The slow zones of section 6.4
+  appear as `F` at a third of the feed rate (`F266.667` for 800) on the first
+  and last 5 mm of every movement, so a long straight movement is three `G1`
+  lines.
 - Only `G0`, `G1`, `G17`, `G21`, `G90`, `G94`, `M3`, `M5`, `M30`, `F`, `S`, `X`,
   `Y`, `Z`. No arcs, no tool changes, no cutter compensation.
 - Line endings `\n`. File extension `.nc`.
@@ -545,7 +566,16 @@ M30
 - `SeekTo(fraction)` moves the simulation to a fraction of the path length: a
   forward seek sweeps from the current position, a backward seek replays from a
   fresh stock; the clock is paused meanwhile and set to the engine's elapsed
-  time afterwards; the view model resumes play when it was playing.
+  time afterwards; the view model resumes play when it was playing. `RunToEnd`
+  sets the clock to the total the same way.
+- Layer by layer (T-154): `SeekToSegment(index)` lands exactly on a segment
+  start with the rules of `SeekTo`; `SeekToNextLayer` moves to the start of the
+  next layer of `PipelineResult.Layers` (the end of the path on the last),
+  `SeekToPreviousLayer` to the start of the current layer, or of the one before
+  when the tool stands at its start. The panel and the Simulation menu share the
+  commands (Next layer: loaded, idle, not finished; Previous layer: loaded,
+  idle, progress above zero) and the readout "k of N layers done, layer m at
+  Z z".
 
 ### 6.7 Validation rules (`ProjectValidator`)
 
@@ -1896,6 +1926,22 @@ check that decides done.
 - Input: user request (the first and last 5 mm are not punished on a circle: delete that rule and apply the punishment after every new coordinate set, so the route mills most of the path in long directions and as few small steps as possible)
 - Output: the rule of section 6.4 (every direction change fined, no circular exemption, no compound threshold, straight within a sine of 0.001, zones overlapping once); sweep start walks along X and Y; the exact fine change from the join nodes and the fine window (the screen and the arc chains are gone); the angle and circle constants removed from `TurnFine`; `heart_grbl.nc` regenerated
 - Acceptance: every direction change fined (1 to 180 degrees, octagons and arcs slow over their whole length, U-turns 1 mm wide 11 mm); the slow length equals the union of the zones on 300 random routes; a diagonal of cell centres 100 mm from the origin is straight, a one cell jog on it gives three turns; reversed routes give the same statuses; one more evaluation never raises the cost; a 12 x 8 lattice keeps the 14 turns of the row pattern and a 20 x 20 lattice from node 7 costs no more than the serpentine; zero events and zero gouges on the fixtures; direction changes and length over rate against Build_1.0.102: heart sample 3,586 to 3,543 and 4.53 to 4.47 min, 3 axis 15,737 to 14,264 and 13.9 to 14.0 min, the user's project 32,081 to 32,591 and 19.5 to 19.7 min (kept events 13 to 12, route stage 361 to 150 s): most direction changes come from the outline and should-cut nodes, every cell of which is a node
+- Status: done
+
+#### T-154 Simulation layer by layer
+- Depends on: T-134, T-144
+- Files: `src/Miller.Native/src/mn_writer.c`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_checks.c`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/src/mn_internal.h`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Core/Toolpath/ToolpathLayer.cs`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Core/Simulation/SimulationEngine.cs`, `src/Miller.Application/Services/PipelineService.cs`, `src/Miller.Application/Services/SimulationService.cs`, `src/Miller.App/ViewModels/SimulationViewModel.cs`, `src/Miller.App/Views/SimulationControlsView.axaml`, `src/Miller.App/Views/MainMenu.axaml`, `tests/Miller.Tests/Application/SimulationLayerTests.cs`, `tests/Miller.Tests/Core/Simulation/SimulationSegmentSeekTests.cs`, `tests/Miller.Tests/App/SimulationViewModelTests.cs`, `tests/Miller.Tests/App/MainWindowHeadlessTests.cs`
+- Input: user request (allow visualization of the simulation layer by layer)
+- Output: layer marks from the strategies (section 6.4), kept through the simplifier and the slow zones, exposed as `PipelineResult.Layers`; `SimulationEngine.SeekToSegment`; `SimulationService.SeekToNextLayer`, `SeekToPreviousLayer`, `LayerIndex`, `CompletedLayers`; Next layer and Previous layer in the panel and the Simulation menu with the readout of section 6.6
+- Acceptance: on the box fixture the layers start at segment 0, increase, change level at every step and start at real segment starts in both strategies; 3 axis freedom gives one layer per plan level, descending; Next layer lands on the next layer's first segment with the stock of a fresh seek to it, Previous layer returns to the start of the layer (a fresh clone) and then of the one before; Next layer on the last layer finishes the simulation with the stock and time of run to end; the readout follows play, step, seek, stop and run to end; the menu items execute the panel commands; the heart golden is unchanged by the marks
+- Status: done
+
+#### T-155 Slow zones in the toolpath
+- Depends on: T-153, T-154
+- Files: `src/Miller.Native/src/mn_slow.c`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/src/mn_internal.h`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Solver/TurnFine.cs`, `src/Miller.Solver/Native/SolverNative.cs`, `src/Miller.Core/Toolpath/SlowZones.cs`, `src/Miller.Core/Native/CoreNative.cs`, `src/Miller.Application/Services/SimulationService.cs`, `tests/Miller.Tests/Core/Toolpath/SlowZonesTests.cs`, `tests/Miller.Tests/Application/SlowZonePipelineTests.cs`, `tests/Miller.Tests/Solver/TurnFineTests.cs`, `tests/Miller.Tests/Golden/heart_grbl.nc`
+- Input: user request (the fines of the routing direction should define the machine movement in the .nc code: the first and last 5 mm of every command three times slower)
+- Output: the rule of section 6.4 (slow zones) applied after the simplifier; one slow factor of a third shared by the solver cost and the zones, the fine per slow millimetre computed from it in double on both sides; the statistics, the simulation and the .nc file carry the slow rates; `heart_grbl.nc` regenerated
+- Acceptance: a 20 mm straight feed becomes 5 slow, 10 fast, 5 slow; a right angle between two 20 mm feeds slows both sides of the corner; movements of 8 and 10 mm are one slow segment; collinear junctions (a kept vertex, a jog within the straight sine, a change of slope) continue the movement; a vertical feed, a plunge, a rapid and a reversal end it; the split path runs through every original vertex, joins up and keeps the length; on a route of three 30 mm legs the slow length is the solver's 20 mm plus the two route-end zones, with an 8 mm first leg 28 mm; the C and C# constants agree bit for bit; the box fixture has exactly the feed rate and a third of it among its feeds, its estimated minutes equal the sum of length over rate and the simulated time at the end, its G-code holds `F` words at both rates, zero gouges and zero simulated events; the heart golden 4,929 to 4,963 lines, 4,954 segments, 4.47 to 10.8 min (the outline staircases are short movements and run slow over their whole length, which the solver already billed)
 - Status: done
 
 ### M8 Packaging and release
