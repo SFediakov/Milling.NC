@@ -60,6 +60,10 @@
   send-response protocol: the next line goes after `ok`/`error`, which Grbl sends once it has
   executed the line (a move is then in its planner). Waiting for every move to stop would halt the
   machine at every vertex; the physical end is confirmed once, by `G4 P0` at the end of a program.
+- The slow zones (T-155, `mn_slow.c`) and the layer marks (T-154) are not clusters of their own:
+  both are stages of the native generation between the simplifier and the statistics (user request:
+  all generation in the C library), and the layer stepping is part of the simulation cluster
+  (`SimulationService`, `SimulationViewModel`), which already owns every seek.
 
 ## Placeholder convention (architecture delivered without implementation)
 
@@ -547,3 +551,20 @@
 - A ball tip holds the bridge top at cell centres only; between them the simulated stock dips by up to
   the project tolerance (0.28 against 0.30 measured), the rule the model surface follows as well. A
   flat tip leaves the bridge exactly at its height.
+- Bug that existed before T-154, fixed: `SimulationService.RunToEnd` left the clock where it was, so
+  the simulated time readout stayed at the old value after Run to end while the progress showed 100
+  percent; it now takes the engine's elapsed time like a seek.
+- A layer mark that falls inside a feed run (a travel along the surface continues the previous
+  route's last chord) must end the run in the simplifier or Douglas-Peucker may drop the vertex and
+  the mark has no segment to point at; on the heart no vertex was dropped that way, the golden was
+  unchanged by the marks.
+- A C constant that must equal a C# `const float` computed from another float is safest as the same
+  double expression cast once on both sides (`(float)((1.0 / factor - 1.0) / 3.0)`); the earlier bit
+  pattern from a hand computation would have to be redone for every change of the factor.
+- The slow zones at route ends are a deliberate difference from the solver's cost: the solver clips
+  them because every order of a route pays them alike, the toolpath pays them because the machine
+  starts and stops there. A route of three 30 mm legs is 20 mm slow for the solver and 30 mm in the
+  .nc file.
+- The heart's outline staircases are movements under 10 mm and run slow over their whole length, so
+  its estimated time went from 4.47 to 10.8 min once the zones were written into the path; the
+  solver had billed exactly that, the statistics only reported length over rate before.
