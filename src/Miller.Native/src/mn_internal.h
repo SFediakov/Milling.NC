@@ -168,6 +168,21 @@ int mn_segments_push(mn_segments* list, mn_segment segment);
 void mn_segments_free(mn_segments* list);
 float mn_segment_length(const mn_segment* s);
 
+/* Layer marks: the index of the first segment of every run of consecutive routes at one plan level,
+ * with that level. The simplifier and the slow zones rewrite the indices for their output. */
+typedef struct mn_marks {
+    int* segment;
+    float* level;
+    int count;
+    int capacity;
+} mn_marks;
+
+int mn_marks_push(mn_marks* list, int segment, float level);
+void mn_marks_free(mn_marks* list);
+
+/* Records a mark at the next segment the writer produces. A mark at the level of the previous one
+ * joins it (the same layer), a mark at the index of the previous one replaces it (an empty route). */
+int mn_writer_mark(mn_writer* writer, float level);
 int mn_writer_travel_to(mn_writer* writer, mn_v3 to, const mn_route_grid* grid);
 /* One run (T-150): a travel along the surface polyline is taken only when the head clears
  * `material` along it (sampled every max(cell, cutter radius)); otherwise the writer retracts.
@@ -175,7 +190,9 @@ int mn_writer_travel_to(mn_writer* writer, mn_v3 to, const mn_route_grid* grid);
 void mn_writer_guard(mn_writer* writer, const float* material, const mn_profile* profile, float cutter_radius, float cutter_length);
 int mn_writer_follow_to(mn_writer* writer, mn_v3 to, const mn_route_grid* grid);
 int mn_writer_has_position(const mn_writer* writer, mn_v3* position);
-int mn_writer_take(mn_writer* writer, mn_segments* result);
+/* Finish: the retract to safe Z, then the segments move to `result` and the marks to `marks` (NULL
+ * drops them). */
+int mn_writer_take(mn_writer* writer, mn_segments* result, mn_marks* marks);
 
 /* ---- collision check and resolution (T-147, T-148) ---- */
 
@@ -251,10 +268,16 @@ int mn_bridges_place(const mn_grid* g, const float* stock, const float* model, c
 
 float mn_distance_to(mn_v3 p, mn_v3 a, mn_v3 b);
 
-int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result);
-int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, mn_segments* result);
+/* `marks` (NULL allowed) receives the layer marks of the routes. */
+int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks);
+int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks);
 int mn_is_clear(const mn_segment* segment, const mn_grid* g, const float* effective_tip, float tolerance);
-int mn_simplify_path(const mn_segments* input, const mn_grid* g, const float* effective_tip, float tolerance, mn_segments* result);
+/* `marks` (NULL allowed) ends a feed run at every marked segment and gets its indices rewritten for
+ * the result. */
+int mn_simplify_path(const mn_segments* input, const mn_grid* g, const float* effective_tip, float tolerance, mn_marks* marks, mn_segments* result);
+/* Slow zones (mn_slow.c): the first and last MN_SLOW_ZONE of every movement at MN_SLOW_SPEED_FACTOR
+ * of the rate, a movement being a run of feeds straight on in XY (mn_turn_between); `marks` as above. */
+int mn_slow_zones(const mn_segments* input, mn_marks* marks, mn_segments* result);
 void mn_statistics_of(const mn_segment* segments, int count, float rapid_rate, mn_statistics* statistics);
 
 #endif

@@ -20,6 +20,7 @@ public sealed partial class SimulationViewModel : ViewModelBase
     public const string RunningStatus = "Simulating the whole toolpath";
     public const string SeekingStatus = "Moving the simulation";
     public const string NotLoadedText = "Generate a toolpath to simulate it.";
+    public const string NoLayersText = "No layers";
     public const string SpeedFormat = "0.###";
     public const string SpeedInvalidMessage = "Speed must be a number between 0.1 and 1000.";
 
@@ -67,6 +68,30 @@ public sealed partial class SimulationViewModel : ViewModelBase
     public bool IsPlaying => _simulation.IsPlaying;
 
     public bool IsFinished => _simulation.IsFinished;
+
+    public int LayerCount => _simulation.LayerCount;
+
+    // Layers done and the layer the tool works in, from the service state.
+    public string LayerText
+    {
+        get
+        {
+            var count = LayerCount;
+            if (!IsLoaded || count == 0)
+            {
+                return NoLayersText;
+            }
+
+            var done = _simulation.CompletedLayers;
+            if (IsFinished)
+            {
+                return string.Create(CultureInfo.InvariantCulture, $"{done} of {count} layers done");
+            }
+
+            var layer = _simulation.LayerIndex;
+            return string.Create(CultureInfo.InvariantCulture, $"{done} of {count} layers done, layer {layer + 1} at Z {_simulation.Result!.Layers[layer].Level:0.###}");
+        }
+    }
 
     // A sweep on another thread is in progress (run to end or seek): generation and the other
     // simulation commands wait for it.
@@ -118,6 +143,10 @@ public sealed partial class SimulationViewModel : ViewModelBase
     private bool CanStop => IsLoaded && !IsWorking;
 
     private bool CanSeek => IsLoaded && !IsWorking;
+
+    private bool CanNextLayer => CanSeek && !IsFinished && LayerCount > 0;
+
+    private bool CanPreviousLayer => CanSeek && LayerCount > 0 && _simulation.Progress > 0;
 
     [RelayCommand(CanExecute = nameof(CanPlay))]
     private void Play()
@@ -177,10 +206,21 @@ public sealed partial class SimulationViewModel : ViewModelBase
         }
     }
 
-    // A press on the progress bar at a fraction of its width. The sweep runs off the UI thread like
-    // run to end; a simulation that was playing continues from the new position unless it is the end.
+    // A press on the progress bar at a fraction of its width.
     [RelayCommand(CanExecute = nameof(CanSeek))]
-    private async Task SeekAsync(float fraction)
+    private Task SeekAsync(float fraction) => SeekWithAsync(() => _simulation.SeekTo(fraction));
+
+    // Layer by layer: to the end of the current layer, or back to the start of the current one and
+    // then of the one before.
+    [RelayCommand(CanExecute = nameof(CanNextLayer))]
+    private Task NextLayerAsync() => SeekWithAsync(_simulation.SeekToNextLayer);
+
+    [RelayCommand(CanExecute = nameof(CanPreviousLayer))]
+    private Task PreviousLayerAsync() => SeekWithAsync(_simulation.SeekToPreviousLayer);
+
+    // Every seek: the sweep runs off the UI thread like run to end; a simulation that was playing
+    // continues from the new position unless it is the end.
+    private async Task SeekWithAsync(Func<SimulationSnapshot> seek)
     {
         var resume = IsPlaying;
         _simulation.Pause();
@@ -190,7 +230,7 @@ public sealed partial class SimulationViewModel : ViewModelBase
         Refresh();
         try
         {
-            var snapshot = await Task.Run(() => _simulation.SeekTo(fraction));
+            var snapshot = await Task.Run(seek);
             ShowStock();
             _finishAnnounced = false;
             Apply(snapshot);
@@ -261,10 +301,14 @@ public sealed partial class SimulationViewModel : ViewModelBase
         StepCommand.NotifyCanExecuteChanged();
         RunToEndCommand.NotifyCanExecuteChanged();
         SeekCommand.NotifyCanExecuteChanged();
+        NextLayerCommand.NotifyCanExecuteChanged();
+        PreviousLayerCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(IsLoaded));
         OnPropertyChanged(nameof(IsPlaying));
         OnPropertyChanged(nameof(IsFinished));
         OnPropertyChanged(nameof(StateText));
+        OnPropertyChanged(nameof(LayerCount));
+        OnPropertyChanged(nameof(LayerText));
     }
 
     partial void OnIsRunningToEndChanged(bool value) => OnPropertyChanged(nameof(IsWorking));

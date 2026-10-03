@@ -55,6 +55,9 @@ public sealed record PipelineResult(
 
     // Holding bridges of the kept pass (separation scope); their cells carry CellStatus.Bridge.
     public BridgeReport Bridges { get; init; }
+
+    // Layers of the toolpath in path order (the simulation steps layer by layer over them).
+    public IReadOnlyList<ToolpathLayer> Layers { get; init; } = Array.Empty<ToolpathLayer>();
 }
 
 // Runs the stages of docs/ARCHITECTURE.md 5.1 in order: the validation here, every later stage in one
@@ -134,6 +137,7 @@ public sealed class PipelineService
             Passes = generated.Passes,
             PassCollisions = generated.PassCollisions,
             Bridges = generated.Bridges,
+            Layers = generated.Layers,
         };
     }
 

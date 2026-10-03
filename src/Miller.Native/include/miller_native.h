@@ -364,6 +364,11 @@ MN_API void mn_result_triangles(const mn_result* result, float* triangles);
 MN_API int32_t mn_result_segment_count(const mn_result* result);
 MN_API void mn_result_segments(const mn_result* result, mn_segment* segments);
 MN_API void mn_result_statistics(const mn_result* result, mn_statistics* statistics);
+/* Layers of the kept pass's toolpath: one per run of consecutive routes at one plan level, in path
+ * order (the Z layer strategy visits caves depth first, so a level can return later); per layer the
+ * index of its first segment (the first layer starts at 0) and its level. */
+MN_API int32_t mn_result_layer_count(const mn_result* result);
+MN_API void mn_result_layers(const mn_result* result, int32_t* segment, float* level);
 MN_API int32_t mn_result_passes(const mn_result* result);
 /* Per pass (mn_result_passes entries): the distinct cells its check entered and its events. */
 MN_API void mn_result_pass_counts(const mn_result* result, int32_t* entered, int32_t* events);

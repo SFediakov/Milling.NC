@@ -50,6 +50,9 @@ public sealed class SimulationEngine
 
     public int CurrentSegmentIndex => _index;
 
+    // Nothing of the current segment is covered yet (also true at the end of the path).
+    public bool AtSegmentStart => _covered == 0;
+
     public bool IsFinished => _index >= _toolpath.Count;
 
     public float Progress => _totalLength > 0 ? Math.Clamp((_doneLength + _covered) / _totalLength, 0f, 1f) : (IsFinished ? 1f : 0f);
@@ -126,6 +129,27 @@ public sealed class SimulationEngine
             }
 
             break;
+        }
+
+        return new StepResult(ToolPosition, dirty, _index, IsFinished);
+    }
+
+    // Covers whole segments up to the start of the segment at `index` (the segment count for the end);
+    // the target must not lie behind the tool.
+    public StepResult SeekToSegment(int index)
+    {
+        var target = Math.Clamp(index, 0, _toolpath.Count);
+        if (target < _index || (target == _index && _covered > 0))
+        {
+            throw new ArgumentOutOfRangeException(nameof(index), index, $"Segment {index} lies behind the tool in segment {_index}; reset the engine first.");
+        }
+
+        var dirty = DirtyRect.Empty;
+        while (_index < target)
+        {
+            var segment = _toolpath.Segments[_index];
+            dirty = dirty.Union(Cover(segment, _covered, segment.Length));
+            Complete(segment);
         }
 
         return new StepResult(ToolPosition, dirty, _index, IsFinished);
