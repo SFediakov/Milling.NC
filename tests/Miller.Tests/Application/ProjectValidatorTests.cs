@@ -134,6 +134,25 @@ public sealed class ProjectValidatorTests
     }
 
     [Fact]
+    public void FarStepdown_IsNoneOrAWholeMultipleOfTheStepdownOfAtLeastTwice()
+    {
+        AssertValid(p => p.Parameters.FarStepdown = 0);
+        AssertValid(p => p.Parameters.FarStepdown = 4);
+        AssertValid(p => p.Parameters.FarStepdown = 6);
+        AssertValid(p => { p.Parameters.Stepdown = 0.2f; p.Parameters.FarStepdown = 0.6f; });
+        AssertSingleError(p => p.Parameters.FarStepdown = 2, "Parameters.FarStepdown");
+        AssertSingleError(p => p.Parameters.FarStepdown = 3, "Parameters.FarStepdown");
+        AssertSingleError(p => p.Parameters.FarStepdown = 1, "Parameters.FarStepdown");
+        AssertSingleError(p => p.Parameters.FarStepdown = -4, "Parameters.FarStepdown");
+        AssertSingleError(p => p.Parameters.FarStepdown = float.NaN, "Parameters.FarStepdown");
+        AssertSingleError(p => p.Parameters.FarStepdown = float.PositiveInfinity, "Parameters.FarStepdown");
+        Assert.True(ProjectValidator.IsFarStepdown(4f, 2f));
+        Assert.False(ProjectValidator.IsFarStepdown(4.01f, 2f));
+        // An invalid stepdown reports itself only.
+        AssertSingleError(p => { p.Parameters.Stepdown = 0; p.Parameters.FarStepdown = 4; }, "Parameters.Stepdown");
+    }
+
+    [Fact]
     public void SafeHeight_IsAClearanceAboveTheStockTop()
     {
         AssertSingleError(p => p.Parameters.SafeHeight = 0, "Parameters.SafeHeight");

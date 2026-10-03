@@ -141,6 +141,24 @@ public sealed class SettingsViewModelsTests : IDisposable
     }
 
     [Fact]
+    public void Cutting_FarStepdown_MustBeAMultipleOfTheStepdown()
+    {
+        Assert.Equal(0f, _vm.Cutting.FarStepdown);
+        Assert.Null(_vm.Cutting.FarStepdownError);
+        _vm.Cutting.FarStepdown = 3f;
+        Assert.NotNull(_vm.Cutting.FarStepdownError);
+        Assert.Contains("multiple", _vm.Cutting.FarStepdownError);
+        _vm.Cutting.FarStepdown = 4f;
+        Assert.Null(_vm.Cutting.FarStepdownError);
+        Assert.Equal(4f, _vm.Project.Current.Parameters.FarStepdown);
+        Assert.True(_vm.Project.IsDirty);
+        _vm.Cutting.Stepdown = 3f;
+        Assert.NotNull(_vm.Cutting.FarStepdownError);
+        _vm.Cutting.FarStepdown = 0f;
+        Assert.Null(_vm.Cutting.FarStepdownError);
+    }
+
+    [Fact]
     public void Strategy_ListsTheRegistriesAndWritesIds()
     {
         Assert.Equal(new[] { "z-layer-by-layer", "three-axis-freedom" }, StrategySelectionViewModel.Strategies.Select(s => s.Id));

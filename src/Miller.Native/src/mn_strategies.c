@@ -1003,143 +1003,310 @@ static void top_band_cells(const mn_context* context, const uint8_t* touches, ui
  * is a node), so that stock is at its closing before the tool goes deeper
  * beside it; the band between the stock top and the first level, which belongs to no cave, gets its
  * should-cut route first. Without should-cut cells there is no such route. In one run mode every
- * route passes the guard first (T-150). */
-int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks)
+ * route passes the guard first (T-150). With a far stepdown (T-156, k times the stepdown) the levels
+ * form groups of k: the far region of the group's bottom level (its mask at a distance of at least the
+ * stepover from everything that stays above that level) is routed first, in one step down from where
+ * the material stands, then the caves of the group's levels without the far cells run as above, and
+ * the next group starts at the level the far pass reached; a group of one level has no far pass. */
+
+/* Every should-cut pass cell is a node: the head limit counts on the tool at the tip of every
+ * position over should-cut stock, and a lattice at the finishing stepover left the stock higher. */
+#define MN_CUT_STEP 1
+
+/* The shared state of the routes of one generation: the maps the routes read and write, the scratch
+ * arrays, the budget and the progress counters. */
+typedef struct mn_z_state {
+    const mn_context* context;
+    const mn_monitor* monitor;
+    const mn_profile* profile;
+    mn_guard* guard;
+    mn_writer* writer;
+    float* planned;
+    float* clearance;
+    float* lifted;
+    uint8_t* touches;
+    uint8_t* inside;
+    uint8_t* covered;
+    float* xs;
+    float* ys;
+    float* zs;
+    mn_budget budget;
+    int64_t nodes_left;
+    int64_t total;
+    int pass;
+    int pass_count;
+    int step;
+} mn_z_state;
+
+/* One group of levels: its plan (the context's plan itself without a far stepdown; otherwise the
+ * group's levels with the far cells taken out of the masks, plus the next level with an empty mask
+ * that only names the next level for the should-cut routes), its cave tree, the nodes and the
+ * should-cut nodes per cave, and the far region of its bottom level with its nodes. */
+typedef struct mn_z_group {
+    mn_plan plan;
+    int owns_plan;
+    int first;
+    int last;
+    mn_cave_tree tree;
+    mn_ints* nodes;
+    mn_ints* cut_nodes;
+    mn_ints far_cells;
+    mn_ints far_nodes;
+    mn_ints far_cut_nodes;
+} mn_z_group;
+
+static void z_group_free(mn_z_group* group)
+{
+    for (int c = 0; c < group->tree.cave_count; c++) {
+        if (group->nodes != NULL) {
+            mn_ints_free(&group->nodes[c]);
+        }
+        if (group->cut_nodes != NULL) {
+            mn_ints_free(&group->cut_nodes[c]);
+        }
+    }
+    free(group->nodes);
+    free(group->cut_nodes);
+    cave_tree_free(&group->tree);
+    if (group->owns_plan) {
+        free(group->plan.levels);
+        free(group->plan.masks);
+    }
+    mn_ints_free(&group->far_cells);
+    mn_ints_free(&group->far_nodes);
+    mn_ints_free(&group->far_cut_nodes);
+    memset(group, 0, sizeof(*group));
+}
+
+/* The far region of a level (T-156): the cells of its mask at least the stepover away from every cell
+ * whose strategy tip stands above the level (the model, the standing stock and the raised positions;
+ * cells without a tip are no obstacle). The footprints of those positions cover exactly the material
+ * at least the stepover away from what stays, the band nearer to it is left to the other positions. */
+static int far_cells_of(const mn_context* context, const uint8_t* mask, float level, mn_ints* far)
 {
     const mn_grid* g = &context->grid;
+    int cells = mn_cells(g);
+    uint8_t* obstacles = (uint8_t*)mn_alloc((size_t)cells, 1);
+    float* distance = (float*)mn_alloc((size_t)cells, sizeof(float));
+    int status = MN_OK;
+    if (obstacles == NULL || distance == NULL) {
+        status = mn_fail(MN_ERR_MEMORY, "Out of memory for the far region.");
+    } else {
+        for (int c = 0; c < cells; c++) {
+            float tip = context->effective_tip[c];
+            obstacles[c] = (uint8_t)(!mn_isnan(tip) && tip > level + MN_LEVEL_TOLERANCE);
+        }
+        status = mn_distance_transform(obstacles, g->width, g->height, g->cell_size, distance);
+        for (int c = 0; c < cells && status == MN_OK; c++) {
+            if (mask[c] && distance[c] + MN_LEVEL_TOLERANCE >= context->parameters.stepover) {
+                status = mn_ints_push(far, c);
+            }
+        }
+    }
+    free(obstacles);
+    free(distance);
+    return status;
+}
+
+/* The nodes of a region: the lattice at the stepover plus every cell no footprint covers. */
+static int region_nodes(mn_z_state* s, const uint8_t* inside, mn_ints* nodes)
+{
+    const mn_grid* g = &s->context->grid;
+    MN_CHECK(mn_lattice(inside, g->width, g->height, s->step, nodes));
+    return cover_gaps(inside, g, s->profile, nodes, s->covered);
+}
+
+/* The should-cut nodes of a region: its cells over should-cut stock with a tip between the levels. */
+static int region_cut_nodes(mn_z_state* s, const int* region, int count, float level, float next_level, mn_ints* nodes)
+{
+    const mn_grid* g = &s->context->grid;
+    memset(s->inside, 0, (size_t)mn_cells(g));
+    should_cut_cells(s->context->effective_tip, s->touches, region, count, level, next_level, s->inside);
+    return mn_lattice(s->inside, g->width, g->height, MN_CUT_STEP, nodes);
+}
+
+static void count_pass(mn_z_state* s, const mn_ints* nodes, int* max_nodes)
+{
+    s->nodes_left += nodes->count;
+    s->pass_count += nodes->count > 0 ? 1 : 0;
+    *max_nodes = mn_maxi(*max_nodes, nodes->count);
+}
+
+/* Prepares the group of the plan levels first..last: its plan, its far region, its cave tree and the
+ * nodes of every route. */
+static int z_group_prepare(mn_z_state* s, int first, int last, int far_on, mn_z_group* group, int* max_nodes)
+{
+    const mn_context* context = s->context;
     const mn_plan* plan = context->plan;
+    const mn_grid* g = &context->grid;
+    int cells = mn_cells(g);
+    memset(group, 0, sizeof(*group));
+    group->first = first;
+    group->last = last;
+    if (!far_on) {
+        group->plan = *plan;
+    } else {
+        int count = last - first + 1 + (last + 1 < plan->count ? 1 : 0);
+        group->plan.grid = *g;
+        group->plan.count = count;
+        group->plan.coverage = plan->coverage;
+        group->plan.lowest = plan->lowest;
+        group->plan.levels = (float*)mn_alloc((size_t)count, sizeof(float));
+        group->plan.masks = (uint8_t*)mn_alloc((size_t)count * (size_t)cells, 1);
+        group->owns_plan = 1;
+        if (group->plan.levels == NULL || group->plan.masks == NULL) {
+            return mn_fail(MN_ERR_MEMORY, "Out of memory for a group of %d levels.", count);
+        }
+        for (int k = 0; k < count; k++) {
+            group->plan.levels[k] = plan->levels[first + k];
+            if (first + k <= last) {
+                memcpy(group->plan.masks + (size_t)k * (size_t)cells, plan->masks + (size_t)(first + k) * (size_t)cells, (size_t)cells);
+            }
+        }
+        if (last > first) {
+            float level = plan->levels[last];
+            float next_level = last + 1 < plan->count ? plan->levels[last + 1] : -INFINITY;
+            MN_CHECK(far_cells_of(context, plan->masks + (size_t)last * (size_t)cells, level, &group->far_cells));
+            memset(s->inside, 0, (size_t)cells);
+            for (int m = 0; m < group->far_cells.count; m++) {
+                int c = group->far_cells.items[m];
+                s->inside[c] = 1;
+                for (int k = 0; k <= last - first; k++) {
+                    group->plan.masks[(size_t)k * (size_t)cells + (size_t)c] = 0;
+                }
+            }
+            if (group->far_cells.count > 0) {
+                MN_CHECK(region_nodes(s, s->inside, &group->far_nodes));
+                count_pass(s, &group->far_nodes, max_nodes);
+                if (context->should_cut != NULL) {
+                    MN_CHECK(region_cut_nodes(s, group->far_cells.items, group->far_cells.count, level, next_level, &group->far_cut_nodes));
+                    count_pass(s, &group->far_cut_nodes, max_nodes);
+                }
+            }
+        }
+    }
+    MN_CHECK(cave_tree_build(&group->plan, &group->tree));
+    int caves = group->tree.cave_count;
+    group->nodes = (mn_ints*)mn_alloc((size_t)(caves > 0 ? caves : 1), sizeof(mn_ints));
+    group->cut_nodes = (mn_ints*)mn_alloc((size_t)(caves > 0 ? caves : 1), sizeof(mn_ints));
+    if (group->nodes == NULL || group->cut_nodes == NULL) {
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for the layer strategy.");
+    }
+    for (int c = 0; c < caves; c++) {
+        const mn_cave* cave = &group->tree.caves[c];
+        const int* labels = group->tree.labels + (size_t)cave->level * (size_t)cells;
+        int id = c - group->tree.level_first[cave->level];
+        for (int k = 0; k < cells; k++) {
+            s->inside[k] = (uint8_t)(labels[k] == id);
+        }
+        MN_CHECK(region_nodes(s, s->inside, &group->nodes[c]));
+        count_pass(s, &group->nodes[c], max_nodes);
+        if (context->should_cut != NULL) {
+            const int* cave_cells = group->tree.cells.items + cave->cells_first;
+            float next_level = cave->level + 1 < group->plan.count ? group->plan.levels[cave->level + 1] : -INFINITY;
+            MN_CHECK(region_cut_nodes(s, cave_cells, cave->cells_count, group->plan.levels[cave->level], next_level, &group->cut_nodes[c]));
+            count_pass(s, &group->cut_nodes[c], max_nodes);
+        }
+    }
+    return MN_OK;
+}
+
+static void z_report(mn_z_state* s)
+{
+    mn_report(s->monitor, s->pass, s->pass_count, (float)(s->total - s->nodes_left) / (float)s->total);
+}
+
+/* One level route over `nodes` with the cells of `region` taken to `level` (the guard first, a
+ * clearing route when it asks for one), the planned heights of the region, then the should-cut route
+ * over the region cells whose tip lies between the level and `next_level`. */
+static int z_level_block(mn_z_state* s, float level, float next_level, const int* region, int region_count, const mn_ints* nodes, const mn_ints* cut)
+{
+    const mn_context* context = s->context;
+    const mn_grid* g = &context->grid;
     int cells = mn_cells(g);
     int width = g->width;
-    int status = MN_OK;
-    mn_cave_tree tree;
-    MN_CHECK(cave_tree_build(plan, &tree));
-    mn_guard guard;
-    status = guard_init(&guard, context);
-    if (status != MN_OK) {
-        cave_tree_free(&tree);
-        return status;
+    mn_guard* guard = s->guard;
+    int status = mn_writer_mark(s->writer, level);
+    if (status == MN_OK && nodes->count > 0) {
+        s->pass++;
+        int count = nodes->count;
+        for (int k = 0; k < count; k++) {
+            int cell = nodes->items[k];
+            s->xs[k] = mn_center_x(g, cell % width);
+            s->ys[k] = mn_center_y(g, cell / width);
+            s->zs[k] = level;
+        }
+        memcpy(s->clearance, s->planned, (size_t)cells * sizeof(float));
+        for (int m = 0; m < region_count; m++) {
+            s->clearance[region[m]] = level;
+        }
+        status = guard_evaluate(guard, s->xs, s->ys, s->zs, &count, level, 1, s->clearance, region, region_count);
+        if (status == MN_OK && guard->clearing.count > 0) {
+            status = clearing_route(context, guard, level, s->planned, s->clearance, s->lifted, s->inside, &s->budget, s->nodes_left, s->monitor, s->writer);
+            if (status == MN_OK) {
+                memcpy(s->clearance, s->planned, (size_t)cells * sizeof(float));
+                for (int m = 0; m < region_count; m++) {
+                    s->clearance[region[m]] = level;
+                }
+                status = guard_evaluate(guard, s->xs, s->ys, s->zs, &count, level, 0, s->clearance, region, region_count);
+            }
+        }
+        if (status == MN_OK) {
+            memcpy(s->clearance, s->planned, (size_t)cells * sizeof(float));
+            for (int m = 0; m < region_count; m++) {
+                int cell = region[m];
+                s->clearance[cell] = guard_floor(guard, cell, level);
+            }
+            mn_route_grid grid = { *g, s->clearance, s->clearance };
+            status = route_nodes(context, &grid, s->lifted, s->xs, s->ys, s->zs, count, guard, &s->budget, s->nodes_left, s->monitor != NULL ? s->monitor->cancel : NULL, s->writer);
+            guard_stamp(guard, s->xs, s->ys, s->zs, count);
+        }
+        s->nodes_left -= nodes->count;
+        if (status == MN_OK) {
+            z_report(s);
+        }
     }
+    for (int m = 0; m < region_count; m++) {
+        int cell = region[m];
+        s->planned[cell] = guard_floor(guard, cell, level);
+    }
+    if (cut->count > 0 && status == MN_OK) {
+        s->pass++;
+        memset(s->inside, 0, (size_t)cells);
+        should_cut_cells(context->effective_tip, s->touches, region, region_count, level, next_level, s->inside);
+        status = tip_route(context, s->inside, cut, -INFINITY, s->planned, s->clearance, s->lifted, s->xs, s->ys, s->zs, guard, 1, &s->budget, s->nodes_left, s->monitor, s->writer);
+        s->nodes_left -= cut->count;
+        if (status == MN_OK) {
+            z_report(s);
+        }
+    }
+    return status;
+}
 
-    int step = mn_lattice_step(context->parameters.stepover, g->cell_size);
-    /* Every should-cut pass cell is a node: the head limit counts on the tool at the tip of every
-     * position over should-cut stock, and a lattice at the finishing stepover left the stock higher. */
-    int cut_step = 1;
-    mn_ints* nodes = (mn_ints*)mn_alloc((size_t)(tree.cave_count > 0 ? tree.cave_count : 1), sizeof(mn_ints));
-    mn_ints* cut_nodes = (mn_ints*)mn_alloc((size_t)(tree.cave_count > 0 ? tree.cave_count : 1), sizeof(mn_ints));
-    uint8_t* touches = (uint8_t*)mn_alloc((size_t)cells, 1);
-    uint8_t* inside = (uint8_t*)mn_alloc((size_t)cells, 1);
-    uint8_t* covered = (uint8_t*)mn_alloc((size_t)cells, 1);
-    float* planned = (float*)mn_alloc((size_t)cells, sizeof(float));
-    float* clearance = (float*)mn_alloc((size_t)cells, sizeof(float));
+/* The depth-first walk over the caves of a group: a cave with its should-cut route, then its children
+ * before the next sibling, the sibling whose nearest node is nearest to the tool first. */
+static int z_walk(mn_z_state* s, const mn_z_group* group)
+{
+    const mn_grid* g = &s->context->grid;
+    int width = g->width;
+    const mn_cave_tree* tree = &group->tree;
+    int caves = tree->cave_count;
     mn_ints pending = { 0 };
-    mn_ints top_nodes = { 0 };
-    float* xs = NULL;
-    float* ys = NULL;
-    float* zs = NULL;
-    int* list_start = NULL;
-    int* list_end = NULL;
-    mn_writer* writer = NULL;
-    mn_profile profile = { 0 };
-    float* lifted = NULL;
-    if (nodes == NULL || cut_nodes == NULL || touches == NULL || inside == NULL || covered == NULL || planned == NULL || clearance == NULL) {
-        status = mn_fail(MN_ERR_MEMORY, "Out of memory for the layer strategy.");
-        goto done;
-    }
-    lifted = (float*)mn_alloc(2 * (size_t)cells, sizeof(float));
-    status = lifted == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the route floor of %d cells.", cells) : mn_profile_build(&context->tool, g->cell_size, &profile);
-    if (status != MN_OK) {
-        goto done;
-    }
-    if (context->should_cut != NULL) {
-        footprint_touches(g, &profile, context->should_cut, touches);
-    }
-
-    int64_t nodes_left = 0;
-    int pass_count = 0;
-    int max_nodes = 0;
-    if (context->should_cut != NULL && plan->count > 0) {
-        top_band_cells(context, touches, inside);
-        status = mn_lattice(inside, width, g->height, cut_step, &top_nodes);
-        nodes_left += top_nodes.count;
-        pass_count += top_nodes.count > 0 ? 1 : 0;
-        max_nodes = mn_maxi(max_nodes, top_nodes.count);
-    }
-    for (int c = 0; c < tree.cave_count && status == MN_OK; c++) {
-        const mn_cave* cave = &tree.caves[c];
-        const int* labels = tree.labels + (size_t)cave->level * (size_t)cells;
-        int id = c - tree.level_first[cave->level];
-        for (int k = 0; k < cells; k++) {
-            inside[k] = (uint8_t)(labels[k] == id);
-        }
-        status = mn_lattice(inside, width, g->height, step, &nodes[c]);
-        if (status == MN_OK) {
-            status = cover_gaps(inside, g, &profile, &nodes[c], covered);
-        }
-        nodes_left += nodes[c].count;
-        pass_count += nodes[c].count > 0 ? 1 : 0;
-        max_nodes = mn_maxi(max_nodes, nodes[c].count);
-        if (status == MN_OK && context->should_cut != NULL) {
-            const int* cave_cells = tree.cells.items + cave->cells_first;
-            float next_level = cave->level + 1 < plan->count ? plan->levels[cave->level + 1] : -INFINITY;
-            memset(inside, 0, (size_t)cells);
-            should_cut_cells(context->effective_tip, touches, cave_cells, cave->cells_count, plan->levels[cave->level], next_level, inside);
-            status = mn_lattice(inside, width, g->height, cut_step, &cut_nodes[c]);
-            nodes_left += cut_nodes[c].count;
-            pass_count += cut_nodes[c].count > 0 ? 1 : 0;
-            max_nodes = mn_maxi(max_nodes, cut_nodes[c].count);
-        }
-    }
-    if (status != MN_OK) {
-        goto done;
-    }
-
-    xs = (float*)mn_alloc((size_t)(max_nodes > 0 ? max_nodes : 1), sizeof(float));
-    ys = (float*)mn_alloc((size_t)(max_nodes > 0 ? max_nodes : 1), sizeof(float));
-    zs = (float*)mn_alloc((size_t)(max_nodes > 0 ? max_nodes : 1), sizeof(float));
-    if (xs == NULL || ys == NULL || zs == NULL) {
-        status = mn_fail(MN_ERR_MEMORY, "Out of memory for the layer strategy.");
-        goto done;
-    }
-    memcpy(planned, context->stock, (size_t)cells * sizeof(float));
-    status = writer_for(context, &writer);
-    if (status != MN_OK) {
-        goto done;
-    }
-    if (guard.enabled) {
-        mn_writer_guard(writer, guard.material, &guard.profile, context->tool.cutter_diameter / 2.0f, context->tool.cutter_length);
-    }
-
-    mn_budget budget = { MN_BUDGET_MAX_EVALUATIONS, 0 };
-    int64_t total = nodes_left;
-    int pass = 0;
-    if (top_nodes.count > 0) {
-        pass++;
-        top_band_cells(context, touches, inside);
-        status = mn_writer_mark(writer, plan->levels[0]);
-        if (status == MN_OK) {
-            status = tip_route(context, inside, &top_nodes, plan->levels[0], planned, clearance, lifted, xs, ys, zs, &guard, 1, &budget, nodes_left, monitor, writer);
-        }
-        nodes_left -= top_nodes.count;
-        if (status == MN_OK) {
-            mn_report(monitor, pass, pass_count, (float)(total - nodes_left) / (float)total);
-        }
-    }
+    int* list_start = (int*)mn_alloc((size_t)(caves > 0 ? caves : 1) + 1, sizeof(int));
+    int* list_end = (int*)mn_alloc((size_t)(caves > 0 ? caves : 1) + 1, sizeof(int));
+    int status = list_start == NULL || list_end == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the layer strategy.") : MN_OK;
     /* The sibling lists live in `pending`: every entry of the stack starts a list whose removed caves
      * are marked -1; a list ends at the entry that holds its length. */
     int depth = 0;
     int first = pending.count;
-    for (int r = 0; r < tree.roots.count && status == MN_OK; r++) {
-        status = mn_ints_push(&pending, tree.roots.items[r]);
+    for (int r = 0; r < tree->roots.count && status == MN_OK; r++) {
+        status = mn_ints_push(&pending, tree->roots.items[r]);
     }
-    list_start = (int*)mn_alloc((size_t)(tree.cave_count > 0 ? tree.cave_count : 1) + 1, sizeof(int));
-    list_end = (int*)mn_alloc((size_t)(tree.cave_count > 0 ? tree.cave_count : 1) + 1, sizeof(int));
-    if (list_start == NULL || list_end == NULL) {
-        status = mn_fail(MN_ERR_MEMORY, "Out of memory for the layer strategy.");
-        goto done;
+    if (status == MN_OK) {
+        list_start[depth] = first;
+        list_end[depth] = pending.count;
+        depth = 1;
     }
-    list_start[depth] = first;
-    list_end[depth] = pending.count;
-    depth = 1;
 
     while (depth > 0 && status == MN_OK) {
         int from = list_start[depth - 1];
@@ -1153,14 +1320,13 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
             pending.count = from;
             continue;
         }
-        if (mn_cancelled(monitor)) {
+        if (mn_cancelled(s->monitor)) {
             status = mn_fail(MN_ERR_CANCELLED, "Cancelled.");
             break;
         }
 
-        /* The sibling whose nearest node is nearest to the tool; the first one before the start. */
         mn_v3 position;
-        int has_position = mn_writer_has_position(writer, &position);
+        int has_position = mn_writer_has_position(s->writer, &position);
         int best_slot = -1;
         float best_distance = INFINITY;
         for (int k = from; k < to; k++) {
@@ -1174,8 +1340,8 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
                     break;
                 }
             }
-            for (int m = 0; m < nodes[c].count; m++) {
-                int cell = nodes[c].items[m];
+            for (int m = 0; m < group->nodes[c].count; m++) {
+                int cell = group->nodes[c].items[m];
                 float dx = mn_center_x(g, cell % width) - position.x;
                 float dy = mn_center_y(g, cell / width) - position.y;
                 float d = dx * dx + dy * dy;
@@ -1187,67 +1353,11 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
         }
         int cave_index = pending.items[best_slot];
         pending.items[best_slot] = -1;
-        const mn_cave* cave = &tree.caves[cave_index];
-        float level = plan->levels[cave->level];
-        const mn_ints* cave_nodes = &nodes[cave_index];
-        const int* cave_cells = tree.cells.items + cave->cells_first;
-        status = mn_writer_mark(writer, level);
-        if (status == MN_OK && cave_nodes->count > 0) {
-            pass++;
-            int count = cave_nodes->count;
-            for (int k = 0; k < count; k++) {
-                int cell = cave_nodes->items[k];
-                xs[k] = mn_center_x(g, cell % width);
-                ys[k] = mn_center_y(g, cell / width);
-                zs[k] = level;
-            }
-            memcpy(clearance, planned, (size_t)cells * sizeof(float));
-            for (int m = 0; m < cave->cells_count; m++) {
-                clearance[cave_cells[m]] = level;
-            }
-            status = guard_evaluate(&guard, xs, ys, zs, &count, level, 1, clearance, cave_cells, cave->cells_count);
-            if (status == MN_OK && guard.clearing.count > 0) {
-                status = clearing_route(context, &guard, level, planned, clearance, lifted, inside, &budget, nodes_left, monitor, writer);
-                if (status == MN_OK) {
-                    memcpy(clearance, planned, (size_t)cells * sizeof(float));
-                    for (int m = 0; m < cave->cells_count; m++) {
-                        clearance[cave_cells[m]] = level;
-                    }
-                    status = guard_evaluate(&guard, xs, ys, zs, &count, level, 0, clearance, cave_cells, cave->cells_count);
-                }
-            }
-            if (status == MN_OK) {
-                memcpy(clearance, planned, (size_t)cells * sizeof(float));
-                for (int m = 0; m < cave->cells_count; m++) {
-                    int cell = cave_cells[m];
-                    clearance[cell] = guard_floor(&guard, cell, level);
-                }
-                mn_route_grid grid = { *g, clearance, clearance };
-                status = route_nodes(context, &grid, lifted, xs, ys, zs, count, &guard, &budget, nodes_left, monitor != NULL ? monitor->cancel : NULL, writer);
-                guard_stamp(&guard, xs, ys, zs, count);
-            }
-            nodes_left -= cave_nodes->count;
-            if (status == MN_OK) {
-                mn_report(monitor, pass, pass_count, (float)(total - nodes_left) / (float)total);
-            }
-        }
-        for (int m = 0; m < cave->cells_count; m++) {
-            int cell = cave_cells[m];
-            planned[cell] = guard_floor(&guard, cell, level);
-        }
-
-        const mn_ints* cut = &cut_nodes[cave_index];
-        if (cut->count > 0 && status == MN_OK) {
-            pass++;
-            float next_level = cave->level + 1 < plan->count ? plan->levels[cave->level + 1] : -INFINITY;
-            memset(inside, 0, (size_t)cells);
-            should_cut_cells(context->effective_tip, touches, cave_cells, cave->cells_count, level, next_level, inside);
-            status = tip_route(context, inside, cut, -INFINITY, planned, clearance, lifted, xs, ys, zs, &guard, 1, &budget, nodes_left, monitor, writer);
-            nodes_left -= cut->count;
-            if (status == MN_OK) {
-                mn_report(monitor, pass, pass_count, (float)(total - nodes_left) / (float)total);
-            }
-        }
+        const mn_cave* cave = &tree->caves[cave_index];
+        float level = group->plan.levels[cave->level];
+        float next_level = cave->level + 1 < group->plan.count ? group->plan.levels[cave->level + 1] : -INFINITY;
+        const int* cave_cells = tree->cells.items + cave->cells_first;
+        status = z_level_block(s, level, next_level, cave_cells, cave->cells_count, &group->nodes[cave_index], &group->cut_nodes[cave_index]);
 
         int child_first = pending.count;
         for (int k = 0; k < cave->children.count && status == MN_OK; k++) {
@@ -1257,41 +1367,152 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
         list_end[depth] = pending.count;
         depth++;
     }
+    free(list_start);
+    free(list_end);
+    mn_ints_free(&pending);
+    return status;
+}
+
+int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks)
+{
+    const mn_grid* g = &context->grid;
+    const mn_plan* plan = context->plan;
+    int cells = mn_cells(g);
+    int status = MN_OK;
+    float far = context->parameters.far_stepdown;
+    int far_on = far > 0;
+    int group_size = plan->count > 0 ? plan->count : 1;
+    if (far_on) {
+        float stepdown = context->parameters.stepdown;
+        int k = mn_f2i(rintf(far / stepdown));
+        if (k < 2 || fabsf(far - (float)k * stepdown) > MN_LEVEL_TOLERANCE) {
+            return mn_fail(MN_ERR_ARGUMENT, "Far stepdown %g must be a whole multiple of the stepdown %g, at least twice it.", (double)far, (double)stepdown);
+        }
+        group_size = k;
+    }
+    mn_guard guard;
+    MN_CHECK(guard_init(&guard, context));
+    mn_z_state s;
+    memset(&s, 0, sizeof(s));
+    s.context = context;
+    s.monitor = monitor;
+    s.guard = &guard;
+    s.step = mn_lattice_step(context->parameters.stepover, g->cell_size);
+    s.budget.total = MN_BUDGET_MAX_EVALUATIONS;
+    mn_profile profile = { 0 };
+    s.profile = &profile;
+    mn_z_group* groups = NULL;
+    int group_count = 0;
+    mn_ints top_nodes = { 0 };
+    mn_writer* writer = NULL;
+    s.touches = (uint8_t*)mn_alloc((size_t)cells, 1);
+    s.inside = (uint8_t*)mn_alloc((size_t)cells, 1);
+    s.covered = (uint8_t*)mn_alloc((size_t)cells, 1);
+    s.planned = (float*)mn_alloc((size_t)cells, sizeof(float));
+    s.clearance = (float*)mn_alloc((size_t)cells, sizeof(float));
+    if (s.touches == NULL || s.inside == NULL || s.covered == NULL || s.planned == NULL || s.clearance == NULL) {
+        status = mn_fail(MN_ERR_MEMORY, "Out of memory for the layer strategy.");
+        goto done;
+    }
+    s.lifted = (float*)mn_alloc(2 * (size_t)cells, sizeof(float));
+    status = s.lifted == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the route floor of %d cells.", cells) : mn_profile_build(&context->tool, g->cell_size, &profile);
+    if (status != MN_OK) {
+        goto done;
+    }
+    if (context->should_cut != NULL) {
+        footprint_touches(g, &profile, context->should_cut, s.touches);
+    }
+
+    int max_nodes = 0;
+    if (context->should_cut != NULL && plan->count > 0) {
+        top_band_cells(context, s.touches, s.inside);
+        status = mn_lattice(s.inside, g->width, g->height, MN_CUT_STEP, &top_nodes);
+        count_pass(&s, &top_nodes, &max_nodes);
+    }
+    if (status != MN_OK) {
+        goto done;
+    }
+    group_count = plan->count > 0 ? (plan->count + group_size - 1) / group_size : 1;
+    groups = (mn_z_group*)mn_alloc((size_t)group_count, sizeof(mn_z_group));
+    if (groups == NULL) {
+        status = mn_fail(MN_ERR_MEMORY, "Out of memory for %d level groups.", group_count);
+        goto done;
+    }
+    for (int gi = 0; gi < group_count && status == MN_OK; gi++) {
+        int first = gi * group_size;
+        int last = mn_mini(first + group_size, plan->count) - 1;
+        status = z_group_prepare(&s, first, last, far_on, &groups[gi], &max_nodes);
+    }
+    if (status != MN_OK) {
+        goto done;
+    }
+
+    s.xs = (float*)mn_alloc((size_t)(max_nodes > 0 ? max_nodes : 1), sizeof(float));
+    s.ys = (float*)mn_alloc((size_t)(max_nodes > 0 ? max_nodes : 1), sizeof(float));
+    s.zs = (float*)mn_alloc((size_t)(max_nodes > 0 ? max_nodes : 1), sizeof(float));
+    if (s.xs == NULL || s.ys == NULL || s.zs == NULL) {
+        status = mn_fail(MN_ERR_MEMORY, "Out of memory for the layer strategy.");
+        goto done;
+    }
+    memcpy(s.planned, context->stock, (size_t)cells * sizeof(float));
+    status = writer_for(context, &writer);
+    if (status != MN_OK) {
+        goto done;
+    }
+    s.writer = writer;
+    if (guard.enabled) {
+        mn_writer_guard(writer, guard.material, &guard.profile, context->tool.cutter_diameter / 2.0f, context->tool.cutter_length);
+    }
+
+    s.total = s.nodes_left;
+    if (top_nodes.count > 0) {
+        s.pass++;
+        top_band_cells(context, s.touches, s.inside);
+        status = mn_writer_mark(writer, plan->levels[0]);
+        if (status == MN_OK) {
+            status = tip_route(context, s.inside, &top_nodes, plan->levels[0], s.planned, s.clearance, s.lifted, s.xs, s.ys, s.zs, &guard, 1, &s.budget, s.nodes_left, monitor, writer);
+        }
+        s.nodes_left -= top_nodes.count;
+        if (status == MN_OK) {
+            z_report(&s);
+        }
+    }
+    for (int gi = 0; gi < group_count && status == MN_OK; gi++) {
+        mn_z_group* group = &groups[gi];
+        if (group->far_cells.count > 0) {
+            float level = plan->levels[group->last];
+            float next_level = group->last + 1 < plan->count ? plan->levels[group->last + 1] : -INFINITY;
+            status = z_level_block(&s, level, next_level, group->far_cells.items, group->far_cells.count, &group->far_nodes, &group->far_cut_nodes);
+        }
+        if (status == MN_OK) {
+            status = z_walk(&s, group);
+        }
+    }
 
     if (status == MN_OK) {
         status = mn_writer_take(writer, result, marks);
     }
 
 done:
-    if (nodes != NULL) {
-        for (int c = 0; c < tree.cave_count; c++) {
-            mn_ints_free(&nodes[c]);
+    if (groups != NULL) {
+        for (int gi = 0; gi < group_count; gi++) {
+            z_group_free(&groups[gi]);
         }
     }
-    if (cut_nodes != NULL) {
-        for (int c = 0; c < tree.cave_count; c++) {
-            mn_ints_free(&cut_nodes[c]);
-        }
-    }
-    free(list_start);
-    free(list_end);
-    free(nodes);
-    free(cut_nodes);
-    free(touches);
-    free(inside);
-    free(covered);
-    free(planned);
-    free(clearance);
-    free(xs);
-    free(ys);
-    free(zs);
-    mn_ints_free(&pending);
+    free(groups);
+    free(s.touches);
+    free(s.inside);
+    free(s.covered);
+    free(s.planned);
+    free(s.clearance);
+    free(s.xs);
+    free(s.ys);
+    free(s.zs);
     mn_ints_free(&top_nodes);
     mn_profile_free(&profile);
-    free(lifted);
+    free(s.lifted);
     mn_writer_free(writer);
     guard_free(&guard);
-    cave_tree_free(&tree);
     return status;
 }
 
