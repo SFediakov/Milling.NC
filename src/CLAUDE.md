@@ -653,3 +653,18 @@
 - The live project at 0.025 mm cells takes about 9 minutes per generation on this machine; the
   diagnosis ran it in a background shell and read the output file, and a coarser cell (0.05) was
   used for every comparison that did not need the real resolution.
+- The far block's permission (T-162) must come from the material at its real height: T-157 assumed
+  every standing cell at the group's top, which is right for the first group of the box fixtures and
+  wrong wherever a wall or an uncut column rises higher (the user's heart walls, a column no level
+  cuts). The standing map is folded from the plan masks with one distance transform per level, and
+  per step one power-distance envelope of the forbidden disks replaces the uniform thresholds.
+- T-157's threshold chain added the cutter radius where the geometry subtracts it (the floor a
+  shallower step leaves ends a cutter radius inside the next step's threshold, where that step's
+  footprints begin), so it stopped one step early; the cylinder fixture now reaches a fourth step on a
+  one-cell strip along the stock border, head clear by the same test's annulus assertion.
+- A test on the material a far block leaves must look at cells the allowed footprints cannot reach
+  (between the near band and the forbidden radius less the cutter radius) and at the allowed
+  positions themselves; the band in between depends on where the lattice nodes fall.
+- Far block layers are the first layer in path order at a group's bottom level; "a later layer lies
+  higher" also counts the cave walk's returns to a sibling and labelled every layer of a plain run a
+  far block layer (35 of 35 events) in a first diagnosis.

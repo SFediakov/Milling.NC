@@ -50,6 +50,9 @@ void mn_apply_limit(const float* tip, const float* limit, int cells, float* effe
 int mn_mark_should_cut(const mn_grid* g, const float* tip, const float* model, const float* cut_to, const float* remaining, const float* limit, const mn_offset* annulus, int count,
     float cutter_length, float tolerance, uint8_t* should_cut);
 int mn_distance_transform(const uint8_t* mask, int width, int height, float cell_size, float* distances);
+/* In place: values[c] becomes min over q of values[q] + |c - q|^2 in cells (INFINITY where no source);
+ * a source value may be negative (a power distance). */
+int mn_lower_envelope(float* values, int width, int height);
 
 /* ---- slicing ---- */
 
