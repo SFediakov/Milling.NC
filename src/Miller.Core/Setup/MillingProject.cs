@@ -8,6 +8,17 @@ public enum CutScope
     Separation,
 }
 
+// How the generation handles the cutter head (T-147 to T-150). Recursion: the toolpath is generated
+// without any head consideration, checked dynamically against the stock as it stands, the blocking
+// stock is marked should be removed and the positions whose head meets the model are forbidden
+// unless the X ratio lets them through, then the generation is repeated while the collisions
+// decrease. OneRun: the route solver evaluates every node before its route with the Y ratio.
+public enum CollisionMode
+{
+    Recursion,
+    OneRun,
+}
+
 // Everything a .miller.json file contains.
 public sealed class MillingProject
 {
@@ -17,6 +28,17 @@ public sealed class MillingProject
     public const int OldestSchemaVersion = 1;
     public const string DefaultRoutingStrategyId = "z-layer-by-layer";
     public const string DefaultPostProcessorId = "grbl";
+
+    // X and Y: a position whose head meets model cells is achieved only when the model cells that
+    // only it finishes outnumber the met ones by more than the ratio times.
+    public const float DefaultCollisionRatio = 10f;
+
+    public const float DefaultBridgeCount = 4f;
+    public const float DefaultBridgeWidth = 0.5f;
+    public const float DefaultBridgeHeight = 0.3f;
+
+    // The native library's MN_MAX_BRIDGES.
+    public const int MaxBridgeCount = 32;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -51,9 +73,25 @@ public sealed class MillingProject
     // that stays; smaller islands are milled out. 0 keeps every island.
     public float MinIslandVolume { get; set; }
 
+    // Separation scope only: holding bridges per part the trench frees at the floor (a whole number,
+    // 0 for none), their width (mm) and the material they keep above the floor (mm).
+    public float BridgeCount { get; set; } = DefaultBridgeCount;
+
+    public float BridgeWidth { get; set; } = DefaultBridgeWidth;
+
+    public float BridgeHeight { get; set; } = DefaultBridgeHeight;
+
     // Reach rule (ReachMap): the share of the footprint cells that must be free of model for the
     // tool to enter a position, in percent. 50 is the majority rule, 100 never cuts the model.
     public float ReachPercent { get; set; } = HeightMaps.ReachMap.DefaultPercent;
+
+    public CollisionMode CollisionMode { get; set; } = CollisionMode.Recursion;
+
+    // X of the recursion mode.
+    public float RecursionRatio { get; set; } = DefaultCollisionRatio;
+
+    // Y of the one run mode.
+    public float OneRunRatio { get; set; } = DefaultCollisionRatio;
 
     public static MillingProject Default() => new();
 }

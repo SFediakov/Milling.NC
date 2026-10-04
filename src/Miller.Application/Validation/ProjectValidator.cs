@@ -3,6 +3,7 @@ using System.Numerics;
 using Miller.Core.Geometry;
 using Miller.Core.HeightMaps;
 using Miller.Core.Setup;
+using Miller.Core.Slicing;
 
 namespace Miller.Application.Validation;
 
@@ -61,6 +62,16 @@ public static class ProjectValidator
         InRange(errors, "Parameters.Stepover", p.Stepover, tool.CutterDiameter);
         InRange(errors, "Parameters.FinishingStepover", p.FinishingStepover, tool.CutterDiameter);
         Positive(errors, "Parameters.Stepdown", p.Stepdown);
+        if (p.Stepdown > 0 && p.FarStepdown != 0 && !IsFarStepdown(p.FarStepdown, p.Stepdown))
+        {
+            errors.Add(new ValidationMessage("Parameters.FarStepdown",
+                $"Far stepdown {F(p.FarStepdown)} must be 0 (none) or a whole multiple of the stepdown {F(p.Stepdown)} of at least twice it."));
+        }
+        else if (p.Stepdown > 0 && p.FarStepdown > tool.CutterLength + Slicer.LevelTolerance)
+        {
+            warnings.Add(new ValidationMessage("Parameters.FarStepdown",
+                $"Far stepdown {F(p.FarStepdown)} exceeds the cutter length {F(tool.CutterLength)}: no single step can go deeper, so the far area is cut in steps of at most the cutter length, each over the positions the head clears."));
+        }
 
         var stockSize = AxisSetup.StockBoundingSize(stock);
         Positive(errors, "Parameters.SafeHeight", p.SafeHeight);
@@ -90,6 +101,36 @@ public static class ProjectValidator
         Positive(errors, "Parameters.RapidRate", p.RapidRate);
         Positive(errors, "Parameters.SpindleRpm", p.SpindleRpm);
         NonNegative(errors, "Strategy.MinIslandVolume", project.MinIslandVolume);
+        var bridges = project.BridgeCount;
+        if (!(bridges >= 0 && bridges <= MillingProject.MaxBridgeCount && bridges == MathF.Floor(bridges)))
+        {
+            errors.Add(new ValidationMessage("Strategy.BridgeCount",
+                $"Bridges per part must be a whole number from 0 to {MillingProject.MaxBridgeCount}, got {F(bridges)}."));
+        }
+
+        if (!(float.IsFinite(project.BridgeWidth) && project.BridgeWidth > 0))
+        {
+            errors.Add(new ValidationMessage("Strategy.BridgeWidth", $"Bridge width must be a finite number greater than 0, got {F(project.BridgeWidth)}."));
+        }
+        else if (p.CellSize > 0 && project.BridgeWidth < p.CellSize)
+        {
+            warnings.Add(new ValidationMessage("Strategy.BridgeWidth",
+                $"Bridge width {F(project.BridgeWidth)} is below the cell size {F(p.CellSize)}: every bridge is one cell wide."));
+        }
+
+        // Compared with the stock height only when that height is valid; an invalid stock reports itself.
+        if (!(float.IsFinite(project.BridgeHeight) && project.BridgeHeight > 0) || (stockSize.Z > 0 && project.BridgeHeight >= stockSize.Z))
+        {
+            errors.Add(new ValidationMessage("Strategy.BridgeHeight",
+                $"Bridge height must be greater than 0 and below the stock height {F(stockSize.Z)}, got {F(project.BridgeHeight)}."));
+        }
+        if (!Enum.IsDefined(project.CollisionMode))
+        {
+            errors.Add(new ValidationMessage("Strategy.CollisionMode", $"Unknown collision mode {project.CollisionMode}."));
+        }
+
+        Finite(errors, "Strategy.RecursionRatio", project.RecursionRatio);
+        Finite(errors, "Strategy.OneRunRatio", project.OneRunRatio);
         if (!(project.ReachPercent > ReachMap.MinPercent && project.ReachPercent <= ReachMap.MaxPercent))
         {
             errors.Add(new ValidationMessage("Strategy.ReachPercent",
@@ -111,6 +152,16 @@ public static class ProjectValidator
         if (stock.Margin < 0)
         {
             errors.Add(new ValidationMessage("Stock.Margin", $"Margin {F(stock.Margin)} must not be negative."));
+        }
+
+        foreach (var placement in project.Models)
+        {
+            var s = placement.Scale;
+            if (!(float.IsFinite(s.X) && s.X > 0 && float.IsFinite(s.Y) && s.Y > 0 && float.IsFinite(s.Z) && s.Z > 0))
+            {
+                errors.Add(new ValidationMessage("Models.Scale",
+                    $"Scale of {placement.DisplayName} must be a finite factor greater than 0 on every axis, got {F(s.X)}, {F(s.Y)}, {F(s.Z)}."));
+            }
         }
 
         if (modelBoundsMachine is { IsEmpty: false } model && !StockContains(project, model))
@@ -155,6 +206,18 @@ public static class ProjectValidator
         return true;
     }
 
+    // A whole multiple of the stepdown of at least twice it, within the level tolerance.
+    public static bool IsFarStepdown(float farStepdown, float stepdown)
+    {
+        if (!(float.IsFinite(farStepdown) && farStepdown > stepdown))
+        {
+            return false;
+        }
+
+        var k = MathF.Round(farStepdown / stepdown);
+        return k >= 2 && MathF.Abs(farStepdown - k * stepdown) <= Slicer.LevelTolerance;
+    }
+
     private static void Positive(List<ValidationMessage> errors, string field, float value)
     {
         if (!(value > 0))
@@ -168,6 +231,14 @@ public static class ProjectValidator
         if (!(value >= 0))
         {
             errors.Add(new ValidationMessage(field, $"{field} must be 0 or greater, got {F(value)}."));
+        }
+    }
+
+    private static void Finite(List<ValidationMessage> errors, string field, float value)
+    {
+        if (!(float.IsFinite(value) && value >= 0))
+        {
+            errors.Add(new ValidationMessage(field, $"{field} must be a finite number of 0 or greater, got {F(value)}."));
         }
     }
 

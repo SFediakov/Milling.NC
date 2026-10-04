@@ -76,6 +76,7 @@ internal static unsafe class CoreNative
         public float SafeHeight;
         public float CellSize;
         public float Tolerance;
+        public float FarStepdown;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -103,7 +104,31 @@ internal static unsafe class CoreNative
         public Tool Tool;
         public Parameters Parameters;
         public float StockTop;
+        public float Floor;
+        public int CollisionMode;
+        public float Ratio;
+        public float* Raised;
     }
+
+    // mn_collision: one collision per segment and kind of the native check.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Collision
+    {
+        public int Segment;
+        public int Kind;
+        public float X;
+        public float Y;
+        public float Z;
+        public float StockZ;
+        public float Surface;
+        public int Cell;
+        public int Model;
+    }
+
+    public const int MaskHeadLimited = 0;
+    public const int MaskShouldCut = 1;
+    public const int MaskStatus = 2;
+    public const int MaskContacts = 3;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct Job
@@ -127,13 +152,19 @@ internal static unsafe class CoreNative
         public int CutScope;
         public float MinIslandVolume;
         public float ReachPercent;
+        public int CollisionMode;
+        public float RecursionRatio;
+        public float OneRunRatio;
+        public int BridgeCount;
+        public float BridgeWidth;
+        public float BridgeHeight;
     }
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate void ProgressCallback(IntPtr context, int step, int steps, float fraction);
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    public delegate void StageCallback(IntPtr context, int stage, int step, int steps, float fraction);
+    public delegate void StageCallback(IntPtr context, int pass, int stage, int step, int steps, float fraction);
 
     [DllImport(Library)] public static extern IntPtr mn_last_error();
     [DllImport(Library)] public static extern void mn_free(void* pointer);
@@ -200,8 +231,10 @@ internal static unsafe class CoreNative
     [DllImport(Library)] public static extern int mn_gouge_is_clear(Segment* segment, Grid* grid, float* effectiveTip, float tolerance);
     [DllImport(Library)] public static extern int mn_simplify(Segment* segments, int count, Grid* grid, float* effectiveTip, float tolerance, Segment** result, int* resultCount);
     [DllImport(Library)] public static extern int mn_kept_indices(float* points, int count, Grid* grid, float* effectiveTip, float tolerance, float feedRate, int** kept, int* keptCount);
+    [DllImport(Library)] public static extern int mn_slow_zones_apply(Segment* segments, int count, Segment** result, int* resultCount);
     [DllImport(Library)] public static extern float mn_distance_to_segment(float* p, float* a, float* b);
     [DllImport(Library)] public static extern int mn_statistics_compute(Segment* segments, int count, float rapidRate, Statistics* statistics);
+    [DllImport(Library)] public static extern int mn_collision_check(Segment* segments, int count, Grid* grid, float* stock, float* model, float floor, Tool* tool, float tolerance, byte* status, Collision** events, int* eventCount);
 
     [DllImport(Library)] public static extern int mn_generate(Job* job, IntPtr progress, IntPtr context, int* cancel, IntPtr* result);
     [DllImport(Library)] public static extern void mn_result_grid(IntPtr result, Grid* grid);
@@ -214,6 +247,13 @@ internal static unsafe class CoreNative
     [DllImport(Library)] public static extern int mn_result_segment_count(IntPtr result);
     [DllImport(Library)] public static extern void mn_result_segments(IntPtr result, Segment* segments);
     [DllImport(Library)] public static extern void mn_result_statistics(IntPtr result, Statistics* statistics);
+    [DllImport(Library)] public static extern int mn_result_layer_count(IntPtr result);
+    [DllImport(Library)] public static extern void mn_result_layers(IntPtr result, int* segment, float* level);
+    [DllImport(Library)] public static extern int mn_result_passes(IntPtr result);
+    [DllImport(Library)] public static extern void mn_result_pass_counts(IntPtr result, int* entered, int* events);
+    [DllImport(Library)] public static extern void mn_result_bridges(IntPtr result, int* parts, int* wanted, int* placed);
+    [DllImport(Library)] public static extern int mn_result_collision_count(IntPtr result);
+    [DllImport(Library)] public static extern void mn_result_collisions(IntPtr result, Collision* collisions);
     [DllImport(Library)] public static extern void mn_result_profile(IntPtr result, int* offsetCount, int* annulusCount);
     [DllImport(Library)] public static extern void mn_result_profile_read(IntPtr result, Offset* offsets, Offset* annulus);
     [DllImport(Library)] public static extern void mn_result_free(IntPtr result);
@@ -322,6 +362,7 @@ internal static unsafe class CoreNative
         SafeHeight = p.SafeHeight,
         CellSize = p.CellSize,
         Tolerance = p.Tolerance,
+        FarStepdown = p.FarStepdown,
     };
 
     public static Offset[] OffsetsOf(ProfileOffset[] offsets)

@@ -11,13 +11,13 @@ public sealed class CuttingParametersViewModel : SettingsViewModelBase
     private static readonly string[] BoundProperties =
     {
         nameof(FeedRate), nameof(PlungeRate), nameof(RapidRate), nameof(SpindleRpm), nameof(Stepover), nameof(FinishingStepover),
-        nameof(Stepdown), nameof(SafeHeight), nameof(CellSize), nameof(Tolerance), nameof(GridSizeText),
+        nameof(Stepdown), nameof(FarStepdown), nameof(SafeHeight), nameof(CellSize), nameof(Tolerance), nameof(GridSizeText),
     };
 
     private static readonly string[] ErrorProperties =
     {
         nameof(FeedRateError), nameof(PlungeRateError), nameof(RapidRateError), nameof(SpindleRpmError), nameof(StepoverError),
-        nameof(FinishingStepoverError), nameof(StepdownError), nameof(SafeHeightError), nameof(CellSizeError), nameof(CellSizeWarning),
+        nameof(FinishingStepoverError), nameof(StepdownError), nameof(FarStepdownError), nameof(FarStepdownWarning), nameof(SafeHeightError), nameof(CellSizeError), nameof(CellSizeWarning),
     };
 
     public CuttingParametersViewModel(ProjectService project)
@@ -39,6 +39,8 @@ public sealed class CuttingParametersViewModel : SettingsViewModelBase
     public float FinishingStepover { get => Current.Parameters.FinishingStepover; set => Edit(p => p.Parameters.FinishingStepover = value); }
 
     public float Stepdown { get => Current.Parameters.Stepdown; set => Edit(p => p.Parameters.Stepdown = value); }
+
+    public float FarStepdown { get => Current.Parameters.FarStepdown; set => Edit(p => p.Parameters.FarStepdown = value); }
 
     public float SafeHeight { get => Current.Parameters.SafeHeight; set => Edit(p => p.Parameters.SafeHeight = value); }
 
@@ -67,6 +69,10 @@ public sealed class CuttingParametersViewModel : SettingsViewModelBase
     public string? FinishingStepoverError => ErrorFor("Parameters.FinishingStepover");
 
     public string? StepdownError => ErrorFor("Parameters.Stepdown");
+
+    public string? FarStepdownError => ErrorFor("Parameters.FarStepdown");
+
+    public string? FarStepdownWarning => WarningFor("Parameters.FarStepdown");
 
     public string? SafeHeightError => ErrorFor("Parameters.SafeHeight");
 

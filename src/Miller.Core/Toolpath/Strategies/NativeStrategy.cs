@@ -34,6 +34,10 @@ internal static class NativeStrategy
                 Tool = CoreNative.ToolOf(context.Tool),
                 Parameters = CoreNative.ParametersOf(context.Parameters),
                 StockTop = context.StockTop,
+                Floor = context.Floor,
+                CollisionMode = (int)context.CollisionMode,
+                Ratio = context.Ratio,
+                Raised = null,
             };
             CoreNative.Check(CoreNative.mn_strategy_generate(strategy, &native, callback.Pointer, IntPtr.Zero, cancel.Pointer, &segments, &count), cancellation);
         }

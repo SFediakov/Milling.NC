@@ -57,6 +57,19 @@ public sealed class ProjectValidatorTests
     }
 
     [Fact]
+    public void CollisionRatios_MustBeFiniteAndNotNegative()
+    {
+        AssertSingleError(p => p.RecursionRatio = -1f, "Strategy.RecursionRatio");
+        AssertSingleError(p => p.RecursionRatio = float.NaN, "Strategy.RecursionRatio");
+        AssertSingleError(p => p.RecursionRatio = float.PositiveInfinity, "Strategy.RecursionRatio");
+        AssertSingleError(p => p.OneRunRatio = -0.5f, "Strategy.OneRunRatio");
+        AssertSingleError(p => p.OneRunRatio = float.NaN, "Strategy.OneRunRatio");
+        Assert.True(Validate(p => p.RecursionRatio = 0f).IsValid);
+        Assert.True(Validate(p => p.OneRunRatio = 1e6f).IsValid);
+        AssertSingleError(p => p.CollisionMode = (CollisionMode)7, "Strategy.CollisionMode");
+    }
+
+    [Fact]
     public void CutterLength_MustBePositive()
     {
         AssertSingleError(p => p.Tool.CutterLength = -1, "Tool.CutterLength");
@@ -118,6 +131,37 @@ public sealed class ProjectValidatorTests
     public void Stepdown_MustBePositive()
     {
         AssertSingleError(p => p.Parameters.Stepdown = 0, "Parameters.Stepdown");
+    }
+
+    [Fact]
+    public void FarStepdown_IsNoneOrAWholeMultipleOfTheStepdownOfAtLeastTwice()
+    {
+        AssertValid(p => p.Parameters.FarStepdown = 0);
+        AssertValid(p => p.Parameters.FarStepdown = 4);
+        AssertValid(p => p.Parameters.FarStepdown = 6);
+        AssertValid(p => { p.Parameters.Stepdown = 0.2f; p.Parameters.FarStepdown = 0.6f; });
+        AssertSingleError(p => p.Parameters.FarStepdown = 2, "Parameters.FarStepdown");
+        AssertSingleError(p => p.Parameters.FarStepdown = 3, "Parameters.FarStepdown");
+        AssertSingleError(p => p.Parameters.FarStepdown = 1, "Parameters.FarStepdown");
+        AssertSingleError(p => p.Parameters.FarStepdown = -4, "Parameters.FarStepdown");
+        AssertSingleError(p => p.Parameters.FarStepdown = float.NaN, "Parameters.FarStepdown");
+        AssertSingleError(p => p.Parameters.FarStepdown = float.PositiveInfinity, "Parameters.FarStepdown");
+        Assert.True(ProjectValidator.IsFarStepdown(4f, 2f));
+        Assert.False(ProjectValidator.IsFarStepdown(4.01f, 2f));
+        // An invalid stepdown reports itself only.
+        AssertSingleError(p => { p.Parameters.Stepdown = 0; p.Parameters.FarStepdown = 4; }, "Parameters.Stepdown");
+    }
+
+    [Fact]
+    public void FarStepdown_BeyondTheCutterLength_WarnsAboutTheSteps()
+    {
+        var result = Validate(p => { p.Tool.CutterLength = 2; p.Parameters.FarStepdown = 8; });
+        Assert.True(result.IsValid);
+        var warning = Assert.Single(result.Warnings, w => w.Field == "Parameters.FarStepdown");
+        Assert.Contains("cutter length", warning.Message);
+        Assert.Empty(Validate(p => p.Parameters.FarStepdown = 8).Warnings);
+        Assert.Empty(Validate(p => { p.Tool.CutterLength = 8; p.Parameters.FarStepdown = 8; }).Warnings);
+        Assert.Empty(Validate(p => { p.Tool.CutterLength = 2; p.Parameters.FarStepdown = 3; }).Warnings);
     }
 
     [Fact]
@@ -252,6 +296,54 @@ public sealed class ProjectValidatorTests
         var ex = new ValidationException(result);
         Assert.Same(result, ex.Result);
         Assert.Contains("Parameters.Stepdown", ex.Message);
+    }
+
+    [Fact]
+    public void ModelScale_MustBeFiniteAndPositiveOnEveryAxis()
+    {
+        foreach (var bad in new[] { 0f, -1f, float.NaN, float.PositiveInfinity, float.NegativeInfinity })
+        {
+            AssertSingleError(p => p.Models.Add(new ModelPlacement { StlPath = "a.stl", Scale = new Vector3(1, bad, 1) }), "Models.Scale");
+            AssertSingleError(p => p.Models.Add(new ModelPlacement { StlPath = "a.stl", Scale = new Vector3(bad) }), "Models.Scale");
+        }
+
+        var result = Validate(p => p.Models.Add(new ModelPlacement { StlPath = "parts/b.stl", Scale = new Vector3(2, 0, 1) }));
+        Assert.Contains("b.stl", Assert.Single(result.Errors).Message);
+
+        AssertValid(p => p.Models.Add(new ModelPlacement { StlPath = "a.stl", Scale = new Vector3(0.001f, 2.5f, 1000f) }));
+        AssertValid(p => p.Models.Add(new ModelPlacement { StlPath = "a.stl" }));
+    }
+
+    [Fact]
+    public void Bridges_CountIsAWholeNumberInRange_WidthAndHeightArePositive_HeightBelowTheStock()
+    {
+        foreach (var bad in new[] { -1f, 2.5f, MillingProject.MaxBridgeCount + 1f, float.NaN, float.PositiveInfinity })
+        {
+            AssertSingleError(p => p.BridgeCount = bad, "Strategy.BridgeCount");
+        }
+
+        AssertValid(p => p.BridgeCount = 0f);
+        AssertValid(p => p.BridgeCount = MillingProject.MaxBridgeCount);
+        foreach (var bad in new[] { 0f, -0.5f, float.NaN, float.PositiveInfinity })
+        {
+            AssertSingleError(p => p.BridgeWidth = bad, "Strategy.BridgeWidth");
+            AssertSingleError(p => p.BridgeHeight = bad, "Strategy.BridgeHeight");
+        }
+
+        // The default stock is 30 mm high: a bridge as high as the stock keeps everything.
+        AssertSingleError(p => p.BridgeHeight = StockDefinition.DefaultSizeZ, "Strategy.BridgeHeight");
+        AssertValid(p => p.BridgeHeight = StockDefinition.DefaultSizeZ - 1f);
+        Assert.Equal(new[] { 4f, 0.5f, 0.3f }, new[] { MillingProject.DefaultBridgeCount, MillingProject.DefaultBridgeWidth, MillingProject.DefaultBridgeHeight });
+    }
+
+    [Fact]
+    public void BridgeWidth_BelowTheCellSize_OnlyWarns()
+    {
+        var result = Validate(p => p.BridgeWidth = 0.1f);
+        Assert.True(result.IsValid);
+        var warning = Assert.Single(result.Warnings, w => w.Field == "Strategy.BridgeWidth");
+        Assert.Contains("one cell", warning.Message);
+        Assert.Empty(Validate(p => p.BridgeWidth = 0.2f).Warnings);
     }
 
     private static ValidationResult Validate(Action<MillingProject> change)

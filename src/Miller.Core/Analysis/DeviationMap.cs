@@ -3,7 +3,8 @@ using Miller.Core.HeightMaps;
 namespace Miller.Core.Analysis;
 
 // Ok, RestMaterial, Gouge and NoModel come from the final stock against the model; Overhang,
-// HeadLimited and CornerLimited explain why material stays and are laid over by the analysis view.
+// HeadLimited and CornerLimited explain why material stays and are laid over by the analysis view;
+// CollisionModel and CollisionStock mark cells a head or a rapid entered and are laid over all others.
 public enum CellCategory
 {
     Ok,
@@ -13,6 +14,8 @@ public enum CellCategory
     Overhang,
     HeadLimited,
     CornerLimited,
+    CollisionModel,
+    CollisionStock,
 }
 
 // Per-cell difference between the final stock and the model (NaN where the model is at the floor)

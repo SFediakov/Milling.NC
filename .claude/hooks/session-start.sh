@@ -3,21 +3,19 @@
 # is genuinely a new session.
 #
 # SessionStart fires for startup, resume, clear AND compact. An earlier version
-# reset current_phase to 1 unconditionally, so a compaction part-way through a
-# task silently threw away the phase state. Resetting on resume/compact is never
-# correct: the task is mid-flight by definition.
+# reset current_phase to 1 and subagent_count to 0 unconditionally, so a
+# compaction part-way through a task silently threw away the phase state and
+# zeroed the busy-counter while subagents were still running. Resetting on
+# resume/compact is never correct: the task is mid-flight by definition.
+#
+# A non-empty subagent_count is a second, independent signal that this event
+# does not belong to a fresh main session.
 #
 # The one thing that OVERRIDES every preserve signal is a stale phase-model
 # stamp. A phase number written under a different model cannot be carried
 # forward: 7 meant Execution under the retired 11-phase model and means
 # Documentation here, so preserving it would hand the agent the wrong
 # permissions. Stale stamp forces the reset.
-#
-# The sub-agent ledger (.claude/state/agents/) is cleared on every process
-# restart - startup, clear, resume - because every sub-agent of the previous
-# process is gone with it. A compaction or a re-fire for the same session id is
-# the same process, and its background sub-agents are still running, so the
-# ledger is kept there.
 #
 # Does not reset rebuild_pending.log so pending CalcEngine rebuilds carry across
 # sessions.
@@ -32,7 +30,7 @@ set -uo pipefail
 STATE_DIR="${CLAUDE_PROJECT_DIR}/.claude/state"
 mkdir -p "${STATE_DIR}"
 
-PHASE_MODEL_VERSION=3
+PHASE_MODEL_VERSION=2
 
 # A hook-edit consent is scoped to one turn and must never outlive a session
 # boundary. Cleared unconditionally - including on resume and compact, where the
@@ -45,28 +43,31 @@ SOURCE=$(printf '%s' "$INPUT" | sed -nE 's/.*"source"[[:space:]]*:[[:space:]]*"(
 SESSION_ID=$(printf '%s' "$INPUT" | sed -nE 's/.*"session_id"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p')
 
 PHASE_BEFORE=$(cat "${STATE_DIR}/current_phase" 2>/dev/null || echo none)
+BUSY=$(cat "${STATE_DIR}/subagent_count" 2>/dev/null || echo 0)
+[[ "$BUSY" =~ ^[0-9]+$ ]] || BUSY=0
 MODEL_BEFORE=$(cat "${STATE_DIR}/phase_model" 2>/dev/null || echo "")
 
 LAST_SESSION=$(cat "${STATE_DIR}/last_session_id" 2>/dev/null || echo "")
 
-# Three independent "this is not a fresh session" signals. Any one of them
+# Four independent "this is not a fresh session" signals. Any one of them
 # preserves the phase state. Observed in practice: a SessionStart can arrive
 # mid-task reporting source=startup with the phase at 4, so `source` alone is
 # NOT a sufficient discriminator - the in-flight check below is what actually
 # caught it.
 RESET="yes"
 SKIP_REASON=""
-SAME_PROCESS="no"
 case "$SOURCE" in
   resume|compact)
     RESET="no"
     SKIP_REASON="source=${SOURCE} (task is mid-flight)"
     ;;
 esac
-[[ "$SOURCE" == "compact" ]] && SAME_PROCESS="yes"
+if (( BUSY > 0 )); then
+  RESET="no"
+  SKIP_REASON="${SKIP_REASON:+${SKIP_REASON}, }subagent_count=${BUSY} (subagents active)"
+fi
 if [[ -n "$SESSION_ID" && "$SESSION_ID" == "$LAST_SESSION" ]]; then
   RESET="no"
-  SAME_PROCESS="yes"
   SKIP_REASON="${SKIP_REASON:+${SKIP_REASON}, }SessionStart re-fired for the same session id"
 fi
 # A task in flight: phases 2-8 are working phases, and the phase file was
@@ -88,20 +89,16 @@ if [[ "$MODEL_BEFORE" != "$PHASE_MODEL_VERSION" ]]; then
   SKIP_REASON=""
 fi
 
-if [[ "$SAME_PROCESS" == "no" ]]; then
-  rm -rf "${STATE_DIR}/agents" 2>/dev/null
-fi
-
 if [[ "$RESET" == "yes" ]]; then
   echo 1 > "${STATE_DIR}/current_phase"
-  rm -f "${STATE_DIR}/task_class" "${STATE_DIR}/research_files.done" "${STATE_DIR}/research_web.done"
-  rm -f "${STATE_DIR}/agents"/budget.* 2>/dev/null
-  # Leftovers of retired models: change_range (classification), subagent_count,
-  # .subagent_count.lock and spawns_this_phase (the integer busy counter and the
-  # per-phase spawn budget of the 11-phase model). Nothing reads them any more;
-  # deleting them stops a later inspection from mistaking them for live state.
-  # Not a fallback - no code path consumes them.
-  rm -f "${STATE_DIR}/change_range" "${STATE_DIR}/subagent_count" "${STATE_DIR}/.subagent_count.lock" "${STATE_DIR}/spawns_this_phase"
+  echo 0 > "${STATE_DIR}/subagent_count"
+  rm -f "${STATE_DIR}/.subagent_count.lock"
+  rm -f "${STATE_DIR}/task_class"
+  # change_range is the retired model's classification file. Nothing reads it any
+  # more; this deletes a leftover so it cannot be mistaken for live state during
+  # a later inspection. Not a fallback - there is no code path that consumes it.
+  rm -f "${STATE_DIR}/change_range"
+  rm -f "${STATE_DIR}/spawns_this_phase"
   printf '%s' "$PHASE_MODEL_VERSION" > "${STATE_DIR}/phase_model"
   if [[ "$MIGRATED" == "yes" ]]; then
     STATE_NOTE="Phase state reset to 1, task class cleared. The recorded phase model was '${MODEL_BEFORE:-none}' and this hook set is model ${PHASE_MODEL_VERSION}: a phase number written under a different model cannot be interpreted, so it was discarded rather than guessed at."
@@ -111,12 +108,6 @@ if [[ "$RESET" == "yes" ]]; then
 else
   CLASS_NOW=$(cat "${STATE_DIR}/task_class" 2>/dev/null || echo "")
   STATE_NOTE="Phase state PRESERVED at ${PHASE_BEFORE} (task class: ${CLASS_NOW:-not yet evaluated}) - ${SKIP_REASON}. Continue the task from that phase."
-  if [[ "$PHASE_BEFORE" == "2" ]]; then
-    F="no"; W="no"
-    [[ -s "${STATE_DIR}/research_files.done" ]] && F="yes"
-    [[ -s "${STATE_DIR}/research_web.done" ]] && W="yes"
-    STATE_NOTE="${STATE_NOTE} Research block marks: files=${F} web=${W}."
-  fi
 fi
 
 [[ -n "$SESSION_ID" ]] && printf '%s' "$SESSION_ID" > "${STATE_DIR}/last_session_id"
@@ -124,9 +115,9 @@ fi
 # Bounded audit trail: this log is what made the unconditional-reset defect
 # diagnosable in the first place.
 LOG="${STATE_DIR}/session_start_payloads.log"
-printf '%s source=%s session=%s phase_before=%s model_before=%s reset=%s migrated=%s ledger_cleared=%s\n' \
+printf '%s source=%s session=%s phase_before=%s busy=%s model_before=%s reset=%s migrated=%s\n' \
   "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "${SOURCE:-unknown}" "${SESSION_ID:-unknown}" \
-  "$PHASE_BEFORE" "${MODEL_BEFORE:-none}" "$RESET" "$MIGRATED" "$([[ "$SAME_PROCESS" == "no" ]] && printf yes || printf no)" >> "$LOG"
+  "$PHASE_BEFORE" "$BUSY" "${MODEL_BEFORE:-none}" "$RESET" "$MIGRATED" >> "$LOG"
 if [[ -f "$LOG" ]]; then
   tail -n 50 "$LOG" > "${LOG}.tmp" 2>/dev/null && mv -f "${LOG}.tmp" "$LOG" 2>/dev/null
 fi
@@ -134,10 +125,8 @@ fi
 CONTEXT=$(cat <<'EOF'
 MANDATORY DEVELOPMENT PHASES (root CLAUDE.md; enforced by hooks, not optional):
   1. Task definition      -> KPI table: separate tasks + 2-8 acceptance criteria
-  2. Research block       -> files pre-research AND WEB research run at the
-                             SAME TIME [skipped: trivial]; the block is left
-                             only when BOTH halves are marked finished
-  3. (retired number)     -> never a current phase; WEB research is half of 2
+  2. Files pre-research   -> main agent reads the files [skipped: trivial]
+  3. WEB research         -> main agent searches the web [skipped: trivial]
   4. Planning             -> risks, architecture, subtasks [skipped: trivial]
   5. Execution            -> code edits allowed
   6. Testing              -> write/run tests; failure rolls back to 1
@@ -156,21 +145,11 @@ Nothing else is accepted, and the skip table is applied by the hook - the class
 decides which phases exist, the agent does not. "trivial" is CLAUDE.md's own
 wording for work like PR creation.
 
-PHASE 2 IS A FORK/JOIN. Files pre-research and WEB research are done at the
-same time (WEB research: max 3 agents; files pre-research: max 5 agents). A
-bare advance does not leave phase 2. Each half is marked finished with its own
-call, in either order; the second mark joins into phase 4:
-  bash .claude/hooks/advance.sh "files"      -> files pre-research finished
-  bash .claude/hooks/advance.sh "web"        -> WEB research finished
-A half cannot be marked twice. Print the KPI with both halves' results before
-marking the second one.
-
 Phase advancement:
-  bash .claude/hooks/advance.sh              # phases 4-8
+  bash .claude/hooks/advance.sh              # every phase except 1
   bash .claude/hooks/advance.sh "<class>"    # phase 1 only
-  bash .claude/hooks/advance.sh "<half>"     # phase 2 only
 Phase rollback (the only backward transition, phase 6 only):
-  bash .claude/hooks/rollback.sh             # 6 -> 1, task class and marks cleared
+  bash .claude/hooks/rollback.sh             # 6 -> 1, task class cleared
 
 PHASE 9 EXIT RULE (enforced by inject-phases.sh on every user prompt):
   prompt contains '?'  -> a question. The phase STAYS at 9; answer it.
@@ -181,14 +160,13 @@ consulted, so a work request that reads like prose still restarts the process.
 
 Phase content lives ONLY in chat output. NO marker .md files in .claude/state/.
 
-PHASE STATE IS MACHINE-OWNED. .claude/state/current_phase, task_class,
-TASK_MODE, research_files.done, research_web.done and agents/ cannot be written
-by Claude through any tool - Edit, Write and the shell are all denied. Only
-advance.sh / rollback.sh move the phase, and only the user edits those files
-directly, outside Claude Code. Asking Claude to "go to phase N" will not work;
-the user must edit the file.
+PHASE STATE IS MACHINE-OWNED. .claude/state/current_phase, task_class and
+TASK_MODE cannot be written by Claude through any tool - Edit, Write and the
+shell are all denied. Only advance.sh / rollback.sh move the phase, and only the
+user edits those files directly, outside Claude Code. Asking Claude to "go to
+phase N" will not work; the user must edit the file.
 
-PHASE MODEL VERSION 3. .claude/state/phase_model records which model the stored
+PHASE MODEL VERSION 2. .claude/state/phase_model records which model the stored
 phase number belongs to. A stale stamp forces a reset to phase 1 instead of a
 guess, because the same number means different phases in different models.
 
@@ -202,25 +180,26 @@ Gating rules (task mode only):
                planning question, phase 6 for test-modification approval.
                Every other phase below 9 blocks Stop.
 
-SUBAGENT POLICY (enforced by gate-subagent.sh on PreToolUse(Agent)):
-  - Model: exactly one 'model' field equal to 'opus' (root CLAUDE.md: only opus
-    sub-agents are allowed). Any other model, an omitted model or a duplicated
-    model field is denied, at every phase.
-  - Concurrency: at most 8 sub-agents running at the same time, at every phase,
-    task mode or not. The 9th spawn is denied until one finishes; do not retry
-    in a loop. Slots live in .claude/state/agents/ (machine-owned), are bound
-    to the agent when the Agent tool returns and released on SubagentStop.
-  - Research block (phase 2, task mode): every Agent 'description' must START
-    with 'files:' or 'web:' naming the half it works for; budget for the whole
-    block: 5 files agents, 3 web agents. Untagged or over-budget spawns are
-    denied.
-  - A running sub-agent never blocks advance.sh, rollback.sh or the end of a
-    turn.
-  - Surfaces where no hook sees the spawn (the Workflow tool, the Skill tool,
-    MCP tools) are not gated; settings.json env caps them where Claude Code
-    offers a knob (CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=8,
-    CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS=8). Pass model 'opus' explicitly
-    wherever the surface accepts one, and keep workflows at 8 agents or fewer.
+SUBAGENT POLICY (hard rule, enforced by gate-subagent.sh):
+  - SUB-AGENTS ARE NOT ALLOWED. CLAUDE.md states it outright. Every phase -
+    task definition, files pre-research, WEB research, planning, execution,
+    testing, documentation, reporting - is the main agent's own work.
+  - PreToolUse(Agent) refuses unconditionally. No phase, model, argument or
+    state file turns it into an allow, and nothing is ever counted.
+  - MCP tools whose names indicate spawning an agent, task or background
+    session are refused too, because that surface never reaches the Agent tool.
+  - Not covered, and worth knowing: the Skill tool can run a skill inside a
+    subagent, and no PreToolUse matcher sees it. Do not reach for a skill as a
+    way around this rule.
+
+Subagent-busy gate (kept as defence in depth, not as permission):
+  - Nothing should ever increment .claude/state/subagent_count now, but
+    SubagentStop still decrements it (floor 0), and advance.sh, rollback.sh and
+    the Stop hook still refuse while it is above zero. That matters only if an
+    agent starts through a surface the Agent matcher never sees.
+  - If the counter gets stuck, reset manually:
+      echo 0 > .claude/state/subagent_count
+      rm -f .claude/state/.subagent_count.lock
 
 HOOK EDIT CONSENT:
   - .claude/settings.json and .claude/hooks/** are DENIED to Edit, Write and the
@@ -229,10 +208,8 @@ HOOK EDIT CONSENT:
     consent passphrase recorded in .claude/hooks/README.md. Claude cannot mint
     it: the file is machine-owned like current_phase and TASK_MODE.
   - It lasts one turn. The Stop hook deletes it when the turn is allowed to end.
-  - Do not quote the passphrase on your own initiative: it grants on a substring
-    match, so a pasted message would create consent by accident. Point at
-    .claude/hooks/README.md instead. When the user asks for the phrase, quote
-    it - a direct request outranks this caution.
+  - Never quote the passphrase back into chat: it grants on a substring match,
+    so the user pasting your message would create consent by accident.
 
 Always-on guards (every phase, task mode or not):
   - The ROOT CLAUDE.md is user-owned: writing it is denied from Edit/Write and

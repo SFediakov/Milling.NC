@@ -16,7 +16,7 @@ Contents:
 7. Coding rules and definition of done
 8. Known pitfalls
 9. Milestones
-10. Task list (T-001 to T-143)
+10. Task list (T-001 to T-152)
 
 ---
 
@@ -75,7 +75,7 @@ global.json                  SDK pin
 .editorconfig
 build.sh                     restore, build, test, publish (host RID), assemble dist/
 Miller.sh                    root start file for Linux and Git Bash: runs dist/<rid>/Miller with the arguments
-Miller.cmd                   root start file for Windows Explorer and cmd: starts dist\win-x64\Miller.exe detached, waits only for -- commands
+Miller.cmd                   root start file for Windows Explorer and cmd: starts src\Miller.App\bin\Release\net10.0\Miller.exe (the Release build) detached, waits only for -- commands
 launchers/Miller.sh          Linux start file (copied to dist/linux-x64/)
 scripts/vendor-packages.sh   one-time online download of packages into third_party/nuget/
 third_party/nuget/           vendored .nupkg files (git-ignored; only README.md is tracked)
@@ -302,20 +302,39 @@ effectiveTip[i,j] = max(tip[i,j], limit[i,j])
 headLimited[i,j] = limit[i,j] > tip[i,j] + Tolerance
 ```
 
-In the pipeline the head limit is taken over the material the cutter leaves, not
-the model: `closing = min over the footprint of effectiveTip + dz`, rounded up
-to the level it stands at (`CeilToLevel`), iterated from the tip map until the
-effective tip settles (at most 8 rounds). Collision feedback (T-136): every cell
-is shouldn't be cut (the model), might be cut (stock above the model) or should
-be cut. At a head-limited position a ring cell whose rounded-up material blocks
-the head, stands above `model + Tolerance` and could be cut lower
-(`closing + Tolerance < rounded - Tolerance`) becomes should be cut, when marking
-the blocking cells of the position lowers its limit at all. A should-cut cell
-counts with `closing + Tolerance` instead of the rounded-up value (the
-simplified path may run `Tolerance` above the planned tip), and the round is
-repeated. Marks only grow; the loop ends when the effective tip is stable and
-nothing new was marked, or after 8 rounds. The strategies cut every should-cut
-cell to its closing before the tool goes deeper beside it (section 6.4).
+The pipeline applies no head limit before the first pass (T-147 to T-150): the
+first toolpath is generated from the reach tip alone, then checked dynamically
+against the stock as the path leaves it (section 6.6), and the check decides
+what the head keeps up. Every cell carries a status byte (`CellStatus`,
+`MN_CELL_*`): Model (shouldn't be removed: the model stands above the floor),
+ShouldRemove (stock the head met that the next pass cuts to its closing first),
+Collision (an entered cell the kept pass could not resolve) and Forbidden (a
+tool position raised until its head clears). The head limit map of the result is
+that raise (NaN where none), `effectiveTip = max(tip, raise)`, and
+`headLimited = raise > tip + Tolerance`.
+
+Recursion mode (`CollisionMode.Recursion`, T-148): after every pass the check's
+hits are resolved. A hit cell is removable when its closing (`min over the
+footprint of the strategy tip + dz`, standing stock included) plus `Tolerance`
+lies below the tool surface that met it; such stock becomes ShouldRemove and
+loses Collision. A position whose head met unremovable cells (the model, or
+stock only the model's removal would free) is forbidden unless the X rule keeps
+it: `finished > X * damaged`, with `finished` the model cells the cutter
+finishes at that position (its bottom reaches their surface) and `damaged` the
+unremovable cells its head meets. A forbidden position's tip is lifted to
+`stays - dz - CutterLength + Tolerance + CollisionDetector.Tolerance` over the
+worst cell (`stays` = its closing, never below the model). Stock that was
+already ShouldRemove and still stood in the way forbids the position as well.
+The lift then propagates: every position whose head meets the closing of the
+lifted tip map (model only, the standing stock of the cut scope is drawn again
+every pass) is decided by the same rule, up to 8 rounds, so a wall is cleared
+in one pass instead of one ring of positions per pass. The pass repeats while
+the entered cells or the unremovable ones among them still decrease and the
+resolution added a mark, at most `MN_MAX_PASSES` (8) times; the pass with the
+fewest entered cells is kept and reported. The strategies cut every
+ShouldRemove cell to its closing before the tool goes deeper beside it
+(section 6.4). One run mode (`CollisionMode.OneRun`, T-150) decides inside the
+strategies instead (section 6.4) and runs one pass.
 
 Material removal (`MaterialRemover`), one sample of the tool at tip `(x, y, z)`:
 
@@ -382,38 +401,57 @@ Uncuttable classification (`UncuttableRegions`):
   polyline between the two nodes (`SurfacePath`: every cell-edge crossing lifted
   to the highest plateau touching it, never below the straight line between the
   ends, rise and descent in place at the ends), plus the turn fine below.
-  `RouteSolver` starts from the cheaper of two walks over candidate lists (10
-  planar-nearest): the nearest-neighbour walk and a smooth walk that scores
-  each step together with the cheapest step after it, fine included. It
+  `RouteSolver` starts from the cheapest of four walks: over candidate lists (10
+  planar-nearest) the nearest-neighbour walk and a smooth walk that scores each
+  step together with the cheapest step after it, fine included, and the sweeps
+  along X and along Y, which run the nodes grid row by grid row (or column by
+  column) end to end and turn only between lines (T-153). It
   improves with 2-opt and Or-opt until nothing improves or the program's budget
   of 40,000,000 evaluated candidate moves (`RouteBudget.MaxEvaluations`, shared
   in proportion to node counts) is spent; the fine of every move is exact.
   Going around an obstacle is not a separate search: the tour through the
   intermediate nodes is the way around, and the cost of a move over an
   obstacle is its climb.
-- Turn fine (`TurnFine`): a turn is the change of the XY direction between the
-  chords into and out of a node. A node is fined for a sharp turn (above 35
-  degrees) or as part of a compound turn (T-139): up to 4 consecutive smaller
-  turns, straight nodes between them skipped, at most 8 positions each way, that
-  change the direction by more than 35 degrees within less than 10 mm of path
-  (the angle between the chord into the first and the chord out of the last); a
-  sharp turn ends the search, so a small turn beside a corner does not stretch
-  its zone. Neither is fined on a real circular move: a chain of arcs, each four
-  consecutive nodes on one circle within half a cell turning the same way below
-  90 degrees at both inner nodes, at least 10 mm long from its first node to its
-  last (followed at most 16 arcs each way). A square corner, a U-turn, a short
-  arc and a corner split into small turns are therefore never circular. A
-  movement is the stretch between two fined turns or a route end; its first and
-  last 5 mm run at 0.3 of the speed, so a fined turn slows the 5 mm before and
-  after it, overlapping zones count once and route ends clip them. The fine is
-  charged on XY travel, `(1 / 0.3 - 1) / 3` cost units per slow millimetre. On a
-  3 mm lattice the solver runs straight and rounds corners with two 45 degree
-  turns on one lattice circle (10.2 mm) instead of turning 90 degrees. Once
-  turns lie closer than one zone, removing one frees nothing, which is why the
-  start walk matters. The status of a node depends on up to 26 positions of the
-  route, so the local search keeps the turn and arc of every position, screens a
-  move with the nodes next to its joins and applies it only when the exact fine
-  change, over every node the move can change, still leaves a gain.
+- Turn fine (`TurnFine`, T-153): a turn is the change of the XY direction
+  between the chords into and out of a node. Every node where the direction
+  changes starts a new coordinate set and so a new movement, whatever the angle,
+  on circles as on corners; a node is straight on when the sine of the change is
+  within 0.001 (float noise of the node coordinates) and the direction does not
+  reverse. The first and last 5 mm of every movement run at a third of the
+  speed (`TurnFine.SlowSpeedFactor`, three times slower, T-155): a fined node
+  slows the 5 mm before and after it, a millimetre is slow once where zones
+  overlap (a movement shorter than 10 mm is slow over its whole length) and
+  route ends clip the zones. Short steps therefore run slow along their whole
+  length and the solver keeps long straight moves. The fine is charged on XY
+  travel, `(1 / factor - 1) / 3` cost units per slow millimetre. A flat charge of
+  10 mm per fined node, whatever the length of the movement, was tried first: it
+  bills a 1 mm movement as 10 slow mm, and the solver then climbed over material
+  and plunged back rather than follow a curved band (the user's project went from
+  19.5 to 169.5 min of length over rate and from 32,081 to 37,981 direction
+  changes). The status of a node depends on it and its two neighbours only, so a
+  2-opt or Or-opt move changes the status of the nodes at its joins only; the
+  fine window adds the overlap of their zones with the events up to 10 mm away,
+  and the change is exact. The local search cannot turn a spiral into rows, so
+  the start walk decides the turn structure; that is why the sweeps are among the
+  start walks.
+- Slow zones (`SlowZones`, `mn_slow.c`, T-155): the fine is written into the
+  toolpath right after the simplifier. A movement is a run of feed segments
+  straight on in XY by the rule above (a feed junction with the same XY
+  direction continues it, whatever the Z slope); rapids, plunges, feeds without
+  XY travel and every direction change end a movement. The first and last 5 mm
+  of XY travel of every movement run at a third of the feed rate, a movement up
+  to 10 mm wholly, at route ends as well (the solver leaves those zones out of
+  its cost because every order of a route pays them). The chords are split at
+  the zone boundaries, the original vertices stay, and the statistics, the
+  simulation and the .nc file carry the slow rates. The layer marks are
+  rewritten for the split as for the simplification.
+- Layers (`ToolpathLayer`, `mn_result_layers`, T-154): the strategies mark the
+  first segment of every run of consecutive routes at one plan level (the top
+  band route and every cave block in "Z layer by layer", every level in "3 axis
+  freedom"); a mark at the level of the previous one joins it. The simplifier
+  ends a feed run at a mark, so the layer starts at a real segment, and rewrites
+  the index. The Z layer strategy visits caves depth first, so a level can come
+  back as a later layer; consecutive layers always differ in level.
 - "Z layer by layer": cave by cave. A cave is cut completely at its level, then
   the tool drops one level in place into the first child cave; a sibling is
   visited only when the whole subtree is done, nearest first. Every route is
@@ -427,6 +465,60 @@ Uncuttable classification (`UncuttableRegions`):
   Every such cell is a node (a lattice at the finishing stepover left the stock
   higher than the head limit counts on). Without should-cut cells the strategy is
   unchanged.
+- Far stepdown (`FarStepdown`, T-156, "Z layer by layer" only): 0 for none,
+  otherwise a whole multiple k of the Stepdown of at least twice it. The plan
+  levels form groups of k (the last group may be shorter). Per group the far
+  region of its bottom level, the positions of that level's mask at least the
+  Stepover away from every cell whose strategy tip stands above the level (the
+  model, the standing stock, the raised positions), is routed first at the bottom
+  level in one step down from where the material stands, with its should-cut
+  route; the footprints of those positions cover exactly the material at least
+  the Stepover away from what stays. Then the caves of the group's levels run as
+  above over the masks without the far cells (the band nearer than the Stepover
+  and whatever is reachable only above the bottom level), and the next group
+  starts at the level the far pass reached. A group of one level has no far
+  pass. With `FarStepdown` 0 the walk runs over the whole plan in one group,
+  unchanged.
+- Far block steps (T-157): a single step can never go deeper than the cutter
+  length, because the head is wider than the cutter and meets the uncut material
+  ahead of it whatever the order of the nodes. The far block therefore cuts the
+  far region in steps of the largest multiple of the Stepdown within the cutter
+  length (one step when the far stepdown fits). With D_t the depth of step t
+  below the material standing at the group's top, c the cutter length, r the
+  cutter radius, R(h) the head radius at height h above the head bottom
+  (`mn_head_radius_at`) and m the head margin (`mn_head_margin`), a position of
+  the far region belongs to every step whose threshold its distance to the
+  standing material reaches: delta_t = max(R(D_t - c) + m, max over earlier steps
+  u with D_t - D_u > c of delta_(u+1) + r + R(D_t - D_u - c) + m), 0 while D_t
+  is within c. The standing material is every cell no far footprint covers (the
+  band nearer than the Stepover, the model, the stock over it), assumed at the
+  group's top; the steps run shallow to deep, so no route drops more than one
+  step below what the previous route left, and the thresholds keep the head
+  clear of the standing material and of what the shallower steps leave. The
+  cells of a position rejoin the walk masks below its deepest step, and the cave
+  tree takes as parent the cave above that holds any cell of a child (a rejoined
+  far cell has none), so the near band still runs top down. The validator warns
+  when the far stepdown exceeds the cutter length. Both collision modes see
+  nothing to fix in the far block; beside the model they decide as without a far
+  stepdown.
+- One run (`CollisionMode.OneRun`, T-150): both strategies keep the material as
+  their routes leave it (the footprint of every visited node stamped into a copy
+  of the stock) and evaluate every node of a route against it before the route
+  is solved. A cell in the head ring standing above the underside is an internal
+  blocker when another node of the route cuts it low enough (a precedence pair
+  orders that node first), a clearing blocker when a position at its tip, not
+  below the route's level, cuts it low enough (those cells are lowered by a
+  clearing route before the route: every position whose footprint holds one, at
+  `max(tip, level)`), and impossible otherwise (the model, or stock only the
+  model's removal would free). A node with impossible blockers is achieved when
+  `finished > Y * damaged` (the same counts as X), otherwise dropped and its cell
+  lifted until the head clears; the other cells of the route's region are lifted
+  the same way so the chords between the nodes climb over what their head would
+  meet, and a travel between routes takes the retract when its polyline's head
+  would meet the standing material. Cyclic pairs drop the nodes on the cycle.
+  The route solver takes the pairs (`RouteProblem.Before`/`After`): the walks
+  visit a node once its predecessors are visited and 2-opt or Or-opt applies a
+  move only when the route it produces keeps every pair.
 - "3 axis freedom": one free route per level of the plan. At level L the nodes
   are the coverage cells whose tip lies below the previous level (the stock top
   for the first), each at `max(tip, L)`, and the moves follow the surface
@@ -445,7 +537,16 @@ Uncuttable classification (`UncuttableRegions`):
   by Douglas-Peucker so that no dropped vertex lies farther than `Tolerance`
   from its chord, a merge pass drops kept vertices whose neighbours' chord still
   holds, and a chord that dips below the tip map by more than `Tolerance` is
-  split as well.
+  split as well. The tolerance is the one threshold in XY and Z (T-158): every
+  outline cell is a node, so a wall is traced as a staircase of cells whose
+  corners alternate between two lines one cell apart, and the staircase joins
+  into chords only when `Tolerance` reaches `CellSize`. Below that every wall is
+  one move per cell, whatever the route solver does (the user's heart at cell
+  0.025 and tolerance 0.0025: 1,257,006 moves, 1,031,101 of them one cell; at
+  tolerance 0.05: 69,628 moves, 1,433 one cell, 222 to 191 min). An XY floor of
+  one cell inside the simplifier was tried and rejected: a chord along one
+  corner family shifts the cutter a cell off the closing, which leaves a strip
+  of wall at full level height and brings the head onto standing stock.
 - `Stepover`, `FinishingStepover`: valid range `(0, CutterDiameter]`.
 - `SafeHeight`: clearance above the stock top for rapid moves. The absolute rapid Z is
   stock top + `SafeHeight`; the value must be > 0 and does not depend on the origin mode.
@@ -471,7 +572,10 @@ M30
 ```
 
 - Numbers: invariant culture, 3 decimals, trailing zeros trimmed (`12.5`, `0`).
-- `F` is emitted only when the feed rate changes.
+- `F` is emitted only when the feed rate changes. The slow zones of section 6.4
+  appear as `F` at a third of the feed rate (`F266.667` for 800) on the first
+  and last 5 mm of every movement, so a long straight movement is three `G1`
+  lines.
 - Only `G0`, `G1`, `G17`, `G21`, `G90`, `G94`, `M3`, `M5`, `M30`, `F`, `S`, `X`,
   `Y`, `Z`. No arcs, no tool changes, no cutter compensation.
 - Line endings `\n`. File extension `.nc`.
@@ -490,10 +594,33 @@ M30
   the tick; no frame skipping logic, no second path for high speeds.
 - `RunToEnd()` processes the whole toolpath without the clock; used for the
   final-model preview.
+- Collision check (T-144, native since T-147): the dynamic check closes every
+  generation pass inside the native library (`mn_collision_check`,
+  `NativeCollisionCheck` on its own): the toolpath over a stock clone, feeds and
+  plunges removing material at `CellSize / 2`, the head ring tested at every
+  segment end and every `max(CellSize, cutter radius)` along it, the footprint
+  of a rapid at the same spacing, against the stock as it stands, so a cell cut
+  before the head passes is no collision and the same cell uncut is one. The
+  rule of the simulation panel holds: one event per segment and kind, every
+  entered cell recorded as Model when the tool surface lay more than
+  `CollisionDetector.Tolerance` below a model standing above the floor, Stock
+  otherwise, Model outranks Stock. The report of the kept pass reaches
+  `PipelineResult.Collisions`; a summary window with one OK button follows and
+  the analysis lays CollisionModel and CollisionStock over every other category.
+  The Strategy tab shows the passes and the collisions of each.
 - `SeekTo(fraction)` moves the simulation to a fraction of the path length: a
   forward seek sweeps from the current position, a backward seek replays from a
   fresh stock; the clock is paused meanwhile and set to the engine's elapsed
-  time afterwards; the view model resumes play when it was playing.
+  time afterwards; the view model resumes play when it was playing. `RunToEnd`
+  sets the clock to the total the same way.
+- Layer by layer (T-154): `SeekToSegment(index)` lands exactly on a segment
+  start with the rules of `SeekTo`; `SeekToNextLayer` moves to the start of the
+  next layer of `PipelineResult.Layers` (the end of the path on the last),
+  `SeekToPreviousLayer` to the start of the current layer, or of the one before
+  when the tool stands at its start. The panel and the Simulation menu share the
+  commands (Next layer: loaded, idle, not finished; Previous layer: loaded,
+  idle, progress above zero) and the readout "k of N layers done, layer m at
+  Z z".
 
 ### 6.7 Validation rules (`ProjectValidator`)
 
@@ -508,12 +635,16 @@ M30
 | `0 < Stepover <= CutterDiameter` | Parameters.Stepover |
 | `0 < FinishingStepover <= CutterDiameter` | Parameters.FinishingStepover |
 | `Stepdown > 0` | Parameters.Stepdown |
+| `FarStepdown == 0` or a whole multiple of `Stepdown` of at least `2 * Stepdown` (within `Slicer.LevelTolerance`) | Parameters.FarStepdown |
+| `FarStepdown <= CutterLength` (warning, not error: the far block then steps by the cutter length) | Parameters.FarStepdown |
 | `SafeHeight > 0` (clearance above the stock top) | Parameters.SafeHeight |
 | `0.01 <= CellSize <= 5` | Parameters.CellSize |
 | `FeedRate, PlungeRate, RapidRate > 0` | Parameters.* |
 | `SpindleRpm > 0` | Parameters.SpindleRpm |
 | `0 < ReachPercent <= 100` | Strategy.ReachPercent |
 | `MinIslandVolume >= 0` | Strategy.MinIslandVolume |
+| `CollisionMode` is `Recursion` or `OneRun` | Strategy.CollisionMode |
+| `RecursionRatio`, `OneRunRatio` finite and `>= 0` | Strategy.RecursionRatio, Strategy.OneRunRatio |
 | Stock dimensions > 0 | Stock.* |
 | Model bounds inside the stock box in machine space (`ModelLayout.StockBoundsMachine`; warning, not error) | Stock.Placement |
 | Grid size `Width * Height <= 4_000_000` cells | Parameters.CellSize |
@@ -1762,6 +1893,126 @@ check that decides done.
 - Input: user request (integrate without overloading the interface)
 - Output: one Machine tab (connection and program open; jog and zero with probe, overrides and console folded) and one Machine menu; refreshed at 10 Hz from the controller snapshot; the viewport tool marker follows the machine's work position and draws the answered part of the generated toolpath as done
 - Acceptance: connect needs a port or a host; position, state and version shown; start asks first and runs only from Idle; every command that moves the machine disabled during a job; progress, the failing line and a lost link shown; console traffic; fields saved; the tab fits 360 px without horizontal scroll (render captures)
+- Status: done
+
+#### T-144 Collision check cluster
+- Depends on: T-136, T-143
+- Files: `src/Miller.Core/Simulation/CollisionDetector.cs`, `src/Miller.Core/Simulation/CollisionRecorder.cs`, `src/Miller.Core/Simulation/SimulationEngine.cs`, `src/Miller.Application/Services/CollisionService.cs`, `src/Miller.Application/Services/SimulationService.cs`, `tests/Miller.Tests/Core/Simulation/CollisionRecorderTests.cs`, `tests/Miller.Tests/Application/CollisionServiceTests.cs`
+- Input: user request (conflicts of the cutter head with the model or anything else are found; a collision summary at the end of the path generation)
+- Output: `CollisionDetector` reports every entered cell; `CollisionRecorder` (section 6.6) used by the simulation panel and the check; `CollisionService` as the gate (failure as a result, cancellation propagated, throttled progress)
+- Acceptance: the check gives exactly the simulation panel's events; head over the part top marks Model cells, head over stock only marks Stock cells, a model at the floor is no model; Model outranks Stock; the pipeline stock is untouched; a pre-cancelled token throws; a profile on another grid gives a failed check; progress 0 to 1 within the throttle; heart (default project) zero collisions in 406 ms over 5,445 segments
+- Status: done
+
+#### T-145 Collision summary window
+- Depends on: T-144
+- Files: `src/Miller.App/Services/ConfirmDialogService.cs`, `src/Miller.App/ViewModels/MainWindowViewModel.cs`, `src/Miller.App/App.axaml.cs`, `tests/Miller.Tests/Fixtures/Fakes.cs`, `tests/Miller.Tests/App/CollisionSummaryTests.cs`
+- Input: user request (collision summary in a popup window with an OK button that closes it)
+- Output: `IConfirmDialogService.InformAsync` (one OK button, default and cancel); the check runs as the last stage of Generate; the summary opens once the window is no longer busy; the status bar ends with the collision count
+- Acceptance: one summary per finished generation, equal to `CollisionService.Summarize` of the result; none after a validation error or a cancel during the check (the result is discarded); OK and Escape close the window
+- Status: done
+
+#### T-146 Collision marks on the analysis
+- Depends on: T-144
+- Files: `src/Miller.Core/Analysis/DeviationMap.cs`, `src/Miller.App/ViewModels/AnalysisViewModel.cs`, `src/Miller.App/Views/AnalysisView.axaml`, `src/Miller.App/Styles/Colors.axaml`, `src/Miller.App/Rendering/SceneRenderer.cs`, `tests/Miller.Tests/App/CollisionSummaryTests.cs`
+- Input: user request (conflicts shown on the analysis and marked by a different color)
+- Output: categories CollisionModel and CollisionStock with their own colors, laid over every other category; "Mark collisions" check box (default on); legend and summary line
+- Acceptance: the marked cells carry the collision categories and every other cell keeps its category; switching the marks off restores the categories; no two categories share a color; a report of another grid is refused; a new project clears the marks
+- Status: done
+
+#### T-147 Dynamic collision check in the native library
+- Depends on: T-144
+- Files: `src/Miller.Native/src/mn_collision.c`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Native/src/mn_internal.h`, `src/Miller.Core/Simulation/CellStatus.cs`, `src/Miller.Core/Simulation/NativeCollisionCheck.cs`, `src/Miller.Core/Simulation/CollisionDetector.cs`, `src/Miller.Core/Native/CoreNative.cs`, `tests/Miller.Tests/Application/CollisionServiceTests.cs`
+- Input: user request (a dynamic collision check between the toolpath coordinates and the surrounding cells, considering the cells not cut out yet and not the cells already cut out; a status bit per cell, not a string)
+- Output: `mn_collision_check` and `mn_check_path` (section 6.6), the status byte `MN_CELL_*` mirrored as `CellStatus`, `mn_collision` events with the simulation panel's texts, the facade `NativeCollisionCheck`
+- Acceptance: the native check finds every event the C# recorder finds on a hand-made colliding path (same kinds and segments) and every entered cell carries Collision; a cell cut first is no collision, uncut it is; bad arguments are refused before the walk; the heart default job has no collisions in the native check and in the simulation
+- Status: done
+
+#### T-148 Generation without head clearance, recursion mode
+- Depends on: T-147
+- Files: `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/src/mn_collision.c`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Application/Services/PipelineService.cs`, `tests/Miller.Tests/Application/CollisionModesTests.cs`, `tests/Miller.Tests/Application/StageProgressTests.cs`, `tests/Miller.Tests/Golden/heart_grbl.nc`
+- Input: user request (generate first without any cutter head consideration, check dynamically, mark should-be-removed stock, forbid or achieve the positions whose head meets the model by the X rule, repeat while the collisions decrease)
+- Output: the pipeline split into the shared preparation and the pass, the static head clearance loop of T-136 removed, the resolution and its propagation (section 6.3), the kept pass with its per pass counts (`PipelineResult.Passes`, `PassCollisions`), progress per pass with a bar that never moves back; `heart_grbl.nc` regenerated
+- Acceptance: box beside a wall (both strategies) and the heart (both scopes) end with zero collisions in the check and in the simulation after 2 to 3 passes, the first pass having some; the deep stock separation reaches the floor beyond the collar with zero collisions; the slotted plate under a short cutter is forbidden at X = 1e9 (no collision, rest material) and achieved at X = 0 (collisions reported, floor finished); a project without collisions runs one pass without marks; heart: 1,260 forbidden positions (the head-limited count of T-136), 4,914 segments, 4.4 min
+- Status: done
+
+#### T-149 Collision handling settings
+- Depends on: T-148
+- Files: `src/Miller.Core/Setup/MillingProject.cs`, `src/Miller.Core/Setup/MillingPreset.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.App/ViewModels/StrategySelectionViewModel.cs`, `src/Miller.App/Views/StrategySelectionView.axaml`, tests
+- Input: user request (X and Y set in the strategy window for the recursion and one run selections)
+- Output: `CollisionMode` (Recursion, OneRun), `RecursionRatio` (X), `OneRunRatio` (Y), default 10; the combo box and the two numeric boxes on the Strategy tab, each ratio enabled by its mode; validation rows of section 6.7; presets carry the three values; the statistics text names the passes and the collisions of each
+- Acceptance: the view model flips `IsRecursion`/`IsOneRun`, writes the project, reports `Strategy.*` errors for negative or non-finite ratios, a new project resets; files without the fields load the defaults; round trip through the serializer and the presets
+- Status: done
+
+#### T-150 One run mode: the collision rule inside the strategies and the route solver
+- Depends on: T-148
+- Files: `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_solver.c`, `src/Miller.Native/src/mn_writer.c`, `src/Miller.Solver/RouteProblem.cs`, `src/Miller.Solver/RouteSolver.cs`, `tests/Miller.Tests/Solver/RouteSolverPrecedenceTests.cs`, `tests/Miller.Tests/Application/CollisionModesTests.cs`
+- Input: user request (additional rules for the solver of the transportation task: a route that causes a collision cannot be applied, stock cells are cut on the previous layers instead, a node that would need model cells cut is not achieved unless the Y rule keeps it)
+- Output: the guard of section 6.4 (material as the routes leave it, node evaluation, precedence pairs, clearing routes, region lifts, head-aware travels), the precedence pairs of the route solver
+- Acceptance: random acyclic pairs are kept by the walks and every applied move; pairs the free route satisfies keep its cost within 10 percent; a reversing pair puts the far node first; cyclic pairs, a start with a predecessor and uneven lists are refused; the box beside a wall and the heart run one pass with zero collisions; the slotted plate is dropped at Y = 1e9 and achieved at Y = 0
+- Status: done
+
+#### T-151 Summary and analysis from the native check
+- Depends on: T-147
+- Files: `src/Miller.Application/Services/CollisionService.cs`, `src/Miller.App/ViewModels/MainWindowViewModel.cs`, `src/Miller.App/App.axaml.cs`, `tests/Miller.Tests/App/CollisionSummaryTests.cs`
+- Input: user request (the separate collision check is excluded)
+- Output: `CollisionService.RunAsync` removed; the summary window, the status bar and the analysis marks read `PipelineResult.Collisions`; `CollisionService` keeps the texts
+- Acceptance: one summary per finished generation equal to the summary of the result's report; a cancel during the check stage discards the result; the analysis marks the report's cells
+- Status: done
+
+#### T-152 Documentation of the collision handling
+- Depends on: T-147 to T-151
+- Files: `docs/DEVELOPMENT_GUIDE.md`, `docs/ARCHITECTURE.md`, `src/CLAUDE.md`
+- Input: this task list
+- Output: sections 6.3, 6.4, 6.6, 6.7 and 5.1 rewritten for the dynamic check, the modes and the ratios
+- Acceptance: every rule named in the sections has a test in `CollisionModesTests`, `CollisionServiceTests` or `RouteSolverPrecedenceTests`
+- Status: done
+
+#### T-153 Turn fine on every new direction
+
+- Files: `src/Miller.Native/src/mn_route.c`, `src/Miller.Native/src/mn_window.c`, `src/Miller.Native/src/mn_window.h`, `src/Miller.Native/src/mn_solver.c`, `src/Miller.Native/src/mn_internal.h`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Solver/TurnFine.cs`, `src/Miller.Solver/Native/SolverNative.cs`, `tests/Miller.Tests/Solver/*`, `tests/Miller.Tests/Application/CutScopeTests.cs`, `tests/Miller.Tests/Golden/heart_grbl.nc`
+- Input: user request (the first and last 5 mm are not punished on a circle: delete that rule and apply the punishment after every new coordinate set, so the route mills most of the path in long directions and as few small steps as possible)
+- Output: the rule of section 6.4 (every direction change fined, no circular exemption, no compound threshold, straight within a sine of 0.001, zones overlapping once); sweep start walks along X and Y; the exact fine change from the join nodes and the fine window (the screen and the arc chains are gone); the angle and circle constants removed from `TurnFine`; `heart_grbl.nc` regenerated
+- Acceptance: every direction change fined (1 to 180 degrees, octagons and arcs slow over their whole length, U-turns 1 mm wide 11 mm); the slow length equals the union of the zones on 300 random routes; a diagonal of cell centres 100 mm from the origin is straight, a one cell jog on it gives three turns; reversed routes give the same statuses; one more evaluation never raises the cost; a 12 x 8 lattice keeps the 14 turns of the row pattern and a 20 x 20 lattice from node 7 costs no more than the serpentine; zero events and zero gouges on the fixtures; direction changes and length over rate against Build_1.0.102: heart sample 3,586 to 3,543 and 4.53 to 4.47 min, 3 axis 15,737 to 14,264 and 13.9 to 14.0 min, the user's project 32,081 to 32,591 and 19.5 to 19.7 min (kept events 13 to 12, route stage 361 to 150 s): most direction changes come from the outline and should-cut nodes, every cell of which is a node
+- Status: done
+
+#### T-154 Simulation layer by layer
+- Depends on: T-134, T-144
+- Files: `src/Miller.Native/src/mn_writer.c`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_checks.c`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/src/mn_internal.h`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Core/Toolpath/ToolpathLayer.cs`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Core/Simulation/SimulationEngine.cs`, `src/Miller.Application/Services/PipelineService.cs`, `src/Miller.Application/Services/SimulationService.cs`, `src/Miller.App/ViewModels/SimulationViewModel.cs`, `src/Miller.App/Views/SimulationControlsView.axaml`, `src/Miller.App/Views/MainMenu.axaml`, `tests/Miller.Tests/Application/SimulationLayerTests.cs`, `tests/Miller.Tests/Core/Simulation/SimulationSegmentSeekTests.cs`, `tests/Miller.Tests/App/SimulationViewModelTests.cs`, `tests/Miller.Tests/App/MainWindowHeadlessTests.cs`
+- Input: user request (allow visualization of the simulation layer by layer)
+- Output: layer marks from the strategies (section 6.4), kept through the simplifier and the slow zones, exposed as `PipelineResult.Layers`; `SimulationEngine.SeekToSegment`; `SimulationService.SeekToNextLayer`, `SeekToPreviousLayer`, `LayerIndex`, `CompletedLayers`; Next layer and Previous layer in the panel and the Simulation menu with the readout of section 6.6
+- Acceptance: on the box fixture the layers start at segment 0, increase, change level at every step and start at real segment starts in both strategies; 3 axis freedom gives one layer per plan level, descending; Next layer lands on the next layer's first segment with the stock of a fresh seek to it, Previous layer returns to the start of the layer (a fresh clone) and then of the one before; Next layer on the last layer finishes the simulation with the stock and time of run to end; the readout follows play, step, seek, stop and run to end; the menu items execute the panel commands; the heart golden is unchanged by the marks
+- Status: done
+
+#### T-155 Slow zones in the toolpath
+- Depends on: T-153, T-154
+- Files: `src/Miller.Native/src/mn_slow.c`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/src/mn_internal.h`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Solver/TurnFine.cs`, `src/Miller.Solver/Native/SolverNative.cs`, `src/Miller.Core/Toolpath/SlowZones.cs`, `src/Miller.Core/Native/CoreNative.cs`, `src/Miller.Application/Services/SimulationService.cs`, `tests/Miller.Tests/Core/Toolpath/SlowZonesTests.cs`, `tests/Miller.Tests/Application/SlowZonePipelineTests.cs`, `tests/Miller.Tests/Solver/TurnFineTests.cs`, `tests/Miller.Tests/Golden/heart_grbl.nc`
+- Input: user request (the fines of the routing direction should define the machine movement in the .nc code: the first and last 5 mm of every command three times slower)
+- Output: the rule of section 6.4 (slow zones) applied after the simplifier; one slow factor of a third shared by the solver cost and the zones, the fine per slow millimetre computed from it in double on both sides; the statistics, the simulation and the .nc file carry the slow rates; `heart_grbl.nc` regenerated
+- Acceptance: a 20 mm straight feed becomes 5 slow, 10 fast, 5 slow; a right angle between two 20 mm feeds slows both sides of the corner; movements of 8 and 10 mm are one slow segment; collinear junctions (a kept vertex, a jog within the straight sine, a change of slope) continue the movement; a vertical feed, a plunge, a rapid and a reversal end it; the split path runs through every original vertex, joins up and keeps the length; on a route of three 30 mm legs the slow length is the solver's 20 mm plus the two route-end zones, with an 8 mm first leg 28 mm; the C and C# constants agree bit for bit; the box fixture has exactly the feed rate and a third of it among its feeds, its estimated minutes equal the sum of length over rate and the simulated time at the end, its G-code holds `F` words at both rates, zero gouges and zero simulated events; the heart golden 4,929 to 4,963 lines, 4,954 segments, 4.47 to 10.8 min (the outline staircases are short movements and run slow over their whole length, which the solver already billed)
+- Status: done
+
+#### T-156 Far stepdown in "Z layer by layer"
+- Depends on: T-154
+- Files: `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Core/Setup/CuttingParameters.cs`, `src/Miller.Core/Native/CoreNative.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.App/ViewModels/CuttingParametersViewModel.cs`, `src/Miller.App/Views/CuttingParametersView.axaml`, `tests/Miller.Tests/Core/Toolpath/FarStepdownStrategyTests.cs`, `tests/Miller.Tests/Application/FarStepdownPipelineTests.cs`, `tests/Miller.Tests/Core/Setup/FarStepdownParameterTests.cs`, `tests/Miller.Tests/Application/ProjectValidatorTests.cs`, `tests/Miller.Tests/App/SettingsViewModelsTests.cs`
+- Input: user request (a "far stepdown" parameter on the Cutting tab, larger than the stepdown and divisible by it; in "layer by layer" the area at least a stepover away from the model is cut with the far stepdown in one layer below, the tool returns in Z and cuts the left fragments at the normal stepdown, and at the level the far cut reached the far cut is applied again)
+- Output: `CuttingParameters.FarStepdown` (0 for none) with the validation rule of section 6.7, the Cutting tab box, the project file and the presets; the rule of section 6.4 (groups of k levels, far region per group routed first, the caves of the group over the reduced masks, the walk as a function over a group plan); 3 axis freedom unchanged
+- Acceptance: 0, 4, 6 and 0.6 over 0.2 accepted, 1, 2, 3, negative, NaN and infinite refused on `Parameters.FarStepdown`, an invalid stepdown reports itself only; the member round-trips, a file without it loads 0, a preset carries it; on a 10 x 10 x 5 box in a 40 x 40 stock (levels 3, 1, 0, far 4) the cutting levels run 1, 3, 1, 0, after the far pass every cell within the cutter radius of a far position is at level 1 and every cell more than a cell beyond that is untouched (1,000+ and 600+ cells), the group ends in the plain strategy's state before its first move below level 1, both end at the same stock; a 9 mm stock (levels 7, 5, 3, 1, 0) runs 5, 7, 5, 1, 3, 1, 0; a far stepdown that is no multiple is refused by the native library; through the pipeline the final stock equals the plain one within two tolerances with zero gouges and zero events in both collision modes, the layers read 1, 3, 1, 0 and 3 axis freedom gives identical segments; the heart golden is unchanged; the heart sample with far stepdown 4: 6,938 segments and 13.7 min against 4,954 and 10.8 (informative, more direction changes at the far region's edge)
+- Status: done
+
+#### T-157 Far block steps within the cutter length
+- Depends on: T-156
+- Files: `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.App/ViewModels/CuttingParametersViewModel.cs`, `src/Miller.App/Views/CuttingParametersView.axaml`, `tests/Miller.Tests/Core/Toolpath/FarStepdownStepTests.cs`, `tests/Miller.Tests/Application/FarStepdownPipelineTests.cs`, `tests/Miller.Tests/Application/ProjectValidatorTests.cs`, `tests/Miller.Tests/App/SettingsViewModelsTests.cs`
+- Input: user request (far step deep collision prevention for both collision approaches)
+- Output: the rule of section 6.4 (far block steps): steps of the largest multiple of the stepdown within the cutter length, thresholds on the distance to the standing material from the head radius at the slab height, cumulative step regions, cells rejoining the walk masks below their deepest step, the cave tree parent from any cell of a child; the validator warning of section 6.7 on the Cutting tab
+- Acceptance: with a cutter longer than the far stepdown one step at the bottom level, the far stepdown tests and the heart golden unchanged; a 2 mm cutter under a 10 mm cylinder head with far stepdown 8 over stepdown 2 on a 10 x 10 x 2 box in a 40 x 40 x 9 stock: thresholds 0, 5.76, 14.51 and 23.27, steps at 7, 5 and 3 before the walk 7, 5, 3, 1 and the last level 0, every far position at most at its step level after the far block and exactly there where no deeper position lies within the cutter radius, nothing below the deepest step; a frustum head (7 to 20 mm over 10 mm) reaches a third step and cuts more cells to level 5 than a 20 mm cylinder, which stops after the second step; through the pipeline in recursion and one run mode, cylinder and frustum: the layers descend 7, 5, 3 then return to 7, before every step route no annulus cell of any tip of the route stands above the head underside in the simulated stock, no event inside the far block, no more events than without a far stepdown, zero gouges, and the final stock differs from the plain one only within the head radius of the box (at most 60 cells, the collision handling's choice); the warning appears for far stepdown 8 with a 2 mm cutter and not with 8 or 20 mm; 784 tests pass
+- Status: done
+
+#### T-158 Cell-size moves along walls: the tolerance rule of the simplifier
+- Depends on: T-153, T-155
+- Files: `src/Miller.Native/src/mn_checks.c`, `src/Miller.Core/Toolpath/ToolpathSimplifier.cs`, `src/Miller.App/Views/CuttingParametersView.axaml`, `tests/Miller.Tests/Core/Toolpath/ToolpathSimplifierTests.cs`
+- Input: user report (the .nc output of the heart at cell 0.025 and tolerance 0.0025 shows moves one cell long; the solver does not look for the longest directions, the fine does not work)
+- Output: no change of the fine or the solver; the cause is the tolerance below the cell size, documented in section 6.4 and on the Cutting tab label; an XY floor of one cell was implemented, failed the coverage and collision tests (uncut wall strips at full level height, head hits) and was reverted; the staircase rule is tested
+- Acceptance: a slope one-in-six staircase of eight runs at cell 0.25 keeps every corner at tolerance 0.05 and becomes one chord at tolerance 0.25 with a deviation between 0.9 and 1 cell; the circle test unchanged; the user's project measured with the statistics script: tolerance 0.0025 gives 1,257,006 moves (1,031,101 one cell, 59.2 m, 99.5 percent slow feed), tolerance 0.05 gives 69,628 moves (1,433 one cell, 49.4 m, 191 min against about 222); the heart golden unchanged; 785 tests pass
 - Status: done
 
 ### M8 Packaging and release

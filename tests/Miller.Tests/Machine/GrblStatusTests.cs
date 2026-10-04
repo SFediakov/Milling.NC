@@ -67,6 +67,16 @@ public sealed class GrblStatusTests
         Assert.Throws<FormatException>(() => GrblStatus.Parse("<Idle|MPos:1.000,2.000>", GrblStatus.Unknown));
     }
 
+    // A report without its machine state is broken: the controller logs it and keeps its last state.
+    [Fact]
+    public void AReportWithoutAState_IsRejected_AStateAloneIsRead()
+    {
+        Assert.Throws<FormatException>(() => GrblStatus.Parse("<>", GrblStatus.Unknown));
+        Assert.Throws<FormatException>(() => GrblStatus.Parse("<|MPos:1.000,2.000,3.000>", GrblStatus.Unknown));
+        Assert.Throws<FormatException>(() => GrblStatus.Parse("<:1>", GrblStatus.Unknown));
+        Assert.Equal(GrblStatus.Idle, GrblStatus.Parse("<Idle>", GrblStatus.Unknown).State);
+    }
+
     [Fact]
     public void Codes_AreDescribed()
     {

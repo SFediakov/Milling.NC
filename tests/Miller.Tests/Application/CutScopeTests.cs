@@ -1,5 +1,6 @@
 using Miller.Application.Services;
 using Miller.Core.Analysis;
+using Miller.Core.HeightMaps;
 using Miller.Core.Setup;
 using Miller.Core.Simulation;
 using Miller.Core.Toolpaths;
@@ -49,7 +50,8 @@ public sealed class CutScopeTests
 
         // The band beside the model wall is cut to the floor by the footprint of positions one radius
         // out (the wall line itself is never entered, so nothing is gouged), the model top is finished.
-        var (bi, bj) = stock.CellOf(20f + 5f + 0.75f, 20f);
+        // y = 23: the +X holding bridge lies on y = 20.
+        var (bi, bj) = stock.CellOf(20f + 5f + 0.75f, 23f);
         Assert.Equal(separation.Floor, stock[bi, bj], 3);
         var analysis = FinalModelAnalyzer.Analyze(stock, separation.Model, separation.Floor, separation.Tolerance);
         Assert.Equal(0, analysis.GougeCells);
@@ -77,7 +79,8 @@ public sealed class CutScopeTests
         Assert.Empty(simulation.Events);
         var stock = simulation.Stock!;
         Assert.Equal(result.Stock.StockTop, stock[0, 0], 3);
-        var (bi, bj) = stock.CellOf(20f + 5f + 0.75f, 20f);
+        // y = 23: the +X holding bridge lies on y = 20.
+        var (bi, bj) = stock.CellOf(20f + 5f + 0.75f, 23f);
         Assert.Equal(result.Floor, stock[bi, bj], 3);
         var (mi, mj) = stock.CellOf(20f, 20f);
         Assert.Equal(5f, stock[mi, mj], 2);
@@ -157,8 +160,9 @@ public sealed class CutScopeTests
         Assert.Empty(simulation.Events);
         var stock = simulation.Stock!;
         Assert.Equal(result.Stock.StockTop, stock[0, 0], 3);
-        // The trench reaches the floor beyond the collar the head limit keeps beside the box.
-        var (ti, tj) = stock.CellOf(20f + 5f + 5f + 0.75f, 20f);
+        // The trench reaches the floor beyond the collar the head limit keeps beside the box (y = 23:
+        // the +X holding bridge lies on y = 20).
+        var (ti, tj) = stock.CellOf(20f + 5f + 5f + 0.75f, 23f);
         Assert.Equal(result.Floor, stock[ti, tj], 3);
         // Terrace: at half depth the trench is wider than at the floor.
         int TrenchCells(float z)
@@ -176,6 +180,77 @@ public sealed class CutScopeTests
         }
 
         Assert.True(TrenchCells(15f) > TrenchCells(0f) + 4, $"{TrenchCells(15f)} cells at 15 vs {TrenchCells(0f)} at the floor");
+    }
+
+    // A frustum head (8 mm bottom, 24 mm top over 12 mm) needs the stock beside the trench only below
+    // its cone: the outer trench wall rises as a slope of level-high steps (12, 14, ... 22 mm) instead
+    // of the treads of the widest radius the cylinder of the top diameter needs (12 and 24 mm), removes
+    // less stock, and the head still clears everything. The box stands on the stock bottom, so no
+    // head meets the model and only the outer wall differs.
+    [Fact]
+    public void DeepStock_FrustumHead_TrenchWallFollowsTheCone()
+    {
+        HeightMap Simulated(PipelineResult result)
+        {
+            Assert.Empty(GougeChecker.Verify(result.Toolpath, result.EffectiveTip, result.Tolerance));
+            Assert.Empty(result.Collisions.Report!.Events);
+            return Simulate(result);
+        }
+
+        MillingProject WideStock()
+        {
+            var project = BoxProject(CutScope.Separation, stockZ: 30f, cutterLength: 12f);
+            project.Stock.SizeX = 60;
+            project.Stock.SizeY = 60;
+            project.Stock.AlignZ = StockAlignment.Min;
+            return project;
+        }
+
+        var frustumProject = WideStock();
+        frustumProject.Tool.HeadShape = HeadShape.Frustum;
+        frustumProject.Tool.HeadDiameter = 8f;
+        frustumProject.Tool.HeadTopDiameter = 24f;
+        frustumProject.Tool.HeadLength = 12f;
+        var cylinderProject = WideStock();
+        cylinderProject.Tool.HeadDiameter = 24f;
+        var frustum = Run(frustumProject);
+        var cylinder = Run(cylinderProject);
+        var frustumStock = Simulated(frustum);
+        var cylinderStock = Simulated(cylinder);
+
+        double Removed(HeightMap stock, float top) => stock.Z.Where(z => !float.IsNaN(z)).Sum(z => (double)(top - z));
+        Assert.True(Removed(frustumStock, frustum.Stock.StockTop) < Removed(cylinderStock, cylinder.Stock.StockTop),
+            "the frustum does not remove less stock than the cylinder of its top diameter");
+
+        // Heights between the floor and the top along the row through the box centre, outward.
+        int Steps(HeightMap stock, float top, float floor)
+        {
+            var (ci, cj) = stock.CellOf(30f, 30f);
+            return Enumerable.Range(ci, stock.Width - ci).Select(i => stock[i, cj]).Where(z => z > floor + 1e-3f && z < top - 1e-3f)
+                .Select(z => MathF.Round(z, 2)).Distinct().Count();
+        }
+
+        var frustumSteps = Steps(frustumStock, frustum.Stock.StockTop, frustum.Floor);
+        var cylinderSteps = Steps(cylinderStock, cylinder.Stock.StockTop, cylinder.Floor);
+        Assert.True(frustumSteps > cylinderSteps + 2, $"{frustumSteps} heights on the frustum wall, {cylinderSteps} on the cylinder wall");
+    }
+
+    // A frustum that does not widen upward is the cylinder of its bottom diameter: the same trench.
+    [Fact]
+    public void DeepStock_FrustumOfEqualDiameters_CutsTheCylinderTrench()
+    {
+        var frustumProject = BoxProject(CutScope.Separation, stockZ: 30f, cutterLength: 12f);
+        frustumProject.Tool.HeadShape = HeadShape.Frustum;
+        frustumProject.Tool.HeadDiameter = 16f;
+        frustumProject.Tool.HeadTopDiameter = 16f;
+        frustumProject.Tool.HeadLength = 12f;
+        var cylinderProject = BoxProject(CutScope.Separation, stockZ: 30f, cutterLength: 12f);
+        cylinderProject.Tool.HeadDiameter = 16f;
+        var frustum = Run(frustumProject);
+        var cylinder = Run(cylinderProject);
+        Assert.Equal(cylinder.Standing.Z, frustum.Standing.Z);
+        Assert.Equal(cylinder.Plan.Steps.Select(s => s.MaskCount), frustum.Plan.Steps.Select(s => s.MaskCount));
+        Assert.Equal(cylinder.Toolpath.Segments, frustum.Toolpath.Segments);
     }
 
     [Fact]

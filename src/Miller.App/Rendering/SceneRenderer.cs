@@ -79,6 +79,8 @@ public sealed class SceneRenderer : IDisposable
             [CellCategory.Overhang] = ThemeColors.Get("CategoryOverhangColor"),
             [CellCategory.HeadLimited] = ThemeColors.Get("CategoryHeadLimitedColor"),
             [CellCategory.CornerLimited] = ThemeColors.Get("CategoryCornerLimitedColor"),
+            [CellCategory.CollisionModel] = ThemeColors.Get("CategoryCollisionModelColor"),
+            [CellCategory.CollisionStock] = ThemeColors.Get("CategoryCollisionStockColor"),
         };
         _tool = new ToolRenderer(gl, ThemeColors.Get("ToolCutterColor"), ThemeColors.Get("ToolHeadColor"));
     }

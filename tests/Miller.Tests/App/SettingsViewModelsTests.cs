@@ -141,6 +141,36 @@ public sealed class SettingsViewModelsTests : IDisposable
     }
 
     [Fact]
+    public void Cutting_FarStepdown_MustBeAMultipleOfTheStepdown()
+    {
+        Assert.Equal(0f, _vm.Cutting.FarStepdown);
+        Assert.Null(_vm.Cutting.FarStepdownError);
+        _vm.Cutting.FarStepdown = 3f;
+        Assert.NotNull(_vm.Cutting.FarStepdownError);
+        Assert.Contains("multiple", _vm.Cutting.FarStepdownError);
+        _vm.Cutting.FarStepdown = 4f;
+        Assert.Null(_vm.Cutting.FarStepdownError);
+        Assert.Equal(4f, _vm.Project.Current.Parameters.FarStepdown);
+        Assert.True(_vm.Project.IsDirty);
+        _vm.Cutting.Stepdown = 3f;
+        Assert.NotNull(_vm.Cutting.FarStepdownError);
+        _vm.Cutting.FarStepdown = 0f;
+        Assert.Null(_vm.Cutting.FarStepdownError);
+    }
+
+    [Fact]
+    public void Cutting_FarStepdown_BeyondTheCutterLength_Warns()
+    {
+        _vm.Tool.CutterLength = 2f;
+        _vm.Cutting.FarStepdown = 8f;
+        Assert.Null(_vm.Cutting.FarStepdownError);
+        Assert.NotNull(_vm.Cutting.FarStepdownWarning);
+        Assert.Contains("steps", _vm.Cutting.FarStepdownWarning);
+        _vm.Tool.CutterLength = 20f;
+        Assert.Null(_vm.Cutting.FarStepdownWarning);
+    }
+
+    [Fact]
     public void Strategy_ListsTheRegistriesAndWritesIds()
     {
         Assert.Equal(new[] { "z-layer-by-layer", "three-axis-freedom" }, StrategySelectionViewModel.Strategies.Select(s => s.Id));
@@ -192,6 +222,104 @@ public sealed class SettingsViewModelsTests : IDisposable
         Assert.False(_vm.Strategy.IsSeparation);
         Assert.Equal(0f, _vm.Strategy.MinIslandVolume);
         Assert.Null(_vm.Strategy.MinIslandVolumeError);
+    }
+
+    [Fact]
+    public void Strategy_Bridges_WriteToTheProject_Validate_AndAreReported()
+    {
+        Assert.Equal(MillingProject.DefaultBridgeCount, _vm.Strategy.BridgeCount);
+        Assert.Equal(MillingProject.DefaultBridgeWidth, _vm.Strategy.BridgeWidth);
+        Assert.Equal(MillingProject.DefaultBridgeHeight, _vm.Strategy.BridgeHeight);
+        var raised = new List<string?>();
+        _vm.Strategy.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        _vm.Strategy.CutScope = CutScope.Separation;
+
+        _vm.Strategy.BridgeCount = 6f;
+        _vm.Strategy.BridgeWidth = 0.8f;
+        _vm.Strategy.BridgeHeight = 0.4f;
+        Assert.Equal(6f, _vm.Project.Current.BridgeCount);
+        Assert.Equal(0.8f, _vm.Project.Current.BridgeWidth);
+        Assert.Equal(0.4f, _vm.Project.Current.BridgeHeight);
+        Assert.True(_vm.Project.IsDirty);
+        Assert.Null(_vm.Strategy.BridgeCountError);
+
+        _vm.Strategy.BridgeCount = 2.5f;
+        Assert.NotNull(_vm.Strategy.BridgeCountError);
+        _vm.Strategy.BridgeHeight = 0f;
+        Assert.NotNull(_vm.Strategy.BridgeHeightError);
+        _vm.Strategy.BridgeWidth = 0.05f;
+        Assert.Null(_vm.Strategy.BridgeWidthError);
+        Assert.NotNull(_vm.Strategy.BridgeWidthWarning);
+        Assert.Contains(nameof(StrategySelectionViewModel.BridgeCountError), raised);
+        Assert.Contains(nameof(StrategySelectionViewModel.BridgeWidthWarning), raised);
+
+        _vm.NewProjectCommand.Execute(null);
+        Assert.Equal(MillingProject.DefaultBridgeCount, _vm.Strategy.BridgeCount);
+        Assert.Null(_vm.Strategy.BridgeCountError);
+        Assert.Null(_vm.Strategy.BridgeHeightError);
+        Assert.Null(_vm.Strategy.BridgeWidthWarning);
+    }
+
+    [Fact]
+    public void Statistics_NameTheBridges_OnlyWhenBridgesWereWanted()
+    {
+        var project = MillingProject.Default();
+        project.CutScope = CutScope.Separation;
+        project.Stock.SizeX = 40;
+        project.Stock.SizeY = 40;
+        project.Stock.SizeZ = 5;
+        project.Parameters.CellSize = 0.5f;
+        project.Models.Add(new ModelPlacement { StlPath = "box.stl" });
+        var meshes = new[] { TestMeshes.Box(10, 10, 5) };
+        _vm.Strategy.ShowResult(new Miller.Application.Services.PipelineService().Run(project, meshes, null, CancellationToken.None));
+        Assert.Contains("Bridges: 4 of 4 placed on 1 freed part(s)", _vm.Strategy.StatisticsText);
+
+        project.CutScope = CutScope.Everything;
+        _vm.Strategy.ShowResult(new Miller.Application.Services.PipelineService().Run(project, meshes, null, CancellationToken.None));
+        Assert.DoesNotContain("Bridges", _vm.Strategy.StatisticsText);
+        _vm.Strategy.Clear();
+        Assert.Equal(StrategySelectionViewModel.NoToolpathText, _vm.Strategy.StatisticsText);
+    }
+
+    // T-151: the collision mode enables its own ratio, both ratios validate, a new project resets them.
+    [Fact]
+    public void Strategy_CollisionMode_EnablesItsRatioAndValidates()
+    {
+        Assert.Equal(new[] { CollisionMode.Recursion, CollisionMode.OneRun }, StrategySelectionViewModel.CollisionModes);
+        Assert.Equal(CollisionMode.Recursion, _vm.Strategy.CollisionMode);
+        Assert.True(_vm.Strategy.IsRecursion);
+        Assert.False(_vm.Strategy.IsOneRun);
+        Assert.Equal(MillingProject.DefaultCollisionRatio, _vm.Strategy.RecursionRatio);
+        Assert.Equal(MillingProject.DefaultCollisionRatio, _vm.Strategy.OneRunRatio);
+
+        var raised = new List<string?>();
+        _vm.Strategy.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        _vm.Strategy.CollisionMode = CollisionMode.OneRun;
+        Assert.Equal(CollisionMode.OneRun, _vm.Project.Current.CollisionMode);
+        Assert.True(_vm.Project.IsDirty);
+        Assert.False(_vm.Strategy.IsRecursion);
+        Assert.True(_vm.Strategy.IsOneRun);
+        Assert.Contains(nameof(StrategySelectionViewModel.IsRecursion), raised);
+        Assert.Contains(nameof(StrategySelectionViewModel.IsOneRun), raised);
+
+        _vm.Strategy.RecursionRatio = 4f;
+        Assert.Equal(4f, _vm.Project.Current.RecursionRatio);
+        Assert.Null(_vm.Strategy.RecursionRatioError);
+        _vm.Strategy.RecursionRatio = -1f;
+        Assert.NotNull(_vm.Strategy.RecursionRatioError);
+        Assert.Contains(nameof(StrategySelectionViewModel.RecursionRatioError), raised);
+        _vm.Strategy.OneRunRatio = float.NaN;
+        Assert.NotNull(_vm.Strategy.OneRunRatioError);
+        _vm.Strategy.OneRunRatio = 0f;
+        Assert.Null(_vm.Strategy.OneRunRatioError);
+
+        _vm.NewProjectCommand.Execute(null);
+        Assert.Equal(CollisionMode.Recursion, _vm.Strategy.CollisionMode);
+        Assert.True(_vm.Strategy.IsRecursion);
+        Assert.Equal(MillingProject.DefaultCollisionRatio, _vm.Strategy.RecursionRatio);
+        Assert.Equal(MillingProject.DefaultCollisionRatio, _vm.Strategy.OneRunRatio);
+        Assert.Null(_vm.Strategy.RecursionRatioError);
+        Assert.Null(_vm.Strategy.OneRunRatioError);
     }
 
     [Fact]

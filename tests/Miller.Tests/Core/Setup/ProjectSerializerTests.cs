@@ -62,6 +62,9 @@ public sealed class ProjectSerializerTests
         PostProcessorId = "grbl",
         CutScope = CutScope.Separation,
         MinIslandVolume = 120.5f,
+        CollisionMode = CollisionMode.OneRun,
+        RecursionRatio = 3.5f,
+        OneRunRatio = 0.25f,
     };
 
     [Fact]
@@ -125,6 +128,10 @@ public sealed class ProjectSerializerTests
         Assert.Equal(original.PostProcessorId, copy.PostProcessorId);
         Assert.Equal(CutScope.Separation, copy.CutScope);
         Assert.Equal(120.5f, copy.MinIslandVolume);
+        Assert.Equal(CollisionMode.OneRun, copy.CollisionMode);
+        Assert.Equal(3.5f, copy.RecursionRatio);
+        Assert.Equal(0.25f, copy.OneRunRatio);
+        Assert.Contains("\"CollisionMode\": \"OneRun\"", json);
 
         Assert.Equal(original.Tool.Name, copy.Tool.Name);
         Assert.Equal(original.Tool.CutterDiameter, copy.Tool.CutterDiameter);
@@ -225,6 +232,59 @@ public sealed class ProjectSerializerTests
         var project = ProjectSerializer.Deserialize("{ \"SchemaVersion\": 1 }");
         Assert.Equal(6f, project.Tool.CutterDiameter);
         Assert.Equal(MillingProject.DefaultRoutingStrategyId, project.RoutingStrategyId);
+    }
+
+    // A file written before the collision modes (T-151) loads recursion with the default ratios.
+    [Fact]
+    public void Deserialize_WithoutCollisionFields_LoadsTheDefaults()
+    {
+        var project = ProjectSerializer.Deserialize("{ \"SchemaVersion\": 3, \"CutScope\": \"Separation\" }");
+        Assert.Equal(CollisionMode.Recursion, project.CollisionMode);
+        Assert.Equal(MillingProject.DefaultCollisionRatio, project.RecursionRatio);
+        Assert.Equal(MillingProject.DefaultCollisionRatio, project.OneRunRatio);
+        Assert.Equal(10f, MillingProject.DefaultCollisionRatio);
+    }
+
+    // A file written before the holding bridges loads the defaults; set values round-trip.
+    [Fact]
+    public void Bridges_LoadTheDefaultsWhenMissing_AndRoundTrip()
+    {
+        var old = ProjectSerializer.Deserialize("{ \"SchemaVersion\": 3, \"CutScope\": \"Separation\" }");
+        Assert.Equal(MillingProject.DefaultBridgeCount, old.BridgeCount);
+        Assert.Equal(MillingProject.DefaultBridgeWidth, old.BridgeWidth);
+        Assert.Equal(MillingProject.DefaultBridgeHeight, old.BridgeHeight);
+
+        var original = FullyCustomized();
+        original.BridgeCount = 6;
+        original.BridgeWidth = 0.8f;
+        original.BridgeHeight = 0.45f;
+        var copy = ProjectSerializer.Deserialize(ProjectSerializer.Serialize(original));
+        Assert.Equal(6f, copy.BridgeCount);
+        Assert.Equal(0.8f, copy.BridgeWidth);
+        Assert.Equal(0.45f, copy.BridgeHeight);
+    }
+
+    [Fact]
+    public void RoundTrip_KeepsTheScaleAndTheLink()
+    {
+        var original = FullyCustomized();
+        original.Models[0].Scale = new Vector3(1.25f, 0.5f, 3f);
+        original.Models[0].LinkedScale = false;
+        var model = Assert.Single(ProjectSerializer.Deserialize(ProjectSerializer.Serialize(original)).Models);
+        Assert.Equal(new Vector3(1.25f, 0.5f, 3f), model.Scale);
+        Assert.False(model.LinkedScale);
+    }
+
+    // A file written before the scale existed loads every model at factor one, linked.
+    [Fact]
+    public void Deserialize_ModelWithoutScale_LoadsFactorOneLinked()
+    {
+        var project = ProjectSerializer.Deserialize(
+            "{ \"SchemaVersion\": 3, \"Models\": [ { \"StlPath\": \"a.stl\", \"Offset\": { \"X\": 1, \"Y\": 2, \"Z\": 3 }, \"RotationZ\": 15 } ] }");
+        var model = Assert.Single(project.Models);
+        Assert.Equal(Vector3.One, model.Scale);
+        Assert.True(model.LinkedScale);
+        Assert.Equal(new Vector3(1, 2, 3), model.Offset);
     }
 
     [Fact]

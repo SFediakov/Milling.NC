@@ -2,8 +2,9 @@
 
 /* Turns tool positions into segments (RouteWriter). A cut follows the surface polyline: level,
  * rising and gently descending parts are feeds, a descent steeper than MN_MAX_RAMP_SLOPE is a feed
- * over the lower point and a plunge. A travel takes that polyline or a retract to safe Z, a rapid and
- * a plunge, whichever the rates make faster; the program starts with a plunge from safe Z. */
+ * over the lower point and a plunge; a part on the safe plane (a floor lifted over uncut stock) is a
+ * rapid. A travel takes that polyline or a retract to safe Z, a rapid and a plunge, whichever the
+ * rates make faster; the program starts with a plunge from safe Z. */
 
 #define MN_WRITER_LEVEL_EPSILON 1e-5f
 #define MN_MAX_RAMP_SLOPE 2.0f
@@ -12,11 +13,63 @@ struct mn_writer {
     mn_parameters parameters;
     float safe_z;
     mn_segments path;
+    mn_marks marks;
     mn_points buffer;
     mn_segments scratch;
     int has_position;
     mn_v3 position;
+    const float* material;
+    const mn_profile* profile;
+    float cutter_radius;
+    float cutter_length;
 };
+
+void mn_writer_guard(mn_writer* writer, const float* material, const mn_profile* profile, float cutter_radius, float cutter_length)
+{
+    writer->material = material;
+    writer->profile = profile;
+    writer->cutter_radius = cutter_radius;
+    writer->cutter_length = cutter_length;
+}
+
+/* Whether the head clears the material at one tool position. */
+static int head_clears(const mn_writer* w, const mn_grid* g, mn_v3 tip)
+{
+    int ci = mn_cell_i(g, tip.x);
+    int cj = mn_cell_j(g, tip.y);
+    float head_bottom = tip.z + w->cutter_length;
+    for (int o = 0; o < w->profile->annulus_count; o++) {
+        int i = ci + w->profile->annulus[o].dx;
+        int j = cj + w->profile->annulus[o].dy;
+        if (!mn_in_bounds(g, i, j)) {
+            continue;
+        }
+        float z = w->material[j * g->width + i];
+        if (z > head_bottom + w->profile->annulus[o].dz + MN_COLLISION_TOLERANCE) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* Whether the head clears the material along every segment of the polyline. */
+static int polyline_clears(const mn_writer* w, const mn_grid* g, const mn_segment* segments, int count)
+{
+    float spacing = mn_max(g->cell_size, w->cutter_radius);
+    for (int k = 0; k < count; k++) {
+        mn_v3 a = mn_v3_make(segments[k].start_x, segments[k].start_y, segments[k].start_z);
+        mn_v3 b = mn_v3_make(segments[k].end_x, segments[k].end_y, segments[k].end_z);
+        float length = mn_v3_distance(a, b);
+        int samples = length > 0 ? mn_f2i(ceilf(length / spacing)) : 0;
+        for (int n = 0; n <= samples; n++) {
+            mn_v3 tip = samples == 0 ? a : mn_v3_lerp(a, b, (float)n / (float)samples);
+            if (!head_clears(w, g, tip)) {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
 
 int mn_segments_push(mn_segments* list, mn_segment segment)
 {
@@ -39,6 +92,51 @@ void mn_segments_free(mn_segments* list)
     list->items = NULL;
     list->count = 0;
     list->capacity = 0;
+}
+
+int mn_marks_push(mn_marks* list, int segment, float level)
+{
+    if (list->count == list->capacity) {
+        int capacity = list->capacity == 0 ? 16 : list->capacity * 2;
+        int* segments = (int*)realloc(list->segment, (size_t)capacity * sizeof(int));
+        float* levels = (float*)realloc(list->level, (size_t)capacity * sizeof(float));
+        if (segments != NULL) {
+            list->segment = segments;
+        }
+        if (levels != NULL) {
+            list->level = levels;
+        }
+        if (segments == NULL || levels == NULL) {
+            return mn_fail(MN_ERR_MEMORY, "Out of memory for %d layer marks.", capacity);
+        }
+        list->capacity = capacity;
+    }
+    list->segment[list->count] = segment;
+    list->level[list->count] = level;
+    list->count++;
+    return MN_OK;
+}
+
+void mn_marks_free(mn_marks* list)
+{
+    free(list->segment);
+    free(list->level);
+    list->segment = NULL;
+    list->level = NULL;
+    list->count = 0;
+    list->capacity = 0;
+}
+
+int mn_writer_mark(mn_writer* writer, float level)
+{
+    mn_marks* m = &writer->marks;
+    if (m->count > 0 && m->segment[m->count - 1] == writer->path.count) {
+        m->count--;
+    }
+    if (m->count > 0 && m->level[m->count - 1] == level) {
+        return MN_OK;
+    }
+    return mn_marks_push(m, writer->path.count, level);
 }
 
 static mn_v3 seg_start(const mn_segment* s) { return mn_v3_make(s->start_x, s->start_y, s->start_z); }
@@ -82,6 +180,7 @@ MN_API void mn_writer_free(mn_writer* writer)
         return;
     }
     mn_segments_free(&writer->path);
+    mn_marks_free(&writer->marks);
     mn_segments_free(&writer->scratch);
     mn_points_free(&writer->buffer);
     free(writer);
@@ -108,6 +207,23 @@ static float minutes(const mn_writer* w, const mn_segment* segments, int count)
     return total;
 }
 
+/* A level or rising part of the polyline: a feed below the safe plane, a rapid on it. The polyline
+ * of one move lies on its chord, so consecutive rapids on the plane join into one. */
+static int push_along(const mn_writer* w, mn_segments* segments, mn_v3 a, mn_v3 b)
+{
+    if (!(a.z >= w->safe_z && b.z >= w->safe_z)) {
+        return mn_segments_push(segments, make_segment(a, b, MN_MOVE_FEED, w->parameters.feed_rate));
+    }
+    mn_segment* last = segments->count > 0 ? &segments->items[segments->count - 1] : NULL;
+    if (last != NULL && last->kind == MN_MOVE_RAPID && mn_v3_equal(seg_end(last), a)) {
+        last->end_x = b.x;
+        last->end_y = b.y;
+        last->end_z = b.z;
+        return MN_OK;
+    }
+    return mn_segments_push(segments, make_segment(a, b, MN_MOVE_RAPID, w->parameters.rapid_rate));
+}
+
 static int cut(mn_writer* w, mn_v3 from, mn_v3 to, const mn_route_grid* grid, mn_segments* segments)
 {
     w->buffer.count = 0;
@@ -127,12 +243,12 @@ static int cut(mn_writer* w, mn_v3 from, mn_v3 to, const mn_route_grid* grid, mn
         if (drop > MN_WRITER_LEVEL_EPSILON && drop > MN_MAX_RAMP_SLOPE * planar) {
             if (planar > 0) {
                 mn_v3 over = mn_v3_make(next.x, next.y, at.z);
-                MN_CHECK(mn_segments_push(segments, make_segment(at, over, MN_MOVE_FEED, w->parameters.feed_rate)));
+                MN_CHECK(push_along(w, segments, at, over));
                 at = over;
             }
             MN_CHECK(mn_segments_push(segments, make_segment(at, next, MN_MOVE_PLUNGE, w->parameters.plunge_rate)));
         } else {
-            MN_CHECK(mn_segments_push(segments, make_segment(at, next, MN_MOVE_FEED, w->parameters.feed_rate)));
+            MN_CHECK(push_along(w, segments, at, next));
         }
         at = next;
     }
@@ -156,6 +272,9 @@ int mn_writer_travel_to(mn_writer* w, mn_v3 to, const mn_route_grid* grid)
     w->scratch.count = 0;
     MN_CHECK(cut(w, from, to, grid, &w->scratch));
     float along = minutes(w, w->scratch.items, w->scratch.count);
+    if (w->material != NULL && !polyline_clears(w, &grid->g, w->scratch.items, w->scratch.count)) {
+        along = INFINITY;
+    }
     mn_v3 up = mn_v3_make(from.x, from.y, w->safe_z);
     mn_v3 over = mn_v3_make(to.x, to.y, w->safe_z);
     mn_segment retract[3];
@@ -195,27 +314,37 @@ int mn_writer_has_position(const mn_writer* writer, mn_v3* position)
     return writer->has_position;
 }
 
-/* Finish: the retract to safe Z, then the segments move to `result`. */
-int mn_writer_take(mn_writer* w, mn_segments* result)
+int mn_writer_take(mn_writer* w, mn_segments* result, mn_marks* marks)
 {
     if (w->has_position) {
         mn_v3 last = w->position;
         MN_CHECK(add(w, make_segment(last, mn_v3_make(last.x, last.y, w->safe_z), MN_MOVE_RAPID, w->parameters.rapid_rate)));
     }
+    /* A mark after the last segment belongs to a route that wrote nothing. */
+    while (w->marks.count > 0 && w->marks.segment[w->marks.count - 1] >= w->path.count) {
+        w->marks.count--;
+    }
     *result = w->path;
     memset(&w->path, 0, sizeof(w->path));
+    if (marks != NULL) {
+        mn_marks_free(marks);
+        *marks = w->marks;
+        memset(&w->marks, 0, sizeof(w->marks));
+    } else {
+        w->marks.count = 0;
+    }
     return MN_OK;
 }
 
 MN_API int32_t mn_writer_travel(mn_writer* writer, const float* to, const mn_grid* grid, const float* floor)
 {
-    mn_route_grid route = { *grid, floor };
+    mn_route_grid route = { *grid, floor, floor };
     return mn_writer_travel_to(writer, mn_v3_make(to[0], to[1], to[2]), &route);
 }
 
 MN_API int32_t mn_writer_follow(mn_writer* writer, const float* to, const mn_grid* grid, const float* floor)
 {
-    mn_route_grid route = { *grid, floor };
+    mn_route_grid route = { *grid, floor, floor };
     return mn_writer_follow_to(writer, mn_v3_make(to[0], to[1], to[2]), &route);
 }
 
@@ -236,7 +365,7 @@ MN_API int32_t mn_writer_count(const mn_writer* writer) { return writer->path.co
 MN_API int32_t mn_writer_finish(mn_writer* writer, mn_segment** segments, int32_t* count)
 {
     mn_segments result;
-    MN_CHECK(mn_writer_take(writer, &result));
+    MN_CHECK(mn_writer_take(writer, &result, NULL));
     *segments = result.items != NULL ? result.items : (mn_segment*)mn_alloc(1, sizeof(mn_segment));
     *count = result.count;
     return MN_OK;

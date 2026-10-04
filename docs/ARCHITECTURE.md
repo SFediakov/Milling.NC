@@ -15,13 +15,16 @@ list that implements it is in `docs/DEVELOPMENT_GUIDE.md`.
 | G4 | Slicer decomposing the STL into separate milling steps | `src/Miller.Core/Slicing/Slicer.cs`, `src/Miller.Core/Slicing/MillingStep.cs` |
 | G5 | Cutter diameter and cutter length before the head ("glowica") of larger diameter | `src/Miller.Core/Setup/ToolDefinition.cs`, `src/Miller.Core/HeightMap/HeadClearance.cs`, `src/Miller.App/Views/ToolSettingsView.axaml` |
 | G6 | Change processing speed | `src/Miller.Core/Setup/CuttingParameters.cs` (feed, plunge, rapid, spindle), `src/Miller.App/Views/CuttingParametersView.axaml` |
-| G7 | Clearance of passes | `src/Miller.Core/Setup/CuttingParameters.cs` (stepover, finishing stepover, stepdown, safe height) |
+| G7 | Clearance of passes | `src/Miller.Core/Setup/CuttingParameters.cs` (stepover, finishing stepover, stepdown, far stepdown, safe height) |
 | G8 | Stock material: cubic, rectangular, circular 3D forms with dimensions | `src/Miller.Core/Setup/StockDefinition.cs`, `src/Miller.Core/Simulation/StockModel.cs`, `src/Miller.App/Views/StockSettingsView.axaml` |
 | G9 | Axis positioning, direction and rotation | `src/Miller.Core/Setup/AxisSetup.cs`, `src/Miller.App/Views/AxisSettingsView.axaml` |
 | G10 | Simulation preview of head movement and material removal, speed 0.1x to 1000x | `src/Miller.Core/Simulation/SimulationEngine.cs`, `src/Miller.Core/Simulation/MaterialRemover.cs`, `src/Miller.Core/Simulation/SimulationClock.cs`, `src/Miller.App/Rendering/HeightMapRenderer.cs`, `src/Miller.App/Rendering/ToolRenderer.cs`, `src/Miller.App/Views/SimulationControlsView.axaml` |
 | G11 | Preview of the final cut model including inaccuracy and uncuttable areas | `src/Miller.Core/Analysis/FinalModelAnalyzer.cs`, `src/Miller.Core/Analysis/UncuttableRegions.cs`, `src/Miller.App/Views/AnalysisView.axaml` |
 | G12 | Modular, exchangeable routing algorithms | `src/Miller.Core/Toolpath/IToolpathStrategy.cs`, `src/Miller.Core/Toolpath/StrategyRegistry.cs`, `src/Miller.Core/Toolpath/Strategies/ZLayerByLayerStrategy.cs`, `src/Miller.Core/Toolpath/Strategies/ThreeAxisFreedomStrategy.cs` |
 | G13 | Connect to the CNC and run the prepared program, each command only after the previous one is confirmed | `src/Miller.Machine/MachineController.cs`, `src/Miller.Application/Services/MachineService.cs`, `src/Miller.App/Views/MachineView.axaml` |
+| G14 | Collision summary window at the end of the generation; head and rapid collisions marked on the analysis in their own colors | `src/Miller.Native/src/mn_collision.c`, `src/Miller.Application/Services/CollisionService.cs`, `src/Miller.App/ViewModels/AnalysisViewModel.cs`, `src/Miller.App/Services/ConfirmDialogService.cs` |
+| G15 | Collision handling of the generation: dynamic check, recursion with the X ratio, one run with the Y ratio, chosen on the Strategy tab | `src/Miller.Native/src/mn_collision.c`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_solver.c`, `src/Miller.App/ViewModels/StrategySelectionViewModel.cs` |
+| G16 | Holding bridges in the separation scope: every part the trench frees at the floor keeps `BridgeCount` bridges (default 4, one per direction sector, at the shortest crossing) of `BridgeWidth` (0.5 mm) and `BridgeHeight` (0.3 mm) to the standing stock; their cells carry the status `Bridge` and the strategy tip is lifted over them | `src/Miller.Native/src/mn_bridges.c`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.App/ViewModels/StrategySelectionViewModel.cs` |
 
 Project rules that constrain the design (root `CLAUDE.md`):
 
@@ -190,9 +193,9 @@ placeholder; the task that implements it is written in the placeholder header.
 | Setup | `ToolDefinition.cs` | `CutterDiameter`, `CutterLength` (usable length below the head), `HeadDiameter` (> cutter), `TipType` (Flat, Ball), `Name` |
 | Setup | `StockDefinition.cs` | `Shape` (Box, Cylinder); Box: `SizeX`, `SizeY`, `SizeZ`; Cylinder: `Diameter`, `Height`; `Placement` (AutoFitWithMargin, Explicit) and `Margin`; auto-fit alignment of the model union per axis `AlignX`, `AlignY`, `AlignZ` (`StockAlignment` Min, Center, Max; defaults Center, Center, Max) |
 | Setup | `AxisSetup.cs` | Mapping of model axes to machine X, Y, Z; direction sign per axis; rotation angles (degrees) about X, Y, Z; `OriginMode` (StockCornerMinXYMinZ, StockCornerMinXYTopZ, StockCenterTopZ, Custom); `ToMatrix()` |
-| Setup | `CuttingParameters.cs` | `FeedRate`, `PlungeRate`, `RapidRate` (mm/min), `SpindleRpm`, `Stepover`, `Stepdown`, `SafeHeight`, `CellSize`, `Tolerance`, `MillingDirection` (Zigzag, OneWay) |
-| Setup | `MillingProject.cs` | Aggregate of all setup objects + `Models` (list of `ModelPlacement`), `RoutingStrategyId`, `PostProcessorId`, `CutScope` (Everything, Separation), `MinIslandVolume` (mm3, separation only), `ReachPercent` (reach rule, default 50); JSON serializable, schema 3 (the legacy strategy id `three-axis-precise` is mapped to `three-axis-freedom` on load (schema 1 `StlPath`, schema 2 `RoughingStrategyId`, `FinishingStrategyId` and `Parameters.Direction` are read and dropped on load) |
-| Setup | `ModelPlacement.cs`, `ModelLayout.cs` | One STL with offset and rotation about Z; the layout places every model (orientation, rotation, offset), takes machine zero from the stock corner around the anchor (`AnchorBounds`: the union of the models before their offsets, so an offset moves a model inside the stock) and merges the machine meshes; `StockBoundsMachine` is the stock box in machine space (corner at minus the origin offset), `AlignedOffset` puts one model at the stock minimum, middle or maximum per axis in one step |
+| Setup | `CuttingParameters.cs` | `FeedRate`, `PlungeRate`, `RapidRate` (mm/min), `SpindleRpm`, `Stepover`, `Stepdown`, `FarStepdown` (0 for none, otherwise a whole multiple of the stepdown: the far area of every group of levels cut in one step), `SafeHeight`, `CellSize`, `Tolerance`, `MillingDirection` (Zigzag, OneWay) |
+| Setup | `MillingProject.cs` | Aggregate of all setup objects + `Models` (list of `ModelPlacement`), `RoutingStrategyId`, `PostProcessorId`, `CutScope` (Everything, Separation), `MinIslandVolume` (mm3, separation only), `BridgeCount`, `BridgeWidth`, `BridgeHeight` (holding bridges, separation only, defaults 4, 0.5 mm, 0.3 mm), `ReachPercent` (reach rule, default 50); JSON serializable, schema 3 (the legacy strategy id `three-axis-precise` is mapped to `three-axis-freedom` on load (schema 1 `StlPath`, schema 2 `RoughingStrategyId`, `FinishingStrategyId` and `Parameters.Direction` are read and dropped on load) |
+| Setup | `ModelPlacement.cs`, `ModelLayout.cs` | One STL with offset, rotation about Z and a scale factor per axis (`LinkedScale`: one factor for all three, editing rule only); the layout places every model (orientation, scale and rotation around the oriented center, offset), takes machine zero from the stock corner around the anchor (`AnchorBounds`: the union of the models before their offsets, so an offset moves a model inside the stock) and merges the machine meshes; `StockBoundsMachine` is the stock box in machine space (corner at minus the origin offset), `AlignedOffset` puts one model at the stock minimum, middle or maximum per axis in one step |
 | Setup | `MillingPreset.cs` | Named copy of Tool, Axes, Parameters, `RoutingStrategyId`, `PostProcessorId`, `CutScope`, `MinIslandVolume`, `ReachPercent`; `FromProject`, `ApplyTo` (deep copies through the project JSON options) |
 | Setup | `ProjectSerializer.cs` | `System.Text.Json` read/write with invariant culture and schema version |
 | HeightMap | `HeightMap.cs` | Uniform grid: `OriginX`, `OriginY`, `CellSize`, `Width`, `Height`, `float[] Z`; `float.NaN` = no material / outside stock; cell-world conversions; `Clone()`; `Min()`, `Max()` |
@@ -217,8 +220,10 @@ placeholder; the task that implements it is written in the placeholder header.
 | Toolpath | `CaveTree.cs` | Level masks as a forest of caves: 8-connected components per level, each hanging under the component of the level above that contains it (masks are nested because the reach floor is monotone) |
 | Toolpath | `RouteWriter.cs` | Node order to segments: cuts follow `SurfacePath` (feeds; a descent steeper than `MaxRampSlope` becomes a feed over the point and a plunge), travels take the polyline or a retract by time, plunge from safe Z at the start, retract at the end |
 | Toolpath | `GougeChecker.cs` | Verifies no feed segment goes below the tip map (used by tests and analysis) |
-| Toolpath | `ToolpathSimplifier.cs` | Vector output: every run of consecutive feed segments at one rate is reduced by Douglas-Peucker to the vertices needed within `Tolerance`, then a merge pass drops kept vertices whose neighbours' chord still holds; a chord is also rejected when it dips below the effective tip map; rapids, plunges and run end points are untouched |
-| Toolpath/Strategies | `ZLayerByLayerStrategy.cs` | Id `z-layer-by-layer` (default). Cave by cave: the nodes of a cave at its level (`NodeLattice` at `Stepover`) in the order `RouteSolver` finds over the material as it stands then, one level down in place, the children before the next sibling, a rise only when a subtree is done |
+| Toolpath | `ToolpathSimplifier.cs` | Vector output: every run of consecutive feed segments at one rate is reduced by Douglas-Peucker to the vertices needed within `Tolerance`, then a merge pass drops kept vertices whose neighbours' chord still holds; a chord is also rejected when it dips below the effective tip map; rapids, plunges, run end points and layer marks are untouched |
+| Toolpath | `SlowZones.cs` | The turn fine in the toolpath (native `mn_slow.c`): every movement (a run of feeds straight on in XY) gets its first and last 5 mm of XY travel at a third of the feed rate, a movement up to 10 mm wholly; rapids, plunges, feeds without XY travel and direction changes end a movement; run after the simplifier |
+| Toolpath | `ToolpathLayer.cs` | One layer of a generated toolpath: first segment index and plan level of a run of consecutive routes at that level, in path order |
+| Toolpath/Strategies | `ZLayerByLayerStrategy.cs` | Id `z-layer-by-layer` (default). Cave by cave: the nodes of a cave at its level (`NodeLattice` at `Stepover`) in the order `RouteSolver` finds over the material as it stands then, one level down in place, the children before the next sibling, a rise only when a subtree is done; with a far stepdown the levels form groups and the far region of a group's bottom level is routed first, in steps within the cutter length over regions kept clear of the head (guide 6.4) |
 | Toolpath/Strategies | `ThreeAxisFreedomStrategy.cs` | Id `three-axis-freedom` ("3 axis freedom"). One free route per level of the plan over the coverage cells whose tip lies below the previous level, on the `FinishingStepover` lattice plus every cell where the level map `max(tip, level)` steps by more than `Tolerance`, each at `max(tip, level)`; moves follow the surface polyline over the level map, so no pass cuts deeper than one `Stepdown` and the last visit of a cell is at its tip |
 | GCode | `GCodeFormatter.cs` | Invariant number formatting, 3 decimals, trailing zero trimming |
 
@@ -232,9 +237,9 @@ placeholder; the task that implements it is written in the placeholder header.
 | `RouteCost.cs` | `XySpeedFactor = 3`, `ZSpeedFactor = 1`; exact cost = XY / 3 + climb of the polyline; lower bound = XY / 3 + height difference |
 | `RouteBudget.cs` | `MaxEvaluations = 40,000,000` candidate moves per program, shared by all route instances in proportion to their nodes |
 | `SpatialBuckets.cs` | Uniform buckets for k-nearest and nearest-unvisited ring searches |
-| `RouteSolver.cs` | `Solve(problem, start, budget, allowance, cancellation)`: candidate lists (10 planar-nearest with exact costs), the cheaper of the nearest-neighbour walk and the smooth walk (each step scored with the cheapest next step, turn fine included), then `LocalSearch`; deterministic; `PathCost` = travel + turn fine |
+| `RouteSolver.cs` | `Solve(problem, start, budget, allowance, cancellation)`: candidate lists (10 planar-nearest with exact costs), the cheapest of the nearest-neighbour walk, the smooth walk (each step scored with the cheapest next step, turn fine included) and the sweeps along X and Y, then `LocalSearch`; deterministic; `PathCost` = travel + turn fine |
 | `LocalSearch.cs` | 2-opt and Or-opt (segments of 1 to 3) on an open path with a fixed first node, don't-look bits, current edge costs and XY lengths kept, the fined status of every node kept current, the exact fine change of every move, free edges bounded from below before an exact trace, a direct-mapped pair-cost cache, segment moves as two or three reversals |
-| `TurnFine.cs` | Turn fine: XY turn above 35 degrees fined unless four consecutive nodes form a real arc (one circle within half a cell, same side, both turns below 90 degrees); 5 mm before and after at 0.3 of the speed, overlaps once, route ends clip; `IsFined`, `SlowLength`, `Fine` |
+| `TurnFine.cs` | Turn fine (T-153): every node where the XY direction changes (any angle, circles included; straight within a sine of 0.001) slows 5 mm before and after at 0.3 of the speed, overlaps once, route ends clip; `IsFined`, `SlowLength`, `Fine`, `Overlap` |
 | `FineWindow.cs` | `PathView` (a route as up to four forward or reversed pieces of a base order) and `FineWindow` (the part of the slow length that depends on the changed nodes; stretches between them walked once up to 10 mm and shared by every view) |
 | GCode | `IPostProcessor.cs` | `Id`, `DisplayName`, `FileExtension`, `Write(Toolpath, MillingProject, TextWriter)` |
 | GCode | `PostProcessorRegistry.cs` | Explicit static list; `GetById`, `All` |
@@ -242,10 +247,11 @@ placeholder; the task that implements it is written in the placeholder header.
 | Simulation | `StockModel.cs` | Stock `HeightMap` from `StockDefinition` (cylinder: NaN outside the circle), positioned relative to the model per `AxisSetup` |
 | Simulation | `MaterialRemover.cs` | Sweeps one segment: samples at most `CellSize / 2` apart; per sample `stock = min(stock, z + dz)` over the footprint; returns the dirty rectangle |
 | Simulation | `SimulationClock.cs` | Speed factor clamped to [0.1, 1000]; `Advance(realSeconds) -> simSeconds`; pause; `Seek(simSeconds)` |
-| Simulation | `SimulationEngine.cs` | Position along the toolpath (segment index + distance), `Step(simSeconds)`, `SeekTo(length)` (forward, by path length), `RunToEnd()`, `Reset()`, current tool position, progress, `ElapsedSeconds` |
-| Simulation | `CollisionDetector.cs` | Head annulus vs current stock, rapid move into material; emits `SimulationEvent` |
+| Simulation | `SimulationEngine.cs` | Position along the toolpath (segment index + distance), `Step(simSeconds)`, `SeekTo(length)` (forward, by path length), `SeekToSegment(index)` (forward, whole segments), `RunToEnd()`, `Reset()`, current tool position, progress, `ElapsedSeconds` |
+| Simulation | `CollisionDetector.cs` | Head annulus vs current stock, rapid move into material; emits `SimulationEvent` and reports every entered cell with the tool surface height there |
+| Simulation | `CollisionRecorder.cs` | Collisions of one run: one event per segment and kind (shared by the simulation panel and the collision check), per stock cell `CollisionContact` (None, Stock, Model: the tool surface lay below the model surface), the segments that entered the model; `Report()` gives a `CollisionReport` |
 | Simulation | `SimulationEvent.cs` | Kind (HeadCollision, RapidIntoMaterial), segment index, position |
-| Analysis | `DeviationMap.cs` | `stock - model` per cell where model exists; category per cell (Ok, RestMaterial, Gouge, NoModel) |
+| Analysis | `DeviationMap.cs` | `stock - model` per cell where model exists; category per cell (Ok, RestMaterial, Gouge, NoModel); the overlay categories Overhang, HeadLimited, CornerLimited, CollisionModel, CollisionStock |
 | Analysis | `FinalModelAnalyzer.cs` | Builds `DeviationMap` from the final stock; statistics (rest volume, gouge volume, area fractions) |
 | Analysis | `UncuttableRegions.cs` | Masks: Overhang (downward-facing surface below the top surface), HeadLimited (from `HeadClearance`), CornerLimited (tip-derived surface above model by more than tolerance) |
 
@@ -267,10 +273,11 @@ placeholder; the task that implements it is written in the placeholder header.
 |---|---|
 | `Services/ProjectService.cs` | Current `MillingProject`, change notification, new/load/save via `ProjectSerializer` |
 | `Services/MeshImportService.cs` | Loads STL files through `StlReader`, validates (non-empty, finite bounds), keeps one `Mesh` per model placement in project order |
-| `Services/PipelineService.cs` | mesh -> `AxisSetup` transform -> stock (aligned to `ModelLayout.AnchorBoundsMachine`) -> model map -> tip map -> head limit -> slice plan -> cut scope -> routing strategy -> simplifier -> statistics; progress and cancellation |
+| `Services/PipelineService.cs` | mesh -> `AxisSetup` transform -> stock (aligned to `ModelLayout.AnchorBoundsMachine`) -> model map -> tip map -> head limit -> slice plan -> cut scope -> routing strategy -> simplifier -> slow zones -> statistics; the layers of the toolpath; progress and cancellation |
 | `Services/ExportService.cs` | Toolpath + project -> post-processor -> `.nc` file |
-| `Services/SimulationService.cs` | Owns `SimulationEngine`, `SimulationClock`, `MaterialRemover`, `CollisionDetector`; `Advance(realSeconds)`; `SeekTo(fraction)` (forward sweeps in place, backward replays from a fresh stock); exposes snapshot (tool position, dirty rectangle, events) |
+| `Services/SimulationService.cs` | Owns `SimulationEngine`, `SimulationClock`, `MaterialRemover`, `CollisionDetector`; `Advance(realSeconds)`; `SeekTo(fraction)`, `SeekToSegment(index)`, `SeekToNextLayer()`, `SeekToPreviousLayer()` (forward sweeps in place, backward replays from a fresh stock); `LayerIndex`, `CompletedLayers`; exposes snapshot (tool position, dirty rectangle, events) |
 | `Services/AnalysisService.cs` | Runs `FinalModelAnalyzer` and `UncuttableRegions` on demand |
+| `Services/CollisionService.cs` | Gate of the collision check cluster: turns the report of the native check that closes every generation pass into a `CollisionCheck`; `Summarize` and `StatusSuffix` give the texts of the summary window and the status bar |
 | `Services/MachineService.cs` | Gate to the machine cluster: link from `MachineConnectionSettings`, one `MachineController` per connection, one console log per session, programs from the generated toolpath (post-processor into memory, answered lines mapped to toolpath segments) or from a file, every machine command |
 | `Services/SettingsService.cs` | User preferences JSON in the per-user application data folder: last folders, window size, last speed factor |
 | `Services/PresetService.cs` | Named `MillingPreset`s in one `presets.json` next to the executable (`AppContext.BaseDirectory`); `Load`, `Save` (replace by name, case-insensitive), `Delete`; a corrupt file throws |
@@ -288,17 +295,17 @@ placeholder; the task that implements it is written in the placeholder header.
 | Styles | `Colors.axaml` | The only file with color literals |
 | Styles | `Theme.axaml` | Control styles referencing `Colors.axaml` resources |
 | Views | `MainWindow.axaml(.cs)` | Menu bar, left settings tabs, central viewport, bottom status bar with progress |
-| Views | `MainMenu.axaml` | File (Open STL, Open Project, Save Project, Save Project As, Export NC, Exit), Toolpath (Generate, Cancel), View (Reset Camera; Show Model, Stock, Toolpath, Tool as check items bound two-way to the viewport flags), Simulation (Play, Pause, Stop, Run To End), Machine (Connect, Disconnect, Start Program, Pause, Resume, Stop, Home, Unlock, Soft Reset), Help (About) |
+| Views | `MainMenu.axaml` | File (Open STL, Open Project, Save Project, Save Project As, Export NC, Exit), Toolpath (Generate, Cancel), View (Reset Camera; Show Model, Stock, Toolpath, Tool as check items bound two-way to the viewport flags), Simulation (Play, Pause, Stop, Run To End, Next Layer, Previous Layer), Machine (Connect, Disconnect, Start Program, Pause, Resume, Stop, Home, Unlock, Soft Reset), Help (About) |
 | Views | `ToolSettingsView.axaml` | Cutter diameter, cutter length, head diameter, tip type |
 | Views | `StockSettingsView.axaml` | Shape, dimensions, placement, margin, fit button |
 | Views | `AxisSettingsView.axaml` | Axis mapping, directions, rotations, origin mode |
 | Views | `PresetsView.axaml` | First tab: preset list, name box, Save, Load, Delete |
 | Views | `ModelsView.axaml` | Model list with add and remove, auto-fit stock alignment per axis (Min, Center, Max), offset and rotation of the selected model, Min, Center and Max per axis |
-| Views | `CuttingParametersView.axaml` | Feed, plunge, rapid, spindle, stepover, stepdown, safe height, cell size, direction |
+| Views | `CuttingParametersView.axaml` | Feed, plunge, rapid, spindle, stepover, stepdown, far stepdown, safe height, cell size, direction |
 | Views | `StrategySelectionView.axaml` | Routing strategy, cut scope, minimum island volume, reach percent, post-processor, Generate button, statistics |
-| Views | `SimulationControlsView.axaml` | Play, pause, stop, step, run-to-end, logarithmic speed slider 0.1 to 1000 with numeric entry, progress bar (a press seeks to that fraction), simulated time, collision counter |
+| Views | `SimulationControlsView.axaml` | Play, pause, stop, step, run-to-end, previous layer and next layer with the layer readout, logarithmic speed slider 0.1 to 1000 with numeric entry, progress bar (a press seeks to that fraction), simulated time, collision counter |
 | Views | `MachineView.axaml` | Machine tab: connection (serial port and baud or host and port), state and position, Home, Unlock, Reset; program (use toolpath, open file, check, outline, start, pause, resume, stop, progress); folded: jog and zero with the touch-plate probe, overrides, console |
-| Views | `AnalysisView.axaml` | Final-model mode toggle, legend (Ok, RestMaterial, Gouge, Overhang, HeadLimited, CornerLimited), statistics |
+| Views | `AnalysisView.axaml` | Final-model mode toggle, uncuttable overlay, collision marks (default on), legend (Ok, RestMaterial, Gouge, Overhang, HeadLimited, CornerLimited, model collision, stock collision), statistics |
 | Views | `AboutWindow.axaml` | Version, licenses pointer |
 | Views | `Viewport3DControl.cs` | `OpenGlControlBase` subclass: init, render, deinit; right drag orbits, wheel drag pans, wheel zooms, double click fits, left press picks a model and drags it in X and Y (ray-plane at the hit height); delegates to `SceneRenderer` |
 | Controls | `NumericBox.cs` | `TextBox` subclass with a float `Value`: typed text is kept as typed, valid text is committed per keystroke, invalid text sets a data validation error, the text is rewritten only on an outside `Value` change |
@@ -318,6 +325,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | Rendering | `SceneRenderer.cs` | Composes the renderers; single place that issues draw calls |
 | Services | `IFileDialogService.cs`, `FileDialogService.cs` | Open/save dialogs via Avalonia `StorageProvider` |
 | Services | `ErrorDialogService.cs` | Shows exceptions from services; writes to `LogService` |
+| Services | `ConfirmDialogService.cs` | Modal questions (Save / Discard / Cancel, Yes / No) and notices with one OK button (the collision summary) |
 | Services | `UiTimer.cs` | 60 Hz `DispatcherTimer` driving `SimulationService.Advance` |
 | Services | `GpuPreference.cs` | Registers the executable for the high performance GPU in the user's DirectX graphics preferences when no entry exists (Windows only; the Linux launchers export `DRI_PRIME=1`) |
 | Converters | `LogSliderConverter.cs` | Slider position <-> speed factor (logarithmic) |
@@ -350,9 +358,12 @@ Mirrors the source tree: `Core/<Folder>/<Type>Tests.cs`,
 
 Every step from the transform to the statistics runs inside the native library
 in one `mn_generate` call (`ToolpathGeneration.Run`); the names below are the
-facades that expose the same step on its own. The head clearance step feeds back
-(T-136): stock above the model that blocks the head becomes should be cut, the
-tip is defined again, and the strategies receive the should-cut mask.
+facades that expose the same step on its own. The first pass runs without any
+head consideration; the dynamic collision check closes every pass and, in
+recursion mode (T-148), its resolution feeds the next pass: stock the head met
+becomes should be removed, positions whose head met the model are forbidden or
+achieved by the X ratio, and the pass repeats while the collisions decrease. One
+run mode (T-150) decides inside the strategies and runs one pass.
 
 ```
 STL file
@@ -362,14 +373,21 @@ STL file
                                 anchor (models before their offsets), so offsets move models inside it
   -> MeshRasterizer ........... model HeightMap (max Z per cell, floor where no model)
   -> ReachMap ................. tip HeightMap: reach floor per position by footprint vote (ReachPercent)
-  -> HeadClearance ............ head-limit HeightMap, effective tip = max(tip, limit)
+  -> raised tips .............. the forbidden positions of the earlier passes (NaN in the first),
+                                effective tip = max(tip, raise); HeadClearance is the facade of the
+                                head limit formula
   -> Slicer ................... SlicePlan (levels with masks, coverage)
   -> SeparationRegion ......... plan restricted to the cut scope, Standing map; strategies see
                                 effective tip = max(effective tip, standing)
   -> StrategyRegistry.GetById(RoutingStrategyId).Generate(context) -> Toolpath
                                 (NodeLattice, CaveTree, RouteSolver, RouteWriter)
-  -> ToolpathSimplifier ....... feed runs reduced to vectors within Tolerance
+  -> ToolpathSimplifier ....... feed runs reduced to vectors within Tolerance (layer marks kept)
+  -> SlowZones ................ first and last 5 mm of every movement at a third of the feed rate
   -> ToolpathStatistics
+  -> mn_check_path ............ dynamic collision check of the pass over a stock clone: events,
+                                entered cells (model or stock only), the cell status byte
+  -> mn_resolve (recursion) ... should-remove marks, forbidden positions, next pass
+  -> CollisionService.Of ...... CollisionReport of the kept pass -> summary window, analysis marks
   -> PostProcessorRegistry.GetById(PostProcessorId).Write(...) -> .nc file
 ```
 
@@ -395,6 +413,12 @@ engine sweeps the part in between, backward it replays from a fresh stock clone
 there). The viewport uploads the stock again afterwards; a simulation that was
 playing continues from the new position.
 
+Next layer and Previous layer (panel and Simulation menu) seek the same way to
+the segment starts of `PipelineResult.Layers`: the start of the next layer (the
+end of the path on the last), or the start of the current layer and then of the
+one before. `SimulationEngine.SeekToSegment` covers whole segments, so the stop
+is exact.
+
 ### 5.3 Final model preview (AnalysisService)
 
 ```
@@ -404,6 +428,7 @@ FinalModelAnalyzer: deviation = stock - model (where model exists)
    dev  >  Tolerance   -> RestMaterial (tool could not reach: corner radius, head limit, cutter length)
    dev  < -Tolerance   -> Gouge (should never happen; indicates a strategy bug)
 UncuttableRegions: Overhang (surface hidden from +Z), HeadLimited, CornerLimited
+CollisionReport of the generation: CollisionModel, CollisionStock laid over every other category
 HeightMapRenderer colors cells by category using Colors.axaml resources.
 ```
 
@@ -454,8 +479,11 @@ file test in `tests/Miller.Tests/Golden/`.
   compiler (Visual Studio Build Tools on Windows, `gcc` and `make` on Linux).
 - Windows start file: `dist/win-x64/Miller.exe`.
 - Linux start file: `dist/linux-x64/Miller.sh` (executable bit set by `build.sh`).
-- Root launchers `Miller.cmd` (Windows) and `Miller.sh` (Linux, Git Bash) run the published
-  binary from `dist/` with the given arguments and refuse with a hint when it is not built.
+- Root launchers: `Miller.cmd` (Windows) runs the Release build from
+  `src/Miller.App/bin/Release/net10.0`, which every `dotnet build` refreshes; `Miller.sh` (Linux,
+  Git Bash) runs the published binary from `dist/`. Both forward the given arguments and refuse
+  with a hint when the binary is not built. `dist/` is kept current by `bash build.sh` after
+  every change.
   `Miller.cmd` starts the window detached so its console closes; a `--` command runs in the
   console and waits for the result.
 - The Linux build also runs on Windows through WSLg; this is not the primary

@@ -38,10 +38,35 @@
 - Serial and TCP links are two transports for two kinds of controller, not a fallback: the user
   chooses one. A settings file written before T-143 has no machine section and loads the machine
   defaults, as a missing settings file loads all defaults.
+- The collision check (T-144) is a cluster without a project of its own: `CollisionRecorder` sits in
+  `Miller.Core/Simulation` and reuses `CollisionDetector` and `SimulationEngine` with the simulation
+  panel, so a defect there reaches both. Its gate `CollisionService` turns every failure except
+  cancellation into a failed `CollisionCheck`; the generated toolpath is kept and the summary names
+  the failure. A separate project would have duplicated the engine, which the no-dual-path rule forbids.
+- The collision handling (T-147 to T-151) is part of the generation cluster, not a cluster of its own:
+  the dynamic check, the recursion and the one run rule live in `src/Miller.Native` beside the
+  pipeline and the strategies they steer (user request: all of it in the C library). `CollisionService`
+  only formats the report; the separate post-generation check of T-144 is gone (user request).
+- The head-limited mask and map of the result now hold the raised positions of the collision
+  handling (recursion: forbidden positions and their propagation; one run: dropped nodes and lifted
+  region cells), not a limit computed before routing; `HeadClearance` stays as the facade of the formula.
+- The holding bridges (separation scope) are part of the generation cluster, not a cluster of their own:
+  `mn_bridges.c` reads the cut scope's strategy tip and replaces the pass plan, so it runs inside the
+  native pass between the cut scope and the routing (user request: all generation in the C library).
+- The model scale (per axis, linked option) is not a cluster of its own: it is one factor of the
+  placement transform in `ModelLayout.TurnMatrix`, which the viewport, the native generation, the
+  alignment and the validator share; a separate cluster would be a second transform path.
 - "Sent only after the previous command's execution is confirmed" is implemented as Grbl's
   send-response protocol: the next line goes after `ok`/`error`, which Grbl sends once it has
   executed the line (a move is then in its planner). Waiting for every move to stop would halt the
   machine at every vertex; the physical end is confirmed once, by `G4 P0` at the end of a program.
+- The far stepdown (T-156) is not a cluster of its own: it is a schedule of the Z layer strategy
+  (groups of levels, the far region first), so it lives in `mn_z_layer`; a separate cluster would
+  need the cave walk twice.
+- The slow zones (T-155, `mn_slow.c`) and the layer marks (T-154) are not clusters of their own:
+  both are stages of the native generation between the simplifier and the statistics (user request:
+  all generation in the C library), and the layer stepping is part of the simulation cluster
+  (`SimulationService`, `SimulationViewModel`), which already owns every seek.
 
 ## Placeholder convention (architecture delivered without implementation)
 
@@ -187,8 +212,14 @@
   third_party/nuget plus build.sh on either system, and Linux checks run on a Linux machine.
 - `Miller.cmd` in the root is the one `.cmd` file (user request: a launcher in the root folder).
   The bash-only rule of the guide covers build and tool scripts; a Windows user double-clicks a
-  `.cmd`, not a `.sh`. `Miller.sh` next to it serves Linux and Git Bash. Both only start
-  `dist/`; they do not build.
+  `.cmd`, not a `.sh`. Since the user's request after T-157 it starts the Release build
+  `src/Miller.App/bin/Release/net10.0/Miller.exe`, which every `dotnet build` refreshes; `Miller.sh`
+  next to it serves Linux and Git Bash and starts `dist/`. Neither builds.
+- Every change must end with the latest version in `dist/win-x64` as well: `dotnet build` refreshes
+  only `src/*/bin`, and `dist/` kept `Build_1.0.106` through four tasks while the user started it,
+  so the new settings were invisible. The last step of a task is `bash build.sh` (or `--no-test`
+  once the suite has passed), and `dist/win-x64/Miller.exe --version` must print the build of the
+  session.
 - Head collisions had two causes, not one: the head limit ignored rest material, and raster rows
   skip the row nearest a wall (row step equals the cutter radius), so a strip beside every wall
   was never cut at all. The fix pairs a profile pass per level (layer-complete strategy, now the
@@ -441,3 +472,148 @@
 - RouteSolverTests compared a route from node 7 with a boustrophedon from node 0, which is not a route
   from node 7. The solver undercut it only while lattice arcs shorter than 10 mm were exempt; the test
   now compares with a serpentine from node 7 (solver 307.7, serpentines 317.4 and 318.1).
+- The dynamic check (T-147) must use CollisionDetector.Tolerance (1e-4), not the project tolerance:
+  with 0.05 the native check reported zero events while the simulation panel showed 59 near-touches
+  within that slack on the box fixture. The project tolerance is the simplifier slack: it decides
+  whether a hit cell is removable (closing + tolerance below the tool surface) and pads every lift.
+- A hit is classified by removability against the closing of the strategy tip, not by the model
+  surface: stock within the tolerance above a model top can never be cut below the head, and marking
+  it should-remove sent the should-cut routes down beside every wall (250 events on the heart after
+  a first pass with 11).
+- Forbidding one ring of positions raises the material the next ring's head meets; without the
+  propagation over the closing of the lifted tips the recursion resolved one ring per pass and hit
+  the 8-pass cap on the heart in separation scope. The propagation must flag with the check's
+  tolerance (1e-4): with 0.05 a head that only touches the closing was let through and hit.
+- The propagation must not read the standing map of the cut scope as material that stays: the
+  separation draws its terraces again every pass from the raised tips, and lifting positions beside
+  the first pass's terraces kept the deep-stock trench at 12 mm instead of the floor. Positions are
+  evaluated at their reach tip (without standing), and the separation takes the raised tip so the
+  trench moves beyond the collar in one pass; the region from the unraised tip left the trench
+  hugging the part and the collar forbade all of it.
+- The X and Y ratios compare the model cells the cutter finishes at a position with the unremovable
+  cells its head meets. "Cells only this position finishes" was tried first and is zero wherever nodes
+  overlap (every node of a 2-cell-wide slot), so Y = 0 still dropped the whole slot.
+- One run needs a floor for the chords, not only a verdict per node: a convex model part reaches into
+  the head ring between two safe nodes 3 mm apart. Every cell of a route's region is evaluated against
+  the material as the routes left it and lifted like a dropped node, and a travel retracts when the
+  polyline's head would meet that material. A static floor from the closing was wrong where the
+  standing stock is above the closing (a model top between two levels that no route visits).
+- A node dropped at one level must be evaluated again at the next: the cells it finishes grow with
+  depth while the damage stays, so Y = 0 must be able to achieve the slot floor that was dropped at
+  the levels above; an achieved node clears an earlier lift of its cell.
+- The count that decides whether the recursion goes on is the entered cells or the unremovable ones
+  among them: forbidding the model hits of pass 1 creates removable stock hits in pass 2 (the raised
+  band stands until its should-cut route), so "entered cells decrease" alone stopped at pass 2 with
+  the collisions of pass 1 kept.
+- Under Git Bash the GUI-subsystem export returns without waiting unless piped; the golden was
+  regenerated with `Miller.exe --export ... | tail -1`.
+- Bug that existed before this session, fixed (hills): the Z-layer lattice covers a level with node
+  footprints only while stepover <= r * sqrt(2); the validator allows stepover up to the diameter, and
+  a 3 mm cutter with the default 3 mm stepover left spikes through every level that the recursion then
+  hit (heart laid flat: 5 passes ending at 990 events, now 3 passes ending at 0). `cover_gaps` adds
+  every region cell no node footprint covers as a node; below that stepover nothing is added.
+- Bug that existed before this session, fixed (safe height): never-cut cells kept the stock top as the
+  route floor, so moves crossed them as feeds on the stock top. The route floor lifts them to the safe
+  plane; parts of a move on the safe plane are rapids. A corner or edge point (`touch` floor) of an
+  uncut cell stays above what must remain there (strategy tip under the raises), not above the stock:
+  the node footprints cut that stock anyway, and lifting corners to the stock top left moves on the
+  top plane (user: nothing may move closer to uncut stock than the safe height). Where what remains
+  reaches the stock top (a flush model top, standing stock), the corner takes the safe plane.
+- Bug that existed before this session, fixed (terraces): the separation widened every level by the
+  widest head radius, a stair step even under a frustum. The head radius at the height the slab
+  stands above the head bottom is used instead, through the separable lower envelope with a negative
+  squared radius per source (power distance), one transform per level. Cylinder output is unchanged.
+- T-153 supersedes the circular, compound and 35 degree rules of T-133 and T-139 above: every direction
+  change is fined. A flat 10 mm per fined node (no overlap) was tried first and is wrong: it bills a
+  1 mm movement as 10 slow mm, and the solver then climbed over material to the safe plane and
+  plunged back instead of following a curved band cell by cell (user's project 19.5 to 169.5 min of
+  length over rate, plunge 212 to 20,709 mm). The union of the zones (a millimetre slow once) keeps the
+  physics of "the first and last 5 mm of a movement".
+- With every turn fined, 2-opt and Or-opt cannot turn a spiral into rows (20 x 20 lattice: 46 turns
+  against the serpentine's 40); the sweep start walks give the rows. Most direction changes of a real
+  route come from outline and should-cut nodes (every such cell is a node), which no order removes.
+- Bug that existed before this session, fixed: `GrblStatus.Parse("<>")` returned an empty state that
+  replaced Idle, so `MachineRobustnessTests.ABrokenStatusReport_IsLogged_AndTheNextOneIsRead("<>")`
+  failed whenever `Run` came before the next poll (about one `build.sh` in two). A report without a
+  state is now a broken report.
+- Found and not changed: 3 axis freedom in separation scope on the heart laid flat (60 x 60 x 25, 6 mm
+  cutter, frustum 10 to 20 over 10, stepdown 0.5) keeps 19288 head events: the recursion keeps pass 2
+  for its fewest entered cells although pass 1 had 4041 events. Same on the build before this session.
+- Removed volume is no measure of the terrace fix while the model is flush with the stock top: the
+  recursion collar beside the model differs per head and dominates (a 24 mm cylinder head never
+  reached the floor there); the test puts the model on the stock bottom.
+- Bug that existed before this session, fixed: `MachineController` completed `Ready` before publishing
+  the snapshot; `Ready` runs continuations asynchronously, so `MachineService.ConnectAsync` sometimes read
+  no error and reported "closed before the controller answered" (about one full test run in four). State
+  is published first, then `Ready` completes; `Ready_CompletesOnlyAfterTheSnapshotCarriesTheOutcome`
+  failed 2 of 3 runs against the old order.
+- Model scale: the factors act on the oriented model axes before the turn about Z; scaling after the
+  turn shears a turned model. `LinkedScale` is an editing rule only, the transform always reads `Scale`.
+- The Z layer strategy cuts every cave flat at its level (`zs = level`) over the plan masks, which the
+  slicer built from the tip before any later lift; lifting only the strategy tip (holding bridges) was
+  ignored by it and the bridges were cut to the floor while 3 axis freedom kept them. A lift after
+  slicing must also take the lifted positions out of the masks below it and give the plan a level at
+  the lifted height.
+- With the 50 percent reach rule the cut band is narrower at convex corners; choosing bridges by the
+  shortest crossing put the bridges of two sectors into one corner. Bridges take the cell nearest the
+  sector centre among crossings at most one cutter diameter longer than the shortest.
+- A ball tip holds the bridge top at cell centres only; between them the simulated stock dips by up to
+  the project tolerance (0.28 against 0.30 measured), the rule the model surface follows as well. A
+  flat tip leaves the bridge exactly at its height.
+- Bug that existed before T-154, fixed: `SimulationService.RunToEnd` left the clock where it was, so
+  the simulated time readout stayed at the old value after Run to end while the progress showed 100
+  percent; it now takes the engine's elapsed time like a seek.
+- A layer mark that falls inside a feed run (a travel along the surface continues the previous
+  route's last chord) must end the run in the simplifier or Douglas-Peucker may drop the vertex and
+  the mark has no segment to point at; on the heart no vertex was dropped that way, the golden was
+  unchanged by the marks.
+- A C constant that must equal a C# `const float` computed from another float is safest as the same
+  double expression cast once on both sides (`(float)((1.0 / factor - 1.0) / 3.0)`); the earlier bit
+  pattern from a hand computation would have to be redone for every change of the factor.
+- The slow zones at route ends are a deliberate difference from the solver's cost: the solver clips
+  them because every order of a route pays them alike, the toolpath pays them because the machine
+  starts and stops there. A route of three 30 mm legs is 20 mm slow for the solver and 30 mm in the
+  .nc file.
+- The heart's outline staircases are movements under 10 mm and run slow over their whole length, so
+  its estimated time went from 4.47 to 10.8 min once the zones were written into the path; the
+  solver had billed exactly that, the statistics only reported length over rate before.
+- "Area at least the stepover from the model" is a rule on material, the strategy works on tool
+  positions: positions at least the stepover from the obstacles of a level (cells whose tip stands
+  above it, which already include the cutter radius round the model) have footprints that cover
+  exactly the material at least the stepover from what stays, and nothing nearer. Tests on the rule
+  compare material within the cutter radius of a far position and beyond radius plus a cell, not
+  the positions themselves.
+- Two strategies' intermediate stocks are compared before the first move that goes below a level,
+  not at the first move ending exactly on the next level: a descent ramps through vertices at
+  intermediate heights (0.875 between levels 1 and 0 on the box), which the exact-level search skips.
+- No single route can go deeper than the cutter length into a flat region, whatever the order of its
+  nodes: the head is wider than the cutter and meets the uncut material ahead of it. A rim terrace
+  around a deep flat pass does not help, the pass itself collides. The far block (T-157) therefore
+  steps by the cutter length with cumulative regions; a first version that routed every far position
+  once at its deepest step dropped two cutter lengths in one go and collided at once.
+- Intended behaviour change of the cave tree (T-157): the parent of a cave is the cave above that
+  holds any of its cells, not the one holding its first cell. With nested masks both are the same;
+  in a group plan a rejoined far cell is the first cell of a near-band cave and has no cave above,
+  which made every near-band cave a root and let the walk cut the deeper band before the shallower.
+- A level sequence read from segment ends counts travel feeds too: the step 3 route travels between
+  the stock corners over the step 2 floor at level 5, so "5" appears between the "3"s. Order tests
+  compare first and last occurrences, not every entry.
+- A short-cutter fixture needs a model lower than the cutter length: beside a 9 mm box a 2 mm cutter
+  under a 7 to 10 mm head cannot cut the near band below 7 at all, the one-run guard then runs into
+  cyclic pairs and the recursion keeps events, with or without a far stepdown. A 2 mm box on the floor
+  of a 9 mm stock keeps the far block hazard (the band and the stock over the box stand at the top)
+  without the impossible wall.
+- Beside the model the collision handling of either mode leaves a few cells differently from one
+  schedule to the next (a cell at 1 against 0 within the head radius of the box, both above the
+  reach floor): tests compare final stocks of different schedules only outside that ring.
+- Moves one cell long along every wall are the tolerance below the cell size, not the solver (T-158):
+  every outline cell is a node, the route visits them in contour order, and the staircase of a wall
+  joins into chords only when the tolerance reaches the cell size, because its corners alternate
+  between two lines one cell apart and Douglas-Peucker chords run vertex to vertex. The fine cannot
+  change that; it only decides the order of nodes the strategy demands. Read the move length
+  distribution of the .nc file before blaming the solver (`nc_stats.py` in the session scratchpad
+  did it: 82 percent of the moves were one cell).
+- An XY simplification floor (one cell, tried for T-158) is unsafe: the chord along the inner
+  corner family shifts the cutter a cell away from the wall and leaves a strip of wall standing at
+  full level height (LevelCoverage and CollisionModes tests), the chord along the outer family
+  gouges. At cell resolution the staircase is the wall; smoother moves cost the tolerance.

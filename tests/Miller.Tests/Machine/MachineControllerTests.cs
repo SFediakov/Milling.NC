@@ -72,6 +72,26 @@ public sealed class MachineControllerTests
         Assert.Contains("No Grbl controller answered", controller.Snapshot.Error, StringComparison.Ordinal);
     }
 
+    // Ready completes only after the snapshot holds the outcome: a caller that reads the snapshot as
+    // soon as Ready completes sees the reason of a failure and the Ready state of a success.
+    [Fact]
+    public async Task Ready_CompletesOnlyAfterTheSnapshotCarriesTheOutcome()
+    {
+        var quick = Fast with { BannerWaitMs = 5, IdentifyTimeoutMs = 30 };
+        for (var k = 0; k < 20; k++)
+        {
+            using var silent = new MachineController(new FakeGrblLink(banner: false) { AnswerStatus = false }, quick);
+            Assert.False(await silent.Ready.WaitAsync(TimeSpan.FromMilliseconds(WaitMs), TestContext.Current.CancellationToken));
+            var failed = silent.Snapshot;
+            Assert.Equal(LinkState.Closed, failed.Link);
+            Assert.Contains("No Grbl controller answered", failed.Error, StringComparison.Ordinal);
+
+            using var answering = new MachineController(new FakeGrblLink(), quick);
+            Assert.True(await answering.Ready.WaitAsync(TimeSpan.FromMilliseconds(WaitMs), TestContext.Current.CancellationToken));
+            Assert.Equal(LinkState.Ready, answering.Snapshot.Link);
+        }
+    }
+
     [Fact]
     public async Task Program_NeverHasMoreThanOneUnansweredLine()
     {

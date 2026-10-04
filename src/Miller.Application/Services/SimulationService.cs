@@ -18,10 +18,9 @@ public sealed record SimulationSnapshot(
 public sealed class SimulationService
 {
     private readonly SimulationClock _clock = new();
-    private readonly List<SimulationEvent> _events = new();
     private readonly List<SimulationEvent> _pending = new();
-    private readonly HashSet<(int Segment, SimulationEventKind Kind)> _reported = new();
     private SimulationEngine? _engine;
+    private CollisionRecorder? _collisions;
 
     public PipelineResult? Result { get; private set; }
 
@@ -48,13 +47,14 @@ public sealed class SimulationService
         set => _clock.SpeedFactor = value;
     }
 
-    public IReadOnlyList<SimulationEvent> Events => _events;
+    public IReadOnlyList<SimulationEvent> Events => _collisions?.Events ?? Array.Empty<SimulationEvent>();
 
     public void Load(PipelineResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
         Result = result;
         _clock.Reset();
+        _collisions = new CollisionRecorder(result.Profile, result.Profile.Tool.CutterLength, result.Model, result.Floor);
         ClearEvents();
         Stock = result.Stock.Map.Clone();
         _engine = new SimulationEngine(result.Toolpath, Stock, result.Profile);
@@ -66,6 +66,7 @@ public sealed class SimulationService
         _clock.Reset();
         ClearEvents();
         _engine = null;
+        _collisions = null;
         Stock = null;
         Result = null;
     }
@@ -84,9 +85,79 @@ public sealed class SimulationService
     {
         var engine = Require();
         _clock.Reset();
-        ClearEvents();
-        Stock = Result!.Stock.Map.Clone();
-        engine.Reset(Stock);
+        Replay(engine);
+    }
+
+    // Layers of the loaded toolpath (PipelineResult.Layers).
+    public int LayerCount => Result?.Layers.Count ?? 0;
+
+    // The layer the next segment to cover belongs to (the last layer whose first segment is at or before
+    // it), the last layer once finished, -1 without layers.
+    public int LayerIndex
+    {
+        get
+        {
+            if (_engine is null || LayerCount == 0)
+            {
+                return -1;
+            }
+
+            var layers = Result!.Layers;
+            var segment = _engine.CurrentSegmentIndex;
+            var index = 0;
+            while (index + 1 < layers.Count && layers[index + 1].FirstSegment <= segment)
+            {
+                index++;
+            }
+
+            return index;
+        }
+    }
+
+    // Layers whose every segment is covered: the layer index while the tool is inside or at the start of
+    // that layer, all of them once finished.
+    public int CompletedLayers => IsFinished ? LayerCount : Math.Max(LayerIndex, 0);
+
+    // Moves to the end of the current layer: the start of the next one, the end of the path on the last.
+    public SimulationSnapshot SeekToNextLayer()
+    {
+        Require();
+        var layers = Result!.Layers;
+        var next = LayerIndex + 1;
+        return SeekToSegment(next < layers.Count ? layers[next].FirstSegment : Result.Toolpath.Count);
+    }
+
+    // Moves to the start of the current layer, or of the previous one when the tool stands at its start.
+    public SimulationSnapshot SeekToPreviousLayer()
+    {
+        var engine = Require();
+        var layers = Result!.Layers;
+        var layer = LayerIndex;
+        if (layer < 0)
+        {
+            return SeekToSegment(0);
+        }
+
+        var start = layers[layer].FirstSegment;
+        var atStart = engine.CurrentSegmentIndex == start && engine.AtSegmentStart;
+        return SeekToSegment(atStart && layer > 0 ? layers[layer - 1].FirstSegment : start);
+    }
+
+    // Moves the simulation to the start of a segment (the segment count for the end) with the rules of
+    // SeekTo: forward sweeps in place, backward replays from a fresh stock.
+    public SimulationSnapshot SeekToSegment(int index)
+    {
+        var engine = Require();
+        _clock.Pause();
+        var target = Math.Clamp(index, 0, Result!.Toolpath.Count);
+        if (target < engine.CurrentSegmentIndex || (target == engine.CurrentSegmentIndex && !engine.AtSegmentStart))
+        {
+            Replay(engine);
+        }
+
+        var result = engine.SeekToSegment(target);
+        _clock.Seek(engine.ElapsedSeconds);
+        return Snapshot(result);
     }
 
     public SimulationSnapshot StepOnce(double simSeconds) => Snapshot(Require().Step(simSeconds));
@@ -102,9 +173,7 @@ public sealed class SimulationService
         var target = Math.Clamp(fraction, 0f, 1f) * engine.TotalLength;
         if (target < engine.CoveredLength)
         {
-            ClearEvents();
-            Stock = Result!.Stock.Map.Clone();
-            engine.Reset(Stock);
+            Replay(engine);
         }
 
         var result = engine.SeekTo(target);
@@ -112,12 +181,23 @@ public sealed class SimulationService
         return Snapshot(result);
     }
 
-    // Pauses first so a UI timer tick cannot step the engine while this runs on another thread.
+    // A fresh stock clone for the engine; the events of the run so far are dropped with it.
+    private void Replay(SimulationEngine engine)
+    {
+        ClearEvents();
+        Stock = Result!.Stock.Map.Clone();
+        engine.Reset(Stock);
+    }
+
+    // Pauses first so a UI timer tick cannot step the engine while this runs on another thread; the
+    // clock takes the engine's elapsed time afterwards, like a seek, so the readout shows the total.
     public SimulationSnapshot RunToEnd()
     {
         var engine = Require();
         _clock.Pause();
-        return Snapshot(engine.RunToEnd());
+        var result = engine.RunToEnd();
+        _clock.Seek(engine.ElapsedSeconds);
+        return Snapshot(result);
     }
 
     // Real seconds since the last call; nothing moves while paused or before Load.
@@ -150,19 +230,15 @@ public sealed class SimulationService
 
     private void ClearEvents()
     {
-        _events.Clear();
+        _collisions?.Clear();
         _pending.Clear();
-        _reported.Clear();
     }
 
     // One event per segment and kind keeps the list readable for a rapid crossing many cells.
     private void OnSample(SimulationSample sample)
     {
-        var tool = Result!.Profile.Tool;
-        var found = CollisionDetector.Check(Stock!, Result.Profile, tool.CutterLength, sample.Tip, sample.Kind, sample.SegmentIndex);
-        if (found is not null && _reported.Add((found.SegmentIndex, found.Kind)))
+        if (_collisions!.Record(Stock!, sample) is { } found)
         {
-            _events.Add(found);
             _pending.Add(found);
         }
     }

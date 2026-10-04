@@ -53,22 +53,28 @@ internal static unsafe class SolverNative
     public static extern float mn_route_planar(float* a, float* b);
 
     [DllImport(Library)]
-    public static extern int mn_turn_fined_at(float* x, float* y, float cellSize, int* order, int count, int position);
+    public static extern int mn_turn_fined_at(float* x, float* y, int* order, int count, int position);
 
     [DllImport(Library)]
-    public static extern float mn_turn_slow_length(float* x, float* y, float cellSize, int* order, int count);
+    public static extern float mn_turn_slow_length(float* x, float* y, int* order, int count);
 
     [DllImport(Library)]
-    public static extern float mn_turn_fine(float* x, float* y, float cellSize, int* order, int count);
+    public static extern float mn_turn_fine(float* x, float* y, int* order, int count);
 
     [DllImport(Library)]
     public static extern float mn_turn_overlap(int zonesA, int zonesB, float gap);
 
     [DllImport(Library)]
+    public static extern float mn_turn_slow_speed_factor();
+
+    [DllImport(Library)]
+    public static extern float mn_turn_per_slow_millimetre();
+
+    [DllImport(Library)]
     public static extern long mn_budget_share(long remaining, int nodes, long nodesLeft);
 
     [DllImport(Library)]
-    public static extern int mn_route_solve(Grid* grid, float* floor, float* x, float* y, float* z, int count, int start, long allowance, int* cancel, int* order, long* evaluations);
+    public static extern int mn_route_solve(Grid* grid, float* floor, float* x, float* y, float* z, int count, int start, int* before, int* after, int pairCount, long allowance, int* cancel, int* order, long* evaluations);
 
     [DllImport(Library)]
     public static extern float mn_route_path_cost(Grid* grid, float* floor, float* x, float* y, float* z, int* order, int count);

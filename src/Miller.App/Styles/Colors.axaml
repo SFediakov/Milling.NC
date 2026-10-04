@@ -22,6 +22,8 @@
   <Color x:Key="CategoryOverhangColor">#FFA855F7</Color>
   <Color x:Key="CategoryHeadLimitedColor">#FF06B6D4</Color>
   <Color x:Key="CategoryCornerLimitedColor">#FFEAB308</Color>
+  <Color x:Key="CategoryCollisionModelColor">#FFFF2E93</Color>
+  <Color x:Key="CategoryCollisionStockColor">#FF2563EB</Color>
   <Color x:Key="AxisXColor">#FFE5484D</Color>
   <Color x:Key="AxisYColor">#FF3DDC84</Color>
   <Color x:Key="AxisZColor">#FF3D8BFD</Color>
@@ -46,6 +48,8 @@
   <SolidColorBrush x:Key="CategoryOverhangBrush" Color="{StaticResource CategoryOverhangColor}" />
   <SolidColorBrush x:Key="CategoryHeadLimitedBrush" Color="{StaticResource CategoryHeadLimitedColor}" />
   <SolidColorBrush x:Key="CategoryCornerLimitedBrush" Color="{StaticResource CategoryCornerLimitedColor}" />
+  <SolidColorBrush x:Key="CategoryCollisionModelBrush" Color="{StaticResource CategoryCollisionModelColor}" />
+  <SolidColorBrush x:Key="CategoryCollisionStockBrush" Color="{StaticResource CategoryCollisionStockColor}" />
   <SolidColorBrush x:Key="AxisXBrush" Color="{StaticResource AxisXColor}" />
   <SolidColorBrush x:Key="AxisYBrush" Color="{StaticResource AxisYColor}" />
   <SolidColorBrush x:Key="AxisZBrush" Color="{StaticResource AxisZColor}" />

@@ -12,6 +12,7 @@
       <TextBlock Classes="header" Text="Viewport" />
       <CheckBox Name="ShowFinalModelBox" Content="Show final model instead of the stock" IsChecked="{Binding ShowFinalModel}" IsEnabled="{Binding HasResult}" />
       <CheckBox Name="ShowUncuttableBox" Content="Overlay uncuttable regions" IsChecked="{Binding ShowUncuttable}" IsEnabled="{Binding ShowFinalModel}" />
+      <CheckBox Name="ShowCollisionsBox" Content="Mark collisions" IsChecked="{Binding ShowCollisions}" IsEnabled="{Binding ShowFinalModel}" />
 
       <TextBlock Classes="header" Text="Legend" />
       <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="{DynamicResource CategoryOkBrush}" /><TextBlock Text="Ok" /></StackPanel>
@@ -20,6 +21,8 @@
       <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="{DynamicResource CategoryOverhangBrush}" /><TextBlock Text="Overhang" /></StackPanel>
       <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="{DynamicResource CategoryHeadLimitedBrush}" /><TextBlock Text="Head limited" /></StackPanel>
       <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="{DynamicResource CategoryCornerLimitedBrush}" /><TextBlock Text="Corner limited" /></StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="{DynamicResource CategoryCollisionModelBrush}" /><TextBlock Text="Model collision" /></StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="{DynamicResource CategoryCollisionStockBrush}" /><TextBlock Text="Stock collision" /></StackPanel>
       <StackPanel Orientation="Horizontal" Spacing="8"><Border Width="14" Height="14" Background="{DynamicResource StockBrush}" /><TextBlock Text="No model" /></StackPanel>
     </StackPanel>
   </ScrollViewer>

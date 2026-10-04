@@ -24,6 +24,18 @@ public sealed class MillingPreset
 
     public float ReachPercent { get; set; } = HeightMaps.ReachMap.DefaultPercent;
 
+    public CollisionMode CollisionMode { get; set; } = CollisionMode.Recursion;
+
+    public float RecursionRatio { get; set; } = MillingProject.DefaultCollisionRatio;
+
+    public float OneRunRatio { get; set; } = MillingProject.DefaultCollisionRatio;
+
+    public float BridgeCount { get; set; } = MillingProject.DefaultBridgeCount;
+
+    public float BridgeWidth { get; set; } = MillingProject.DefaultBridgeWidth;
+
+    public float BridgeHeight { get; set; } = MillingProject.DefaultBridgeHeight;
+
     // Snapshot of the project's settings; the preset owns copies, so later edits of the project do
     // not leak into it.
     public static MillingPreset FromProject(MillingProject project, string name)
@@ -41,6 +53,12 @@ public sealed class MillingPreset
             CutScope = project.CutScope,
             MinIslandVolume = project.MinIslandVolume,
             ReachPercent = project.ReachPercent,
+            CollisionMode = project.CollisionMode,
+            RecursionRatio = project.RecursionRatio,
+            OneRunRatio = project.OneRunRatio,
+            BridgeCount = project.BridgeCount,
+            BridgeWidth = project.BridgeWidth,
+            BridgeHeight = project.BridgeHeight,
         });
     }
 
@@ -57,6 +75,12 @@ public sealed class MillingPreset
         project.CutScope = copy.CutScope;
         project.MinIslandVolume = copy.MinIslandVolume;
         project.ReachPercent = copy.ReachPercent;
+        project.CollisionMode = copy.CollisionMode;
+        project.RecursionRatio = copy.RecursionRatio;
+        project.OneRunRatio = copy.OneRunRatio;
+        project.BridgeCount = copy.BridgeCount;
+        project.BridgeWidth = copy.BridgeWidth;
+        project.BridgeHeight = copy.BridgeHeight;
     }
 
     // Deep copy through the project JSON options: the setup classes are plain mutable data.

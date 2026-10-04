@@ -34,6 +34,9 @@ public sealed class PresetServiceTests : IDisposable
         project.CutScope = CutScope.Separation;
         project.MinIslandVolume = 40f;
         project.ReachPercent = 66f;
+        project.CollisionMode = CollisionMode.OneRun;
+        project.RecursionRatio = 2f;
+        project.OneRunRatio = 3f;
         project.Stock.SizeX = 77f;
         project.Models.Add(new ModelPlacement { StlPath = "a.stl", Offset = new Vector3(4, 0, 0) });
         return project;
@@ -66,6 +69,9 @@ public sealed class PresetServiceTests : IDisposable
         Assert.Equal(CutScope.Separation, brass.CutScope);
         Assert.Equal(40f, brass.MinIslandVolume);
         Assert.Equal(66f, brass.ReachPercent);
+        Assert.Equal(CollisionMode.OneRun, brass.CollisionMode);
+        Assert.Equal(2f, brass.RecursionRatio);
+        Assert.Equal(3f, brass.OneRunRatio);
     }
 
     [Fact]
@@ -88,6 +94,30 @@ public sealed class PresetServiceTests : IDisposable
     }
 
     [Fact]
+    public void Bridges_TravelWithThePreset_AndOlderPresetsLoadTheDefaults()
+    {
+        var source = Sample();
+        source.BridgeCount = 2f;
+        source.BridgeWidth = 1.5f;
+        source.BridgeHeight = 0.6f;
+        var service = new PresetService(_root);
+        service.Load();
+        service.Save(MillingPreset.FromProject(source, "B"));
+        var reloaded = new PresetService(_root);
+        reloaded.Load();
+        var target = MillingProject.Default();
+        reloaded.Find("B")!.ApplyTo(target);
+        Assert.Equal(2f, target.BridgeCount);
+        Assert.Equal(1.5f, target.BridgeWidth);
+        Assert.Equal(0.6f, target.BridgeHeight);
+
+        var older = new MillingPreset { Name = "old" };
+        Assert.Equal(MillingProject.DefaultBridgeCount, older.BridgeCount);
+        Assert.Equal(MillingProject.DefaultBridgeWidth, older.BridgeWidth);
+        Assert.Equal(MillingProject.DefaultBridgeHeight, older.BridgeHeight);
+    }
+
+    [Fact]
     public void ApplyTo_CopiesTheFourGroups_AndLeavesStockAndModelsAlone()
     {
         var preset = MillingPreset.FromProject(Sample(), "P");
@@ -103,6 +133,9 @@ public sealed class PresetServiceTests : IDisposable
         Assert.Equal(CutScope.Separation, target.CutScope);
         Assert.Equal(40f, target.MinIslandVolume);
         Assert.Equal(66f, target.ReachPercent);
+        Assert.Equal(CollisionMode.OneRun, target.CollisionMode);
+        Assert.Equal(2f, target.RecursionRatio);
+        Assert.Equal(3f, target.OneRunRatio);
         Assert.Equal(55f, target.Stock.SizeX);
         Assert.Equal("b.stl", Assert.Single(target.Models).StlPath);
 

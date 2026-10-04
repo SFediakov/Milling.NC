@@ -51,11 +51,10 @@ static void transform_line(const float* f, int n, float* d, int* v, float* z)
     }
 }
 
-int mn_distance_transform(const uint8_t* mask, int width, int height, float cell_size, float* distances)
+/* In place: values[c] becomes min over q of values[q] + |c - q|^2 in cells (INFINITY for no source);
+ * a source value may be negative. */
+static int lower_envelope(float* values, int width, int height)
 {
-    if (!(cell_size > 0)) {
-        return mn_fail(MN_ERR_OUT_OF_RANGE, "Cell size must be positive.");
-    }
     int length = mn_maxi(width, height);
     float* line = (float*)mn_alloc((size_t)length, sizeof(float));
     float* output = (float*)mn_alloc((size_t)length, sizeof(float));
@@ -71,21 +70,21 @@ int mn_distance_transform(const uint8_t* mask, int width, int height, float cell
 
     for (int i = 0; i < width; i++) {
         for (int j = 0; j < height; j++) {
-            line[j] = mask[j * width + i] ? 0.0f : INFINITY;
+            line[j] = values[j * width + i];
         }
         transform_line(line, height, output, vertices, boundaries);
         for (int j = 0; j < height; j++) {
-            distances[j * width + i] = output[j];
+            values[j * width + i] = output[j];
         }
     }
 
     for (int j = 0; j < height; j++) {
         for (int i = 0; i < width; i++) {
-            line[i] = distances[j * width + i];
+            line[i] = values[j * width + i];
         }
         transform_line(line, width, output, vertices, boundaries);
         for (int i = 0; i < width; i++) {
-            distances[j * width + i] = output[i] == INFINITY ? INFINITY : sqrtf(output[i]) * cell_size;
+            values[j * width + i] = output[i];
         }
     }
 
@@ -93,6 +92,22 @@ int mn_distance_transform(const uint8_t* mask, int width, int height, float cell
     free(output);
     free(vertices);
     free(boundaries);
+    return MN_OK;
+}
+
+int mn_distance_transform(const uint8_t* mask, int width, int height, float cell_size, float* distances)
+{
+    if (!(cell_size > 0)) {
+        return mn_fail(MN_ERR_OUT_OF_RANGE, "Cell size must be positive.");
+    }
+    int cells = width * height;
+    for (int k = 0; k < cells; k++) {
+        distances[k] = mask[k] ? 0.0f : INFINITY;
+    }
+    MN_CHECK(lower_envelope(distances, width, height));
+    for (int k = 0; k < cells; k++) {
+        distances[k] = distances[k] == INFINITY ? INFINITY : sqrtf(distances[k]) * cell_size;
+    }
     return MN_OK;
 }
 
@@ -399,7 +414,7 @@ MN_API float mn_head_margin(float cell_size, float tolerance) { return mn_adjace
 /* How far the head reaches beyond the cutter edge; the widest head radius for a frustum. */
 MN_API float mn_head_overhang(const mn_tool* tool) { return mn_head_radius(tool) - tool->cutter_diameter / 2.0f; }
 
-static int touches_outside(const int* cells, int count, const mn_grid* g, const float* stock)
+int mn_touches_outside(const int* cells, int count, const mn_grid* g, const float* stock)
 {
     for (int n = 0; n < count; n++) {
         int i = cells[n] % g->width;
@@ -453,7 +468,7 @@ int mn_islands(const mn_grid* g, const float* standing, const float* effective_t
     for (int c = 0; c < total && status == MN_OK; c++) {
         const int* list = components.items + component_offsets.items[c];
         int size = component_offsets.items[c + 1] - component_offsets.items[c];
-        if (touches_outside(list, size, g, stock)) {
+        if (mn_touches_outside(list, size, g, stock)) {
             continue;
         }
         float volume = 0.0f;
@@ -497,7 +512,11 @@ MN_API int32_t mn_islands_find(const mn_grid* grid, const float* standing, const
 
 /* The plan restricted to the separation scope (SeparationRegion.Build): per level the model region
  * plus the trench of that level, built from the bottom up; standing stock outside; islands below
- * the volume to keep milled out as the unrestricted plan has them. */
+ * the volume to keep milled out as the unrestricted plan has them. The trench of a level widens
+ * wherever the head of a deeper position would meet the slab above it: by the widest head radius
+ * where the head bottom lies at least the head's widening height below that slab, and by the head
+ * radius at the height the slab stands above the head bottom where it lies closer, so a frustum
+ * leaves a slope instead of one tread of its widest radius. */
 int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* stock, const mn_tool* tool, float tolerance, float stock_top, float floor, float min_island_volume, float* standing, mn_ints* island_cells, mn_ints* island_offsets, float** island_volumes, int* island_count)
 {
     const mn_grid* g = &plan->grid;
@@ -508,7 +527,10 @@ int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* 
     float cell_size = g->cell_size;
     int status = MN_OK;
     float hug_radius = mn_adjacency_margin(cell_size) + MN_RADIUS_TOLERANCE;
-    float overhang = mn_head_overhang(tool) + mn_head_margin(cell_size, tolerance);
+    float margin = mn_head_margin(cell_size, tolerance);
+    float overhang = mn_head_overhang(tool) + margin;
+    float cutter_radius = tool->cutter_diameter / 2.0f;
+    float widening = mn_head_widening(tool);
 
     uint8_t* model_region = (uint8_t*)mn_alloc((size_t)cells, 1);
     uint8_t* masks = (uint8_t*)mn_alloc((size_t)count * (size_t)cells, 1);
@@ -517,11 +539,15 @@ int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* 
     uint8_t* cleared = (uint8_t*)mn_alloc((size_t)cells, 1);
     uint8_t* coverage = (uint8_t*)mn_alloc((size_t)cells, 1);
     float* deepest = (float*)mn_alloc((size_t)cells, sizeof(float));
+    /* The deepest level whose mask holds the position, and the squared radius (in cells, negated) of
+     * the positions whose head widens over the slab of the current level. */
+    float* deepest_position = (float*)mn_alloc((size_t)cells, sizeof(float));
+    float* slope = (float*)mn_alloc((size_t)cells, sizeof(float));
     mn_ints found_cells = { 0 };
     mn_ints found_offsets = { 0 };
     float* found_volumes = NULL;
     int found_count = 0;
-    if (model_region == NULL || masks == NULL || obstacles == NULL || hug == NULL || cleared == NULL || coverage == NULL || deepest == NULL) {
+    if (model_region == NULL || masks == NULL || obstacles == NULL || hug == NULL || cleared == NULL || coverage == NULL || deepest == NULL || deepest_position == NULL || slope == NULL) {
         status = mn_fail(MN_ERR_MEMORY, "Out of memory for the separation region.");
         goto done;
     }
@@ -529,6 +555,7 @@ int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* 
     mn_model_region(effective_tip, cells, floor, model_region);
     for (int c = 0; c < cells; c++) {
         deepest[c] = NAN;
+        deepest_position[c] = NAN;
     }
 
     for (int k = count - 1; k >= 0; k--) {
@@ -539,20 +566,43 @@ int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* 
             goto done;
         }
         const uint8_t* below = k + 1 < count ? masks + (size_t)(k + 1) * (size_t)cells : NULL;
-        int reach = mn_head_reach(plan->levels, count, k, stock_top, tool->cutter_length);
-        if (reach >= 0) {
+        int reach = mn_head_reach(plan->levels, count, k, stock_top, tool->cutter_length + widening);
+        int any_cleared = reach >= 0;
+        if (any_cleared) {
             status = mn_within_radius(masks + (size_t)reach * (size_t)cells, width, height, cell_size, overhang, cleared);
             if (status != MN_OK) {
                 goto done;
             }
         }
+        float slab_top = k == 0 ? stock_top : plan->levels[k - 1];
+        int sources = 0;
+        for (int c = 0; c < cells; c++) {
+            float h = slab_top - deepest_position[c] - tool->cutter_length;
+            float radius = mn_head_radius_at(tool, h) - cutter_radius + margin;
+            int widens = h > MN_LEVEL_TOLERANCE && !(h > widening + MN_LEVEL_TOLERANCE) && radius > 0;
+            slope[c] = widens ? -(radius / cell_size) * (radius / cell_size) : INFINITY;
+            sources += widens;
+        }
+        if (sources > 0) {
+            status = lower_envelope(slope, width, height);
+            if (status != MN_OK) {
+                goto done;
+            }
+            for (int c = 0; c < cells; c++) {
+                cleared[c] = (uint8_t)((any_cleared && cleared[c]) || slope[c] <= 0.0f);
+            }
+            any_cleared = 1;
+        }
         uint8_t* mask = masks + (size_t)k * (size_t)cells;
         for (int c = 0; c < cells; c++) {
-            int region = allowed[c] && (hug[c] || (below != NULL && below[c]) || (reach >= 0 && cleared[c]));
+            int region = allowed[c] && (hug[c] || (below != NULL && below[c]) || (any_cleared && cleared[c]));
             if (region && mn_isnan(deepest[c])) {
                 deepest[c] = plan->levels[k];
             }
             mask[c] = (uint8_t)(region || (model_region[c] && allowed[c]));
+            if (mask[c] && mn_isnan(deepest_position[c])) {
+                deepest_position[c] = plan->levels[k];
+            }
         }
     }
 
@@ -616,6 +666,8 @@ done:
     free(cleared);
     free(coverage);
     free(deepest);
+    free(deepest_position);
+    free(slope);
     mn_ints_free(&found_cells);
     mn_ints_free(&found_offsets);
     free(found_volumes);
