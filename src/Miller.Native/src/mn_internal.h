@@ -37,15 +37,15 @@ float mn_head_radius_at(const mn_tool* tool, float h);
 
 void mn_transform_point(const float* point, const float* matrix, float* result);
 int mn_grid_from_bounds(float min_x, float min_y, float max_x, float max_y, float cell_size, mn_grid* grid);
-void mn_rasterize_triangles(const float* triangles, int count, const mn_grid* grid, float* z);
+int mn_rasterize_triangles(const float* triangles, int count, const mn_grid* grid, float* z);
 int mn_make_stock(float corner_x, float corner_y, float size_x, float size_y, float top, int cylinder, float diameter, float cell_size, mn_map* stock);
 
 /* ---- heightmap algorithms ---- */
 
-void mn_tip_map_compute(const mn_grid* g, const float* model, const mn_offset* offsets, int count, float* tip);
-void mn_remaining_compute(const mn_grid* g, const float* tip, const mn_offset* offsets, int count, float* remaining);
+int mn_tip_map_compute(const mn_grid* g, const float* model, const mn_offset* offsets, int count, float* tip);
+int mn_remaining_compute(const mn_grid* g, const float* tip, const mn_offset* offsets, int count, float* remaining);
 int mn_reach_compute(const mn_grid* g, const float* model, const float* stock, const mn_offset* offsets, int count, float floor, float percent, float tolerance, const mn_monitor* monitor, float* reach);
-void mn_head_limit_compute(const mn_grid* g, const float* remaining, const mn_offset* annulus, int count, float cutter_length, float* limit);
+int mn_head_limit_compute(const mn_grid* g, const float* remaining, const mn_offset* annulus, int count, float cutter_length, float* limit);
 void mn_apply_limit(const float* tip, const float* limit, int cells, float* effective);
 int mn_mark_should_cut(const mn_grid* g, const float* tip, const float* model, const float* cut_to, const float* remaining, const float* limit, const mn_offset* annulus, int count,
     float cutter_length, float tolerance, uint8_t* should_cut);

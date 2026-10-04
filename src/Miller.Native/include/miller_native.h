@@ -99,6 +99,14 @@ typedef struct mn_parameters {
     float far_stepdown;
 } mn_parameters;
 
+/* Inclusive cell rectangle a sweep lowered; empty when i1 < i0 (DirtyRect). */
+typedef struct mn_dirty {
+    int32_t i0;
+    int32_t j0;
+    int32_t i1;
+    int32_t j1;
+} mn_dirty;
+
 typedef struct mn_statistics {
     float rapid_length;
     float feed_length;
@@ -115,6 +123,24 @@ typedef void (*mn_progress_fn)(void* context, int32_t step, int32_t steps, float
 MN_API const char* mn_last_error(void);
 MN_API void mn_free(void* pointer);
 
+/* Worker threads of the parallel stages: the processor count, or the limit set here (0 for none);
+ * every stage gives the same result with any count. */
+MN_API void mn_set_worker_limit(int32_t limit);
+MN_API int32_t mn_workers(void);
+
+/* ---- simulation (T-159): the stock as a float map the caller owns ---- */
+/* Sweeps one segment part: the tip sampled at most cell / 2 apart from `from` to `to`, both ends
+ * included, every footprint cell taking min(stock, z + dz); `dirty` receives the cells that got lower.
+ * One tool position: mn_stamp. */
+MN_API int32_t mn_sweep(float* stock, const mn_grid* grid, const mn_offset* offsets, int32_t count, const float* from, const float* to, mn_dirty* dirty);
+MN_API int32_t mn_stamp(float* stock, const mn_grid* grid, const mn_offset* offsets, int32_t count, const float* tip, mn_dirty* dirty);
+/* The cells one tip enters, in offset order (the footprint of a rapid first, then the head annulus),
+ * with the tool surface height there; returns their number (at most `capacity`, else an error) and
+ * the kind (MN_EVENT_*) and heights of the first one, or -1 when none. */
+MN_API int32_t mn_check_tip(const float* stock, const mn_grid* grid, const mn_offset* offsets, int32_t offset_count, const mn_offset* annulus, int32_t annulus_count,
+    float cutter_length, float tolerance, const float* tip, int32_t rapid, int32_t* cells, float* surfaces, int32_t capacity, int32_t* first_kind, float* first_stock,
+    float* first_surface);
+
 /* ---- tool profile ---- */
 MN_API int32_t mn_profile_create(const mn_tool* tool, float cell_size, mn_offset** offsets, int32_t* offset_count, mn_offset** annulus, int32_t* annulus_count);
 MN_API float mn_bottom_height(int32_t tip_type, float radius, float distance);
@@ -122,18 +148,18 @@ MN_API float mn_bottom_height(int32_t tip_type, float radius, float distance);
 /* ---- mesh ---- */
 MN_API void mn_transform_points(const float* points, int32_t point_count, const float* matrix, float* result);
 MN_API int32_t mn_grid_for(float min_x, float min_y, float max_x, float max_y, float cell_size, mn_grid* grid);
-MN_API void mn_rasterize(const float* triangles, int32_t triangle_count, const mn_grid* grid, float* z);
+MN_API int32_t mn_rasterize(const float* triangles, int32_t triangle_count, const mn_grid* grid, float* z);
 MN_API int32_t mn_stock_map(float corner_x, float corner_y, float size_x, float size_y, float top, int32_t cylinder, float diameter, float cell_size, mn_grid* grid, float** z);
 
 /* ---- heightmap algorithms ---- */
-MN_API void mn_tip_map(const mn_grid* grid, const float* model, const mn_offset* offsets, int32_t count, float* tip);
-MN_API void mn_remaining(const mn_grid* grid, const float* tip, const mn_offset* offsets, int32_t count, float* remaining);
+MN_API int32_t mn_tip_map(const mn_grid* grid, const float* model, const mn_offset* offsets, int32_t count, float* tip);
+MN_API int32_t mn_remaining(const mn_grid* grid, const float* tip, const mn_offset* offsets, int32_t count, float* remaining);
 MN_API int32_t mn_reach_map(const mn_grid* grid, const float* model, const float* stock, const mn_offset* offsets, int32_t count, float floor, float percent, float tolerance, mn_progress_fn progress, void* context, float* reach);
 MN_API double mn_reach_round_percent(float percent, int32_t round);
 MN_API int32_t mn_reach_rank(int32_t n, float percent);
 MN_API float mn_reach_select(float* values, int32_t n, int32_t rank);
 MN_API float mn_reach_select_threshold(float* values, uint8_t* excluded, int32_t n, double percent);
-MN_API void mn_head_limit(const mn_grid* grid, const float* remaining, const mn_offset* annulus, int32_t count, float cutter_length, float* limit);
+MN_API int32_t mn_head_limit(const mn_grid* grid, const float* remaining, const mn_offset* annulus, int32_t count, float cutter_length, float* limit);
 MN_API void mn_apply_head_limit(const float* tip, const float* limit, int32_t cells, float* effective);
 MN_API void mn_head_limited_mask(const float* tip, const float* limit, int32_t cells, float tolerance, uint8_t* mask);
 MN_API int32_t mn_distances(const uint8_t* mask, int32_t width, int32_t height, float cell_size, float* distances);

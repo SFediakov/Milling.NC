@@ -59,6 +59,10 @@ struct mn_pool {
     int last;
 };
 
+static int worker_limit = 0;
+
+MN_API void mn_set_worker_limit(int32_t limit) { worker_limit = limit > 0 ? limit : 0; }
+
 int mn_worker_count(void)
 {
 #if defined(_WIN32)
@@ -69,13 +73,37 @@ int mn_worker_count(void)
     long online = sysconf(_SC_NPROCESSORS_ONLN);
     int count = online > 0 ? (int)online : 1;
 #endif
+    if (worker_limit > 0 && count > worker_limit) {
+        count = worker_limit;
+    }
     return count < 1 ? 1 : count > MN_MAX_WORKERS ? MN_MAX_WORKERS : count;
+}
+
+MN_API int32_t mn_workers(void) { return mn_worker_count(); }
+
+/* Runs fn for every row in [0, rows) on a pool of its own: the pool of one stage call. */
+int mn_rows_parallel(int rows, mn_row_fn fn, void* context, void** scratch, int workers)
+{
+    if (rows <= 0) {
+        return MN_OK;
+    }
+    if (workers <= 1 || rows == 1) {
+        for (int row = 0; row < rows; row++) {
+            fn(context, row, scratch != NULL ? scratch[0] : NULL);
+        }
+        return MN_OK;
+    }
+    mn_pool* pool;
+    MN_CHECK(mn_pool_create(workers, scratch, &pool));
+    mn_pool_run(pool, 0, rows, fn, context);
+    mn_pool_destroy(pool);
+    return MN_OK;
 }
 
 static void run_rows(mn_pool* pool, int index)
 {
     for (int row = pool->first + index; row < pool->last; row += pool->workers) {
-        pool->fn(pool->context, row, pool->scratch[index]);
+        pool->fn(pool->context, row, pool->scratch != NULL ? pool->scratch[index] : NULL);
     }
 }
 

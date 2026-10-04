@@ -1,5 +1,6 @@
 using System.Numerics;
 using Miller.Core.HeightMaps;
+using Miller.Core.Native;
 
 namespace Miller.Core.Simulation;
 
@@ -32,12 +33,14 @@ public readonly record struct DirtyRect(int I0, int J0, int I1, int J1)
     public DirtyRect Include(int i, int j) => Union(new DirtyRect(i, j, i, j));
 }
 
-// Sweeps one segment through the stock: the tool tip is sampled at most CellSize / 2 apart along
-// the segment, both end points included, and every footprint cell takes min(stock, z + dz).
-// The tip is placed on the center of the cell it falls in, the same model as the gouge checker.
+// Sweeps one segment through the stock (native mn_sweep): the tool tip is sampled at most CellSize / 2
+// apart along the segment, both end points included, and every footprint cell takes min(stock, z + dz).
+// The tip is placed on the center of the cell it falls in, the same model as the gouge checker. The
+// native sweep stamps consecutive samples of one cell once with their lowest z and walks the footprint
+// as row spans, which gives the same cells bit for bit.
 public static class MaterialRemover
 {
-    public static DirtyRect Sweep(HeightMap stock, ToolProfile profile, Vector3 from, Vector3 to)
+    public static unsafe DirtyRect Sweep(HeightMap stock, ToolProfile profile, Vector3 from, Vector3 to)
     {
         ArgumentNullException.ThrowIfNull(stock);
         ArgumentNullException.ThrowIfNull(profile);
@@ -46,44 +49,35 @@ public static class MaterialRemover
             throw new ArgumentException($"Profile cell size {profile.CellSize} differs from the stock cell size {stock.CellSize}.", nameof(profile));
         }
 
-        var spacing = stock.CellSize / 2;
-        var length = Vector3.Distance(from, to);
-        var steps = length > 0 ? (int)MathF.Ceiling(length / spacing) : 0;
-        var dirty = DirtyRect.Empty;
-        for (var s = 0; s <= steps; s++)
+        var grid = CoreNative.GridOf(stock);
+        var offsets = profile.NativeOffsets;
+        var start = stackalloc float[] { from.X, from.Y, from.Z };
+        var end = stackalloc float[] { to.X, to.Y, to.Z };
+        CoreNative.Dirty dirty;
+        fixed (float* z = stock.Z)
+        fixed (CoreNative.Offset* o = offsets)
         {
-            var t = steps == 0 ? 0f : (float)s / steps;
-            dirty = dirty.Union(Stamp(stock, profile, Vector3.Lerp(from, to, t)));
+            CoreNative.Check(CoreNative.mn_sweep(z, &grid, o, offsets.Length, start, end, &dirty));
         }
 
-        return dirty;
+        return new DirtyRect(dirty.I0, dirty.J0, dirty.I1, dirty.J1);
     }
 
     // One tool position; returns the cells that got lower.
-    public static DirtyRect Stamp(HeightMap stock, ToolProfile profile, Vector3 tip)
+    public static unsafe DirtyRect Stamp(HeightMap stock, ToolProfile profile, Vector3 tip)
     {
-        var (ci, cj) = stock.CellOf(tip.X, tip.Y);
-        var dirty = DirtyRect.Empty;
-        foreach (var offset in profile.Offsets)
+        ArgumentNullException.ThrowIfNull(stock);
+        ArgumentNullException.ThrowIfNull(profile);
+        var grid = CoreNative.GridOf(stock);
+        var offsets = profile.NativeOffsets;
+        var point = stackalloc float[] { tip.X, tip.Y, tip.Z };
+        CoreNative.Dirty dirty;
+        fixed (float* z = stock.Z)
+        fixed (CoreNative.Offset* o = offsets)
         {
-            var i = ci + offset.Dx;
-            var j = cj + offset.Dy;
-            if (!stock.InBounds(i, j))
-            {
-                continue;
-            }
-
-            var current = stock[i, j];
-            var cut = tip.Z + offset.Dz;
-            if (float.IsNaN(current) || !(cut < current))
-            {
-                continue;
-            }
-
-            stock[i, j] = cut;
-            dirty = dirty.Include(i, j);
+            CoreNative.Check(CoreNative.mn_stamp(z, &grid, o, offsets.Length, point, &dirty));
         }
 
-        return dirty;
+        return new DirtyRect(dirty.I0, dirty.J0, dirty.I1, dirty.J1);
     }
 }

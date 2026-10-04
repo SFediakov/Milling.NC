@@ -62,7 +62,7 @@ public static class MeshRasterizer
         var grid = CoreNative.GridOf(target);
         fixed (float* data = flat, z = target.Z)
         {
-            CoreNative.mn_rasterize(data, triangles.Count, &grid, z);
+            CoreNative.Check(CoreNative.mn_rasterize(data, triangles.Count, &grid, z));
         }
     }
 }

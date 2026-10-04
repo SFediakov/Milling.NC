@@ -24,9 +24,16 @@ public sealed class ToolProfile
         CellSize = cellSize;
         Offsets = offsets;
         AnnulusOffsets = annulus;
+        NativeOffsets = CoreNative.OffsetsOf(offsets);
+        NativeAnnulus = CoreNative.OffsetsOf(annulus);
         RadiusCells = (int)MathF.Ceiling(tool.CutterRadius / cellSize);
         HeadRadiusCells = (int)MathF.Ceiling(tool.HeadRadius / cellSize);
     }
+
+    // The same offsets in the native layout, built once for the simulation calls.
+    internal CoreNative.Offset[] NativeOffsets { get; }
+
+    internal CoreNative.Offset[] NativeAnnulus { get; }
 
     public ToolDefinition Tool { get; }
 

@@ -25,7 +25,7 @@ public static class HeadClearance
         fixed (float* m = model.Z, l = limit.Z)
         fixed (CoreNative.Offset* o = annulus)
         {
-            CoreNative.mn_head_limit(&grid, m, o, annulus.Length, cutterLength, l);
+            CoreNative.Check(CoreNative.mn_head_limit(&grid, m, o, annulus.Length, cutterLength, l));
         }
 
         return limit;

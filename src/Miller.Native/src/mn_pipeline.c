@@ -1,4 +1,5 @@
 #include "mn_internal.h"
+#include "mn_thread.h"
 
 /* The whole generation after the project is validated (PipelineService): transform, stock, model
  * map and reach map once, then one or more passes of slicing and cut scope, routing, simplification,
@@ -106,6 +107,37 @@ MN_API void mn_result_free(mn_result* result)
         }                                                                                          \
     } while (0)
 
+typedef struct transform_job {
+    const mn_job* job;
+    float* target;
+    const int* mesh_start;
+} transform_job;
+
+/* One triangle of the transform (T-160, triangles run on the worker pool): its mesh's matrix, B and
+ * C swapped when the matrix mirrors so the winding stays outward. */
+static void transform_triangle(void* context, int t, void* scratch)
+{
+    (void)scratch;
+    const transform_job* tj = (const transform_job*)context;
+    const mn_job* job = tj->job;
+    int m = 0;
+    while (t >= tj->mesh_start[m + 1]) {
+        m++;
+    }
+    const float* source = job->triangles + 9 * t;
+    const float* matrix = job->matrices + 16 * m;
+    float* target = tj->target + 9 * t;
+    float a[3], b[3], c[3];
+    mn_transform_point(source, matrix, a);
+    mn_transform_point(source + 3, matrix, b);
+    mn_transform_point(source + 6, matrix, c);
+    const float* second = job->mirrored[m] ? c : b;
+    const float* third = job->mirrored[m] ? b : c;
+    memcpy(target, a, sizeof(a));
+    memcpy(target + 3, second, sizeof(a));
+    memcpy(target + 6, third, sizeof(a));
+}
+
 /* Transform, stock, model map and reach map: the part of the generation every pass shares. */
 static int prepare(const mn_job* job, stage_monitor* stage, const volatile int32_t* cancel, mn_result* r)
 {
@@ -127,23 +159,18 @@ static int prepare(const mn_job* job, stage_monitor* stage, const volatile int32
         return mn_fail(MN_ERR_MEMORY, "Out of memory for %d triangles.", total);
     }
     r->triangle_count = total;
-    const float* source = job->triangles;
-    float* target = r->triangles;
-    for (int m = 0; m < job->mesh_count; m++) {
-        const float* matrix = job->matrices + 16 * m;
-        for (int t = 0; t < job->mesh_triangle_counts[m]; t++) {
-            float a[3], b[3], c[3];
-            mn_transform_point(source, matrix, a);
-            mn_transform_point(source + 3, matrix, b);
-            mn_transform_point(source + 6, matrix, c);
-            const float* second = job->mirrored[m] ? c : b;
-            const float* third = job->mirrored[m] ? b : c;
-            memcpy(target, a, sizeof(a));
-            memcpy(target + 3, second, sizeof(a));
-            memcpy(target + 6, third, sizeof(a));
-            source += 9;
-            target += 9;
+    {
+        int* mesh_start = (int*)mn_alloc((size_t)job->mesh_count + 1, sizeof(int));
+        if (mesh_start == NULL) {
+            return mn_fail(MN_ERR_MEMORY, "Out of memory for %d meshes.", job->mesh_count);
         }
+        for (int m = 0; m < job->mesh_count; m++) {
+            mesh_start[m + 1] = mesh_start[m] + job->mesh_triangle_counts[m];
+        }
+        transform_job transform = { job, r->triangles, mesh_start };
+        int status = mn_rows_parallel(total, transform_triangle, &transform, NULL, mn_worker_count());
+        free(mesh_start);
+        MN_CHECK(status);
     }
     MN_STOP_IF_CANCELLED();
 
@@ -161,7 +188,7 @@ static int prepare(const mn_job* job, stage_monitor* stage, const volatile int32
     const mn_grid* g = &r->grid;
     r->floor = r->stock_bottom;
     MN_CHECK(mn_map_create(&r->model, g, r->floor));
-    mn_rasterize_triangles(r->triangles, total, g, r->model.z);
+    MN_CHECK(mn_rasterize_triangles(r->triangles, total, g, r->model.z));
     MN_STOP_IF_CANCELLED();
 
     /* reach map */
@@ -311,7 +338,11 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
     mn_map closing = { 0 };
     if (hits != NULL) {
         MN_CHECK(mn_map_create(&closing, g, NAN));
-        mn_remaining_compute(g, pass->strategy_tip.z, r->profile.offsets, r->profile.offset_count, closing.z);
+        status_code = mn_remaining_compute(g, pass->strategy_tip.z, r->profile.offsets, r->profile.offset_count, closing.z);
+        if (status_code != MN_OK) {
+            mn_map_free(&closing);
+            return status_code;
+        }
         hits->closing = closing.z;
         hits->slack = p->tolerance;
     }
