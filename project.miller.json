@@ -1,0 +1,83 @@
+{
+  "SchemaVersion": 3,
+  "Models": [
+    {
+      "StlPath": "C:\\Users\\SFediakov\\Desktop\\Projects\\Mechanical\\Lu\\Milling_Heart_V2.STL",
+      "Name": "",
+      "Offset": {
+        "X": 1,
+        "Y": 1,
+        "Z": -5
+      },
+      "RotationZ": 0
+    }
+  ],
+  "Tool": {
+    "Name": "6 mm flat end mill",
+    "CutterDiameter": 0.8,
+    "CutterLength": 2,
+    "HeadDiameter": 1,
+    "HeadShape": "Frustum",
+    "HeadTopDiameter": 4,
+    "HeadLength": 7,
+    "TipType": "Flat",
+    "CutterRadius": 0.4,
+    "HeadRadius": 2
+  },
+  "Stock": {
+    "Shape": "Box",
+    "SizeX": 60,
+    "SizeY": 30,
+    "SizeZ": 5,
+    "Diameter": 100,
+    "Height": 30,
+    "Placement": "Explicit",
+    "AlignX": "Center",
+    "AlignY": "Center",
+    "AlignZ": "Max",
+    "Margin": 1,
+    "ExplicitOrigin": {
+      "X": 0,
+      "Y": 0,
+      "Z": -5
+    }
+  },
+  "Axes": {
+    "MapX": "X",
+    "MapY": "Y",
+    "MapZ": "Z",
+    "FlipX": false,
+    "FlipY": false,
+    "FlipZ": false,
+    "RotationX": 90,
+    "RotationY": 0,
+    "RotationZ": 0,
+    "OriginMode": "StockCornerMinXYMinZ",
+    "CustomOffset": {
+      "X": 0,
+      "Y": 0,
+      "Z": 0
+    },
+    "IsPermutation": true
+  },
+  "Parameters": {
+    "FeedRate": 800,
+    "PlungeRate": 200,
+    "RapidRate": 3000,
+    "SpindleRpm": 12000,
+    "Stepover": 0.7,
+    "FinishingStepover": 0.7,
+    "Stepdown": 0.1,
+    "SafeHeight": 5,
+    "CellSize": 0.05,
+    "Tolerance": 0.05
+  },
+  "RoutingStrategyId": "z-layer-by-layer",
+  "PostProcessorId": "grbl",
+  "CutScope": "Separation",
+  "MinIslandVolume": 100,
+  "ReachPercent": 98,
+  "CollisionMode": "Recursion",
+  "RecursionRatio": 5,
+  "OneRunRatio": 5
+}
