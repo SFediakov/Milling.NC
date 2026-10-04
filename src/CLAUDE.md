@@ -668,3 +668,11 @@
 - Far block layers are the first layer in path order at a group's bottom level; "a later layer lies
   higher" also counts the cave walk's returns to a sibling and labelled every layer of a plain run a
   far block layer (35 of 35 events) in a first diagnosis.
+- The separation terraces planned the slab at its exact level, so a slab level with the head bottom
+  needed no clearance; the simplifier leaves the slab's material up to the tolerance above its level,
+  and on the user's heart that gave head contacts of 3 to 37 micrometres with stock, not model, in
+  every build since the terraces (T-152). The slab now counts `tolerance` higher (T-163); the fully
+  widened reach moves by the same amount. Verified the claim "no collisions before" by building
+  1.0.106 at the user's real settings: 77 events, 55 touching the model, before any far stepdown.
+- When the user compares runs, check the live project file's modification time: it changed during
+  the session (reach percent 98 to 97), and the same build then gives different counts (67 to 73).

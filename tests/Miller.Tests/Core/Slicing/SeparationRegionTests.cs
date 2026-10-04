@@ -192,4 +192,39 @@ public sealed class SeparationRegionTests
         Assert.Equal(flat.Plan.Coverage.Cast<bool>().Count(b => b), flatScoped.Plan.Coverage.Cast<bool>().Count(b => b));
         Assert.All(flatScoped.Standing.Z, z => Assert.True(float.IsNaN(z)));
     }
+
+    // A slab level with the head bottom is not clear: the simplifier keeps chords up to the tolerance
+    // above the planned level, so the slab's material stands that much above it (T-163). Floor
+    // positions at 0 under a 4 mm cutter have their head bottom at 4, the slab above the trench of
+    // level 2, so that trench must widen by the head overhang around them like every slab above does.
+    [Fact]
+    public void SlabLevelWithTheHeadBottom_IsClearedByTheHeadOverhang()
+    {
+        var tool = new ToolDefinition { CutterDiameter = 4, HeadDiameter = 8, CutterLength = 4 };
+        var parameters = TestContexts.Parameters(0.5f);
+        var context = TestContexts.Build(TestMeshes.Box(10, 10, 10), new StockDefinition { SizeX = 30, SizeY = 30, SizeZ = 10 }, tool, parameters);
+        var levels = context.Plan.Steps.Select(s => s.Level).ToList();
+        Assert.Equal(new[] { 8f, 6f, 4f, 2f, 0f }, levels);
+        var scoped = SeparationRegion.Build(context.Plan, context.EffectiveTip, context.Stock, context.Tool, parameters, context.StockTop, context.Plan.LowestLevel, 0f);
+        var steps = scoped.Plan.Steps.ToList();
+        var floor = steps[4].Mask;
+        var two = steps[3].Mask;
+        var map = context.EffectiveTip;
+        var overhang = tool.HeadRadius - tool.CutterRadius + SeparationRegion.HeadMargin(map.CellSize, parameters.Tolerance);
+        var within = SeparationRegion.Within(floor, map.CellSize, overhang - map.CellSize);
+        var missing = 0;
+        for (var j = 0; j < map.Height; j++)
+        {
+            for (var i = 0; i < map.Width; i++)
+            {
+                if (within[i, j] && !float.IsNaN(map[i, j]) && map[i, j] <= 2f + Slicer.LevelTolerance && !two[i, j])
+                {
+                    missing++;
+                }
+            }
+        }
+
+        Assert.Equal(0, missing);
+        Assert.True(steps[3].MaskCount > steps[4].MaskCount, $"level 2 holds {steps[3].MaskCount} positions, the floor {steps[4].MaskCount}");
+    }
 }
