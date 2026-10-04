@@ -1,4 +1,5 @@
 #include "mn_internal.h"
+#include "mn_thread.h"
 
 /* Gouge check on the plateau model (GougeChecker), vector output (ToolpathSimplifier) and the
  * toolpath statistics (ToolpathStatistics). */
@@ -240,6 +241,47 @@ static int continues(const mn_segment* previous, const mn_segment* next)
         && next->start_z == previous->end_z;
 }
 
+/* One item of the simplification: a run of feeds [start, end) or one segment copied as it is. */
+typedef struct simplify_item {
+    int start;
+    int end;
+    int feed;
+} simplify_item;
+
+typedef struct simplify_job {
+    const mn_segment* segments;
+    const mn_grid* g;
+    const float* tip;
+    float tolerance;
+    const simplify_item* items;
+    mn_points* points;
+    mn_ints* kept;
+    int* status;
+} simplify_job;
+
+/* The vertices and the kept indices of one run; runs are independent, so they take the worker pool
+ * (T-160) and the chords are written in order afterwards. */
+static void simplify_run(void* context, int index, void* scratch)
+{
+    (void)scratch;
+    const simplify_job* job = (const simplify_job*)context;
+    const simplify_item* item = &job->items[index];
+    if (!item->feed) {
+        return;
+    }
+    mn_points* points = &job->points[index];
+    mn_ints* kept = &job->kept[index];
+    const mn_segment* first = &job->segments[item->start];
+    int status = mn_points_push(points, seg_start(first));
+    for (int n = item->start; n < item->end && status == MN_OK; n++) {
+        status = mn_points_push(points, seg_end(&job->segments[n]));
+    }
+    if (status == MN_OK) {
+        status = kept_indices(points->items, points->count, job->g, job->tip, job->tolerance, first->rate, kept);
+    }
+    job->status[index] = status;
+}
+
 /* A maximal run of consecutive feeds at one rate is a polyline reduced to the kept vertices; rapids,
  * plunges, the ends of every run and every marked segment start stay where the strategy put them. */
 int mn_simplify_path(const mn_segments* input, const mn_grid* g, const float* effective_tip, float tolerance, mn_marks* marks, mn_segments* result)
@@ -250,18 +292,22 @@ int mn_simplify_path(const mn_segments* input, const mn_grid* g, const float* ef
     const mn_segment* segments = input->items;
     int count = input->count;
     int mark_count = marks != NULL ? marks->count : 0;
-    mn_points points = { 0 };
-    mn_ints kept = { 0 };
-    int status = MN_OK;
+    simplify_item* items = (simplify_item*)mn_alloc((size_t)(count > 0 ? count : 1), sizeof(simplify_item));
+    if (items == NULL) {
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for simplifying %d segments.", count);
+    }
+    int item_count = 0;
     int next_mark = 0;
     int k = 0;
-    while (k < count && status == MN_OK) {
+    while (k < count) {
         while (next_mark < mark_count && marks->segment[next_mark] <= k) {
-            marks->segment[next_mark++] = result->count;
+            next_mark++;
         }
-        const mn_segment* first = &segments[k];
-        if (first->kind != MN_MOVE_FEED) {
-            status = mn_segments_push(result, *first);
+        simplify_item* item = &items[item_count++];
+        item->start = k;
+        if (segments[k].kind != MN_MOVE_FEED) {
+            item->end = k + 1;
+            item->feed = 0;
             k++;
             continue;
         }
@@ -270,30 +316,67 @@ int mn_simplify_path(const mn_segments* input, const mn_grid* g, const float* ef
         while (end < count && end != stop && continues(&segments[end - 1], &segments[end])) {
             end++;
         }
-        points.count = 0;
-        status = mn_points_push(&points, seg_start(first));
-        for (int n = k; n < end && status == MN_OK; n++) {
-            status = mn_points_push(&points, seg_end(&segments[n]));
+        item->end = end;
+        item->feed = 1;
+        k = end;
+    }
+
+    mn_points* points = (mn_points*)mn_alloc((size_t)(item_count > 0 ? item_count : 1), sizeof(mn_points));
+    mn_ints* kept = (mn_ints*)mn_alloc((size_t)(item_count > 0 ? item_count : 1), sizeof(mn_ints));
+    int* statuses = (int*)mn_alloc((size_t)(item_count > 0 ? item_count : 1), sizeof(int));
+    int status = MN_OK;
+    if (points == NULL || kept == NULL || statuses == NULL) {
+        status = mn_fail(MN_ERR_MEMORY, "Out of memory for simplifying %d segments.", count);
+        goto done;
+    }
+    {
+        simplify_job job = { segments, g, effective_tip, tolerance, items, points, kept, statuses };
+        status = mn_rows_parallel(item_count, simplify_run, &job, NULL, mn_worker_count());
+    }
+    for (int n = 0; n < item_count && status == MN_OK; n++) {
+        if (statuses[n] != MN_OK) {
+            status = mn_fail(statuses[n], "Simplifying the feed run at segment %d failed.", items[n].start);
         }
-        kept.count = 0;
-        if (status == MN_OK) {
-            status = kept_indices(points.items, points.count, g, effective_tip, tolerance, first->rate, &kept);
+    }
+    next_mark = 0;
+    for (int n = 0; n < item_count && status == MN_OK; n++) {
+        const simplify_item* item = &items[n];
+        while (next_mark < mark_count && marks->segment[next_mark] <= item->start) {
+            marks->segment[next_mark++] = result->count;
         }
+        if (!item->feed) {
+            status = mn_segments_push(result, segments[item->start]);
+            continue;
+        }
+        float rate = segments[item->start].rate;
         int previous = 0;
-        for (int m = 0; m < kept.count && status == MN_OK; m++) {
-            int index = kept.items[m];
+        for (int m = 0; m < kept[n].count && status == MN_OK; m++) {
+            int index = kept[n].items[m];
             if (index > 0) {
-                status = mn_segments_push(result, chord(points.items[previous], points.items[index], first->rate));
+                status = mn_segments_push(result, chord(points[n].items[previous], points[n].items[index], rate));
                 previous = index;
             }
         }
-        k = end;
     }
-    while (next_mark < mark_count) {
+    while (status == MN_OK && next_mark < mark_count) {
         marks->segment[next_mark++] = result->count;
     }
-    mn_points_free(&points);
-    mn_ints_free(&kept);
+
+done:
+    if (points != NULL) {
+        for (int n = 0; n < item_count; n++) {
+            mn_points_free(&points[n]);
+        }
+    }
+    if (kept != NULL) {
+        for (int n = 0; n < item_count; n++) {
+            mn_ints_free(&kept[n]);
+        }
+    }
+    free(points);
+    free(kept);
+    free(statuses);
+    free(items);
     return status;
 }
 

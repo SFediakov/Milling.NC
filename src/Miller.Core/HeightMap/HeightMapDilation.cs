@@ -18,7 +18,7 @@ public static class HeightMapDilation
         fixed (float* m = model.Z, t = tip.Z)
         fixed (CoreNative.Offset* o = offsets)
         {
-            CoreNative.mn_tip_map(&grid, m, o, offsets.Length, t);
+            CoreNative.Check(CoreNative.mn_tip_map(&grid, m, o, offsets.Length, t));
         }
 
         return tip;
@@ -38,7 +38,7 @@ public static class HeightMapDilation
         fixed (float* t = tip.Z, r = remaining.Z)
         fixed (CoreNative.Offset* o = offsets)
         {
-            CoreNative.mn_remaining(&grid, t, o, offsets.Length, r);
+            CoreNative.Check(CoreNative.mn_remaining(&grid, t, o, offsets.Length, r));
         }
 
         return remaining;

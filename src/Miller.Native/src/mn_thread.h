@@ -18,4 +18,8 @@ void mn_pool_run(mn_pool* pool, int first, int last, mn_row_fn fn, void* context
 
 void mn_pool_destroy(mn_pool* pool);
 
+/* Runs fn for every row in [0, rows) on `workers` threads (a pool for this call; one worker or one row
+ * runs inline); scratch may be NULL or hold `workers` entries. */
+int mn_rows_parallel(int rows, mn_row_fn fn, void* context, void** scratch, int workers);
+
 #endif

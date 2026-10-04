@@ -1,4 +1,5 @@
 #include "mn_window.h"
+#include "mn_thread.h"
 
 /* Orders the nodes of a route problem into one open path from a given start (RouteSolver): four start
  * walks, the nearest-neighbour walk and the smooth walk over candidate lists (the 10 planar-nearest
@@ -1236,6 +1237,40 @@ static int local_search(const mn_problem* problem, const mn_candidates* candidat
 
 /* ---- solve ---- */
 
+#define MN_START_WALKS 4
+
+typedef struct walk_job {
+    const mn_problem* problem;
+    const mn_candidates* candidates;
+    int start;
+    int* orders[MN_START_WALKS];
+    mn_order orderings[MN_START_WALKS];
+    int status[MN_START_WALKS];
+} walk_job;
+
+/* One start walk: the nearest-neighbour walk, the smooth walk, the sweep along X or along Y. */
+static void walk_row(void* context, int w, void* scratch)
+{
+    (void)scratch;
+    walk_job* walks = (walk_job*)context;
+    const mn_problem* problem = walks->problem;
+    mn_order* ordering = &walks->orderings[w];
+    int* order = walks->orders[w];
+    int status = MN_OK;
+    if (w == 0 || w == 1) {
+        mn_buckets buckets;
+        status = buckets_init(&buckets, problem);
+        if (status == MN_OK) {
+            status = w == 0 ? nearest_neighbour(problem, &buckets, walks->candidates, ordering, walks->start, order)
+                            : smooth_walk(problem, &buckets, walks->candidates, ordering, walks->start, order);
+            buckets_free(&buckets);
+        }
+    } else {
+        status = sweep_walk(problem, ordering, walks->start, w - 2, order);
+    }
+    walks->status[w] = status;
+}
+
 int mn_solve(const mn_problem* problem, int start, int64_t allowance, const volatile int32_t* cancel, int* order, int64_t* evaluations)
 {
     int n = problem->count;
@@ -1328,58 +1363,58 @@ int mn_solve(const mn_problem* problem, int start, int64_t allowance, const vola
         goto done;
     }
 
-    status = buckets_init(&buckets, problem);
-    if (status != MN_OK) {
-        goto done;
-    }
-    status = nearest_neighbour(problem, &buckets, &candidates, &ordering, start, order);
-    buckets_free(&buckets);
-    if (status != MN_OK) {
-        goto done;
-    }
-    if (cancel != NULL && *cancel != 0) {
-        status = mn_fail(MN_ERR_CANCELLED, "Cancelled.");
-        goto done;
-    }
-
-    status = buckets_init(&buckets, problem);
-    if (status != MN_OK) {
-        goto done;
-    }
-    for (int k = 0; k < ordering.pairs; k++) {
-        ordering.pending[problem->after[k]]++;
-    }
-    status = smooth_walk(problem, &buckets, &candidates, &ordering, start, smooth);
-    buckets_free(&buckets);
-    if (status != MN_OK) {
-        goto done;
-    }
-    if (cancel != NULL && *cancel != 0) {
-        status = mn_fail(MN_ERR_CANCELLED, "Cancelled.");
-        goto done;
-    }
-
-    float best = mn_path_cost(problem, order, n);
-    float cost = mn_path_cost(problem, smooth, n);
-    if (cost < best) {
-        memcpy(order, smooth, (size_t)n * sizeof(int));
-        best = cost;
-    }
-    for (int axis = 0; axis < 2; axis++) {
-        for (int k = 0; k < ordering.pairs; k++) {
-            ordering.pending[problem->after[k]]++;
+    /* The four start walks are independent given their own buckets and orderings, so they run on
+     * the worker pool (T-160); the cheapest is chosen afterwards in the fixed order nearest
+     * neighbour, smooth walk, sweep along X, sweep along Y, which gives the tour of the sequential
+     * version. */
+    {
+        walk_job walks;
+        memset(&walks, 0, sizeof(walks));
+        walks.problem = problem;
+        walks.candidates = &candidates;
+        walks.start = start;
+        walks.orders[0] = order;
+        walks.orders[1] = smooth;
+        walks.orders[2] = (int*)mn_alloc((size_t)n, sizeof(int));
+        walks.orders[3] = (int*)mn_alloc((size_t)n, sizeof(int));
+        int ready = 0;
+        if (walks.orders[2] == NULL || walks.orders[3] == NULL) {
+            status = mn_fail(MN_ERR_MEMORY, "Out of memory for a route of %d nodes.", n);
         }
-        status = sweep_walk(problem, &ordering, start, axis, smooth);
+        for (int w = 0; w < MN_START_WALKS && status == MN_OK; w++) {
+            status = order_init(&walks.orderings[w], problem);
+            ready += status == MN_OK ? 1 : 0;
+        }
+        if (status == MN_OK) {
+            status = mn_rows_parallel(MN_START_WALKS, walk_row, &walks, NULL, mn_mini(MN_START_WALKS, mn_worker_count()));
+        }
+        for (int w = 0; w < MN_START_WALKS && status == MN_OK; w++) {
+            if (walks.status[w] != MN_OK) {
+                status = mn_fail(walks.status[w], "Start walk %d of the route failed.", w);
+            }
+        }
+        if (status == MN_OK && cancel != NULL && *cancel != 0) {
+            status = mn_fail(MN_ERR_CANCELLED, "Cancelled.");
+        }
+        if (status == MN_OK) {
+            float best = mn_path_cost(problem, order, n);
+            for (int w = 1; w < MN_START_WALKS; w++) {
+                float cost = mn_path_cost(problem, walks.orders[w], n);
+                if (cost < best) {
+                    memcpy(order, walks.orders[w], (size_t)n * sizeof(int));
+                    best = cost;
+                }
+            }
+        }
+        for (int w = 0; w < ready; w++) {
+            order_free(&walks.orderings[w]);
+        }
+        free(walks.orders[2]);
+        free(walks.orders[3]);
         if (status != MN_OK) {
             goto done;
         }
-        cost = mn_path_cost(problem, smooth, n);
-        if (cost < best) {
-            memcpy(order, smooth, (size_t)n * sizeof(int));
-            best = cost;
-        }
     }
-
 
     int cancelled = 0;
     status = local_search(problem, &candidates, order, allowance, cancel, evaluations, &cancelled);

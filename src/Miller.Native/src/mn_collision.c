@@ -426,7 +426,11 @@ static int propagate(const mn_grid* g, const mn_profile* profile, float cutter_l
     for (int round = 0; round < MN_PROPAGATION_ROUNDS; round++) {
         mn_apply_limit(effective, raised, cells, tip);
         closing_with_runner_up(g, tip, profile, lowest, lowest_by, runner_up);
-        mn_head_limit_compute(g, lowest, profile->annulus, profile->annulus_count, cutter_length, limit);
+        int limit_status = mn_head_limit_compute(g, lowest, profile->annulus, profile->annulus_count, cutter_length, limit);
+        if (limit_status != MN_OK) {
+            changed = limit_status;
+            break;
+        }
         int added = 0;
         for (int p = 0; p < cells; p++) {
             float z = tip[p];

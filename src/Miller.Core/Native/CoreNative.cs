@@ -80,6 +80,15 @@ internal static unsafe class CoreNative
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct Dirty
+    {
+        public int I0;
+        public int J0;
+        public int I1;
+        public int J1;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct Statistics
     {
         public float RapidLength;
@@ -125,6 +134,9 @@ internal static unsafe class CoreNative
         public int Model;
     }
 
+    public const int EventHead = 0;
+    public const int EventRapid = 1;
+
     public const int MaskHeadLimited = 0;
     public const int MaskShouldCut = 1;
     public const int MaskStatus = 2;
@@ -168,24 +180,30 @@ internal static unsafe class CoreNative
 
     [DllImport(Library)] public static extern IntPtr mn_last_error();
     [DllImport(Library)] public static extern void mn_free(void* pointer);
+    [DllImport(Library)] public static extern void mn_set_worker_limit(int limit);
+    [DllImport(Library)] public static extern int mn_workers();
+
+    [DllImport(Library)] public static extern int mn_sweep(float* stock, Grid* grid, Offset* offsets, int count, float* from, float* to, Dirty* dirty);
+    [DllImport(Library)] public static extern int mn_stamp(float* stock, Grid* grid, Offset* offsets, int count, float* tip, Dirty* dirty);
+    [DllImport(Library)] public static extern int mn_check_tip(float* stock, Grid* grid, Offset* offsets, int offsetCount, Offset* annulus, int annulusCount, float cutterLength, float tolerance, float* tip, int rapid, int* cells, float* surfaces, int capacity, int* firstKind, float* firstStock, float* firstSurface);
 
     [DllImport(Library)] public static extern int mn_profile_create(Tool* tool, float cellSize, Offset** offsets, int* offsetCount, Offset** annulus, int* annulusCount);
     [DllImport(Library)] public static extern float mn_bottom_height(int tipType, float radius, float distance);
 
     [DllImport(Library)] public static extern void mn_transform_points(float* points, int pointCount, float* matrix, float* result);
     [DllImport(Library)] public static extern int mn_grid_for(float minX, float minY, float maxX, float maxY, float cellSize, Grid* grid);
-    [DllImport(Library)] public static extern void mn_rasterize(float* triangles, int triangleCount, Grid* grid, float* z);
+    [DllImport(Library)] public static extern int mn_rasterize(float* triangles, int triangleCount, Grid* grid, float* z);
     [DllImport(Library)] public static extern int mn_stock_map(float cornerX, float cornerY, float sizeX, float sizeY, float top, int cylinder, float diameter, float cellSize, Grid* grid, float** z);
 
-    [DllImport(Library)] public static extern void mn_tip_map(Grid* grid, float* model, Offset* offsets, int count, float* tip);
-    [DllImport(Library)] public static extern void mn_remaining(Grid* grid, float* tip, Offset* offsets, int count, float* remaining);
+    [DllImport(Library)] public static extern int mn_tip_map(Grid* grid, float* model, Offset* offsets, int count, float* tip);
+    [DllImport(Library)] public static extern int mn_remaining(Grid* grid, float* tip, Offset* offsets, int count, float* remaining);
     [DllImport(Library)] public static extern int mn_reach_map(Grid* grid, float* model, float* stock, Offset* offsets, int count, float floor, float percent, float tolerance, IntPtr progress, IntPtr context, float* reach);
     [DllImport(Library)] public static extern double mn_reach_round_percent(float percent, int round);
     [DllImport(Library)] public static extern int mn_reach_rank(int n, float percent);
     [DllImport(Library)] public static extern float mn_reach_select(float* values, int n, int rank);
     [DllImport(Library)] public static extern float mn_reach_select_threshold(float* values, byte* excluded, int n, double percent);
     [DllImport(Library)] public static extern int mn_reachable_at(float reachFloor, float level);
-    [DllImport(Library)] public static extern void mn_head_limit(Grid* grid, float* remaining, Offset* annulus, int count, float cutterLength, float* limit);
+    [DllImport(Library)] public static extern int mn_head_limit(Grid* grid, float* remaining, Offset* annulus, int count, float cutterLength, float* limit);
     [DllImport(Library)] public static extern void mn_apply_head_limit(float* tip, float* limit, int cells, float* effective);
     [DllImport(Library)] public static extern void mn_head_limited_mask(float* tip, float* limit, int cells, float tolerance, byte* mask);
     [DllImport(Library)] public static extern int mn_distances(byte* mask, int width, int height, float cellSize, float* distances);
