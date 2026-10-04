@@ -578,7 +578,8 @@ MN_API int32_t mn_islands_find(const mn_grid* grid, const float* standing, const
  * wherever the head of a deeper position would meet the slab above it: by the widest head radius
  * where the head bottom lies at least the head's widening height below that slab, and by the head
  * radius at the height the slab stands above the head bottom where it lies closer, so a frustum
- * leaves a slope instead of one tread of its widest radius. */
+ * leaves a slope instead of one tread of its widest radius. The slab counts `tolerance` higher than
+ * its level, the height the simplifier's chords leave its material at (T-163). */
 int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* stock, const mn_tool* tool, float tolerance, float stock_top, float floor, float min_island_volume, float* standing, mn_ints* island_cells, mn_ints* island_offsets, float** island_volumes, int* island_count)
 {
     const mn_grid* g = &plan->grid;
@@ -628,7 +629,7 @@ int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* 
             goto done;
         }
         const uint8_t* below = k + 1 < count ? masks + (size_t)(k + 1) * (size_t)cells : NULL;
-        int reach = mn_head_reach(plan->levels, count, k, stock_top, tool->cutter_length + widening);
+        int reach = mn_head_reach(plan->levels, count, k, stock_top, tool->cutter_length + widening - tolerance);
         int any_cleared = reach >= 0;
         if (any_cleared) {
             status = mn_within_radius(masks + (size_t)reach * (size_t)cells, width, height, cell_size, overhang, cleared);
@@ -636,10 +637,13 @@ int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* 
                 goto done;
             }
         }
+        /* The slab's material stands up to `tolerance` above its level (the simplifier keeps chords
+         * that far above the planned tip), so the head meets it that much earlier: a slab level with
+         * the head bottom is not clear, its chords are (T-163). */
         float slab_top = k == 0 ? stock_top : plan->levels[k - 1];
         int sources = 0;
         for (int c = 0; c < cells; c++) {
-            float h = slab_top - deepest_position[c] - tool->cutter_length;
+            float h = slab_top + tolerance - deepest_position[c] - tool->cutter_length;
             float radius = mn_head_radius_at(tool, h) - cutter_radius + margin;
             int widens = h > MN_LEVEL_TOLERANCE && !(h > widening + MN_LEVEL_TOLERANCE) && radius > 0;
             slope[c] = widens ? -(radius / cell_size) * (radius / cell_size) : INFINITY;

@@ -244,9 +244,15 @@ below the tip map by more than `Tolerance`.
   `dz(d) = HeadLength * (d - rb) / (rt - rb)` for `rb < d <= rt`. A frustum that
   narrows upward has its widest part at the bottom and acts as the cylinder of
   `HeadDiameter`.
-- The separation terraces (`SeparationRegion`) widen by the widest head radius,
-  so for a frustum they are those of the cylinder of its widest diameter (safe,
-  never narrower than the head needs).
+- The separation terraces (`SeparationRegion`) widen by the head radius at the
+  height the slab stands above the head bottom of the deeper positions (the
+  widest radius once the slab is a widening height above), plus the head margin.
+  The slab counts `Tolerance` higher than its level (T-163): the simplifier
+  keeps chords up to the tolerance above the planned tip, so the slab's material
+  stands that much above its level and a slab level with the head bottom is not
+  clear. Without that slack the heart under a 0.8 mm cutter 2 mm long reported
+  head contacts of 3 to 37 micrometres with the terraces in every build since
+  the terraces exist.
 
 ### 6.3 Heightmaps
 
@@ -2087,6 +2093,14 @@ check that decides done.
 - Input: user request (identify where the larger milling depth is allowed and where it is not, to avoid collisions; the far block cut deeper than the normal depth where it should not)
 - Output: the rule of section 6.4 (where the larger depth is allowed): a standing map folded level by level, per far step the forbidden disks of every standing cell through the power-distance envelope, positions allowed step by step, the rest cut with the normal stepdown; the T-157 thresholds remain as the special case of one standing height, with the chain corrected by the cutter radius
 - Acceptance: a 10 x 10 x 8 box in a 40 x 40 x 9 stock under a 6 mm cutter 2 mm long with a frustum head 7 to 20 mm over 10 mm, far stepdown 4 over stepdown 2: before every step route of the second group no annulus cell of any tip stands above the head underside, the material between the near band and the head radius at the column height less the cutter radius keeps the group's top level, every position beyond that radius is cut to 3, and the final stock equals the one without a far stepdown; the cylinder fixture of T-157 reaches a fourth step on a strip along the stock border with the corrected chain and nothing below 1 after its far block; the frustum, the short cutter in both modes and the far stepdown pipeline tests hold; the user's live project at cell 0.05 with far stepdown 0.2 gives the same path as before (its far region holds no wall the head reaches at the step depth, 0 of 34 events in far block layers before and after) in 352 s against 354 s; 804 tests pass
+- Status: done
+
+#### T-163 Terraces cleared by the chord slack
+- Depends on: T-152
+- Files: `src/Miller.Native/src/mn_slicing.c`, `tests/Miller.Tests/Core/Slicing/SeparationRegionTests.cs`
+- Input: user report (collisions reported on the stock, not on the model, with the current setup)
+- Output: the slab of a separation terrace counts `Tolerance` higher than its level in the clearance rule and in the fully widened reach (section 6.2), so a slab level with the head bottom is cleared by the head overhang like every slab above it
+- Acceptance: a 10 x 10 x 10 box in a 30 x 30 x 10 stock under a 4 mm cutter 4 mm long with an 8 mm head: every position within the head overhang less a cell of a floor position that is allowed at level 2 lies in the level 2 trench; the deep stock terrace test, the separation, bridge, collision mode and far stepdown tests hold; the heart golden unchanged; on the user's live project at cell 0.025 with far stepdown 0.2 the stock-only contacts measured before and after the change; build 1.0.106 at the same settings without the far stepdown reports 77 events, 55 touching the model; 805 tests pass
 - Status: done
 
 ### M8 Packaging and release
