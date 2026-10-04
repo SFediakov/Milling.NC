@@ -129,6 +129,8 @@ static int lower_envelope(float* values, int width, int height)
     return status;
 }
 
+int mn_lower_envelope(float* values, int width, int height) { return lower_envelope(values, width, height); }
+
 int mn_distance_transform(const uint8_t* mask, int width, int height, float cell_size, float* distances)
 {
     if (!(cell_size > 0)) {

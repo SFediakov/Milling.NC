@@ -1152,19 +1152,37 @@ static void count_pass(mn_z_state* s, const mn_ints* nodes, int* max_nodes)
     *max_nodes = mn_maxi(*max_nodes, nodes->count);
 }
 
-/* The steps of a group's far block (T-157). A single step can never go deeper than the cutter length:
- * the head is wider than the cutter and meets the uncut material ahead of it, whatever the order of
- * the nodes. So the far region is cut in steps of the largest multiple of the stepdown within the
- * cutter length (one step when the far stepdown fits), each over the positions far enough from the
- * material that stands at `standing_top` during the far block (the band nearer than the stepover,
- * the model, everything no far footprint covers) and from what the shallower steps leave standing:
- * with D_t the depth of step t below the standing top, c the cutter length, r the cutter radius,
- * R(h) the head radius at height h above the head bottom and m the head margin, a position belongs
- * to every step whose threshold it reaches, delta_t = max(R(D_t - c) + m, max over steps u with
- * D_t - D_u > c of delta_(u+1) + r + R(D_t - D_u - c) + m), 0 while D_t is within c, so every route
- * drops at most one step below the material the previous route left. Its cells leave the walk masks
- * down to its deepest step's level only; the walk cuts the rest once the near band is down. */
-static int far_steps_of(mn_z_state* s, mn_z_group* group, const mn_ints* far, float standing_top, int* max_nodes)
+/* The steps of a group's far block (T-157): a single step never goes deeper than the cutter length,
+ * because the head is wider than the cutter and meets the uncut material ahead of it whatever the
+ * order of the nodes, so the far region is cut in steps of the largest multiple of the stepdown within
+ * the cutter length (one step when the far stepdown fits), shallow to deep; which positions each
+ * step may take is decided by far_steps_of (T-162). */
+
+/* The cells a far position cuts stand at the step's level from then on. */
+static void cover_level(const mn_grid* g, const mn_profile* profile, int cell, float level, float* far_level)
+{
+    int ci = cell % g->width;
+    int cj = cell / g->width;
+    for (int o = 0; o < profile->offset_count; o++) {
+        int i = ci + profile->offsets[o].dx;
+        int j = cj + profile->offsets[o].dy;
+        if (mn_in_bounds(g, i, j)) {
+            far_level[j * g->width + i] = level;
+        }
+    }
+}
+
+/* Where the larger depth is allowed (T-162): a far position is cut at a step only if the head at that
+ * step's level clears what stands at that moment, and a position allowed at a step was allowed at
+ * every shallower one, so no route drops more than one step. What stands is the `standing` map (the
+ * stock as the levels above the group leave it: the model, uncut stock, the near band at the group's
+ * top) and, once a step is assigned, the cells its footprints cut, at that step's level. A cell
+ * standing H above the head bottom of a step forbids the positions within R(H) + margin of it
+ * (mn_head_radius_at, mn_head_margin); the power-distance lower envelope of those disks tells for
+ * every position whether one reaches it. With every standing cell at the group's top this is the
+ * threshold rule of T-157; a wall higher than that top forbids the far depth as far as the head
+ * reaches it, and the near band cuts those positions level by level. */
+static int far_steps_of(mn_z_state* s, mn_z_group* group, const mn_ints* far, const float* standing, int* max_nodes)
 {
     const mn_context* context = s->context;
     const mn_plan* plan = context->plan;
@@ -1174,63 +1192,78 @@ static int far_steps_of(mn_z_state* s, mn_z_group* group, const mn_ints* far, fl
     int last = group->last;
     float stepdown = context->parameters.stepdown;
     float cutter_length = context->tool.cutter_length;
-    float cutter_radius = context->tool.cutter_diameter / 2.0f;
     float margin = mn_head_margin(g->cell_size, context->parameters.tolerance);
     int per_step = mn_maxi(1, mn_f2i(floorf((cutter_length + MN_LEVEL_TOLERANCE) / stepdown)));
     int count = (last - first + per_step) / per_step;
     group->steps = (mn_z_step*)mn_alloc((size_t)count, sizeof(mn_z_step));
-    float* depth = (float*)mn_alloc((size_t)count, sizeof(float));
-    float* threshold = (float*)mn_alloc((size_t)count, sizeof(float));
-    float* distance = (float*)mn_alloc((size_t)cells, sizeof(float));
+    float* far_level = (float*)mn_alloc((size_t)cells, sizeof(float));
+    float* field = (float*)mn_alloc((size_t)cells, sizeof(float));
+    int* deepest = (int*)mn_alloc((size_t)(far->count > 0 ? far->count : 1), sizeof(int));
     int status = MN_OK;
-    if (group->steps == NULL || depth == NULL || threshold == NULL || distance == NULL) {
+    if (group->steps == NULL || far_level == NULL || field == NULL || deepest == NULL) {
         status = mn_fail(MN_ERR_MEMORY, "Out of memory for the far block of %d steps.", count);
         goto done;
     }
     group->step_count = count;
     for (int t = 0; t < count; t++) {
-        int level = mn_mini(first + (t + 1) * per_step - 1, last);
-        group->steps[t].level = level;
-        depth[t] = standing_top - plan->levels[level];
-    }
-    for (int t = 0; t < count; t++) {
-        float value = 0.0f;
-        if (depth[t] > cutter_length + MN_LEVEL_TOLERANCE) {
-            value = mn_head_radius_at(&context->tool, depth[t] - cutter_length) + margin;
-            for (int u = 0; u + 1 < t; u++) {
-                float slab = depth[t] - depth[u] - cutter_length;
-                if (slab > MN_LEVEL_TOLERANCE) {
-                    value = mn_max(value, threshold[u + 1] + cutter_radius + mn_head_radius_at(&context->tool, slab) + margin);
-                }
-            }
-        }
-        threshold[t] = value;
-    }
-
-    memset(s->covered, 0, (size_t)cells);
-    for (int m = 0; m < far->count; m++) {
-        cover_footprint(g, s->profile, far->items[m], s->covered);
+        group->steps[t].level = mn_mini(first + (t + 1) * per_step - 1, last);
     }
     for (int c = 0; c < cells; c++) {
-        s->inside[c] = (uint8_t)(!mn_isnan(context->stock[c]) && !s->covered[c]);
+        far_level[c] = NAN;
     }
-    status = mn_distance_transform(s->inside, g->width, g->height, g->cell_size, distance);
-    for (int m = 0; m < far->count && status == MN_OK; m++) {
-        int c = far->items[m];
-        int t = -1;
-        for (int k = 0; k < count; k++) {
-            if (distance[c] >= threshold[k]) {
-                t = k;
+    for (int n = 0; n < far->count; n++) {
+        deepest[n] = -1;
+    }
+
+    for (int t = 0; t < count && status == MN_OK; t++) {
+        float z = plan->levels[group->steps[t].level];
+        float head_bottom = z + cutter_length;
+        int sources = 0;
+        for (int c = 0; c < cells; c++) {
+            float top = mn_isnan(far_level[c]) ? standing[c] : far_level[c];
+            field[c] = INFINITY;
+            if (mn_isnan(top)) {
+                continue;
+            }
+            float h = top - head_bottom;
+            if (!(h > MN_LEVEL_TOLERANCE)) {
+                continue;
+            }
+            float radius = (mn_head_radius_at(&context->tool, h) + margin) / g->cell_size;
+            field[c] = -radius * radius;
+            sources++;
+        }
+        if (sources > 0) {
+            status = mn_lower_envelope(field, g->width, g->height);
+            if (status != MN_OK) {
+                break;
             }
         }
-        if (t < 0) {
+        mn_z_step* step = &group->steps[t];
+        for (int n = 0; n < far->count && status == MN_OK; n++) {
+            if (deepest[n] != t - 1) {
+                continue;
+            }
+            int c = far->items[n];
+            if (sources > 0 && !(field[c] > 0.0f)) {
+                continue;
+            }
+            deepest[n] = t;
+            status = mn_ints_push(&step->cells, c);
+        }
+        if (step->cells.count == 0) {
+            break;
+        }
+        for (int m = 0; m < step->cells.count; m++) {
+            cover_level(g, s->profile, step->cells.items[m], z, far_level);
+        }
+    }
+    for (int n = 0; n < far->count && status == MN_OK; n++) {
+        if (deepest[n] < 0) {
             continue;
         }
-        /* Every step down to the deepest one reached: a route never drops more than one step. */
-        for (int k = 0; k <= t && status == MN_OK; k++) {
-            status = mn_ints_push(&group->steps[k].cells, c);
-        }
-        for (int k = 0; k <= group->steps[t].level - first; k++) {
+        int c = far->items[n];
+        for (int k = 0; k <= group->steps[deepest[n]].level - first; k++) {
             group->plan.masks[(size_t)k * (size_t)cells + (size_t)c] = 0;
         }
     }
@@ -1259,15 +1292,40 @@ static int far_steps_of(mn_z_state* s, mn_z_group* group, const mn_ints* far, fl
     }
 
 done:
-    free(depth);
-    free(threshold);
-    free(distance);
+    free(far_level);
+    free(field);
+    free(deepest);
     return status;
+}
+
+/* The standing map after the levels first..last are cut: every cell within the cutter radius of a
+ * position of a level's mask drops to that level plus the tool bottom height at its distance. */
+static int standing_fold(const mn_context* context, int first, int last, float* distance, float* standing)
+{
+    const mn_plan* plan = context->plan;
+    const mn_grid* g = &context->grid;
+    int cells = mn_cells(g);
+    float r = context->tool.cutter_diameter / 2.0f;
+    for (int k = first; k <= last; k++) {
+        MN_CHECK(mn_distance_transform(plan->masks + (size_t)k * (size_t)cells, g->width, g->height, g->cell_size, distance));
+        float level = plan->levels[k];
+        for (int c = 0; c < cells; c++) {
+            float d = distance[c];
+            if (!(d <= r + MN_RADIUS_TOLERANCE) || mn_isnan(standing[c])) {
+                continue;
+            }
+            float cut = level + mn_bottom_height(context->tool.tip_type, r, d);
+            if (cut < standing[c]) {
+                standing[c] = cut;
+            }
+        }
+    }
+    return MN_OK;
 }
 
 /* Prepares the group of the plan levels first..last: its plan, its far region, its cave tree and the
  * nodes of every route. */
-static int z_group_prepare(mn_z_state* s, int first, int last, int far_on, mn_z_group* group, int* max_nodes)
+static int z_group_prepare(mn_z_state* s, int first, int last, int far_on, const float* standing, mn_z_group* group, int* max_nodes)
 {
     const mn_context* context = s->context;
     const mn_plan* plan = context->plan;
@@ -1300,8 +1358,7 @@ static int z_group_prepare(mn_z_state* s, int first, int last, int far_on, mn_z_
             mn_ints far = { 0 };
             int status = far_cells_of(context, plan->masks + (size_t)last * (size_t)cells, plan->levels[last], &far);
             if (status == MN_OK) {
-                float standing_top = first > 0 ? plan->levels[first - 1] : context->stock_top;
-                status = far_steps_of(s, group, &far, standing_top, max_nodes);
+                status = far_steps_of(s, group, &far, standing, max_nodes);
             }
             mn_ints_free(&far);
             MN_CHECK(status);
@@ -1527,6 +1584,8 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
     int group_count = 0;
     mn_ints top_nodes = { 0 };
     mn_writer* writer = NULL;
+    float* standing = NULL;
+    float* distance = NULL;
     s.touches = (uint8_t*)mn_alloc((size_t)cells, 1);
     s.inside = (uint8_t*)mn_alloc((size_t)cells, 1);
     s.covered = (uint8_t*)mn_alloc((size_t)cells, 1);
@@ -1560,10 +1619,22 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
         status = mn_fail(MN_ERR_MEMORY, "Out of memory for %d level groups.", group_count);
         goto done;
     }
+    if (far_on) {
+        standing = (float*)mn_alloc((size_t)cells, sizeof(float));
+        distance = (float*)mn_alloc((size_t)cells, sizeof(float));
+        if (standing == NULL || distance == NULL) {
+            status = mn_fail(MN_ERR_MEMORY, "Out of memory for the standing map of the far block.");
+            goto done;
+        }
+        memcpy(standing, context->stock, (size_t)cells * sizeof(float));
+    }
     for (int gi = 0; gi < group_count && status == MN_OK; gi++) {
         int first = gi * group_size;
         int last = mn_mini(first + group_size, plan->count) - 1;
-        status = z_group_prepare(&s, first, last, far_on, &groups[gi], &max_nodes);
+        status = z_group_prepare(&s, first, last, far_on, standing, &groups[gi], &max_nodes);
+        if (status == MN_OK && far_on) {
+            status = standing_fold(context, first, last, distance, standing);
+        }
     }
     if (status != MN_OK) {
         goto done;
@@ -1637,6 +1708,8 @@ done:
     mn_ints_free(&top_nodes);
     mn_profile_free(&profile);
     free(s.lifted);
+    free(standing);
+    free(distance);
     mn_writer_free(writer);
     guard_free(&guard);
     return status;
