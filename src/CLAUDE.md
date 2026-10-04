@@ -617,3 +617,22 @@
   corner family shifts the cutter a cell away from the wall and leaves a strip of wall standing at
   full level height (LevelCoverage and CollisionModes tests), the chord along the outer family
   gouges. At cell resolution the staircase is the wall; smoother moves cost the tolerance.
+- The simulation port (T-159) and the parallel stages (T-160) share one commit on purpose: the
+  header, `CoreNative.cs` and the return types of the map exports carry both, and a split would have
+  left one of the two states unbuildable.
+- Two generation stages stay sequential by nature and are not a missing parallelization: the local
+  search (every move is evaluated against the route the previous move left) and the dynamic
+  collision check (every segment meets the stock as the segments before it left it). The four start
+  walks run in parallel and the route stage still takes 790 of the heart's 1100 ms.
+- `mn_fail` writes a thread-local message: a row that fails on a worker thread leaves no text the
+  caller can read. Every parallel stage collects a status per row and the caller fails again with
+  it on its own thread (simplifier runs, start walks).
+- The pool read `scratch[index]` although `mn_rows_parallel` documents a NULL scratch array; it was
+  only ever called with a scratch array before T-160. Both now accept NULL.
+- A pool per call costs about 3 ms for 15 threads on this machine: the transform went from 0 to
+  3 ms and the slicing masks from 1 to 6 ms on the heart, while the reach map went from 62 to 13 ms
+  and the simplifier from 28 to 13 ms. Stages under a millisecond gain nothing; the result stays
+  identical, so none was taken back out.
+- Merging consecutive sweep samples that fall into one cell into their lowest z is exact because
+  the stamp is a minimum, and it gives most of the native sweep's speed; the check must keep the
+  offset order of the entered cells, because the first entered cell decides the event kind.

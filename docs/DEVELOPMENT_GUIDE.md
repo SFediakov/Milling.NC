@@ -621,6 +621,19 @@ M30
   commands (Next layer: loaded, idle, not finished; Previous layer: loaded,
   idle, progress above zero) and the readout "k of N layers done, layer m at
   Z z".
+- Native simulation (T-159): `MaterialRemover.Sweep`, `MaterialRemover.Stamp`
+  and `CollisionDetector.Check` are facades of `mn_sweep`, `mn_stamp` and
+  `mn_check_tip` (`mn_simulate.c`); the stock stays the C# `HeightMap`, whose
+  cell array is pinned for the call, and the public signatures are unchanged.
+  The rules are those of the former C# code, bit for bit: samples at most
+  `CellSize / 2` apart including both ends, per sample
+  `stock = min(stock, z + dz)` over the footprint, the first entered cell of a
+  check decides the event (rapid footprint first, then the head annulus), every
+  entered cell reported in offset order. Consecutive samples that fall into one
+  cell are stamped once at their lowest z (the same minimum), footprint rows are
+  clipped to the grid as spans, a flat tip stamps one constant. The C# rules are
+  kept as the reference in `NativeSimulationTests`; the heart at 0.4 mm cells
+  runs `RunToEnd` in 8 ms against 133 ms with them (`out/simulation-timing.txt`).
 
 ### 6.7 Validation rules (`ProjectValidator`)
 
@@ -699,8 +712,15 @@ Concrete form of the root rules:
   source, a limit's reason).
 - Culture: `CultureInfo.InvariantCulture` for every parse and format.
 - Threads: only `PipelineService` and `AnalysisService` run work on a
-  background task (`Task.Run`); Core never starts threads; UI updates only via
-  the Avalonia dispatcher.
+  background task (`Task.Run`); Core never starts threads of its own; UI updates
+  only via the Avalonia dispatcher. The native library runs its parallel stages
+  (T-160) on a worker pool of `mn_workers` threads (the processor count, or the
+  limit set through `NativeWorkers.Limit`), worker 0 being the calling thread;
+  rows are striped over the workers and every row depends on the input only, so
+  every stage gives the same result with any count (`ParallelGenerationTests`
+  compares one worker with all). Progress and cancellation stay on the calling
+  thread; a row that fails stores its status and the caller fails again with it,
+  because the error text is thread-local.
 - Naming: ids of strategies and post-processors are lowercase with hyphens.
 - Exceptions: Core throws `ArgumentException` / `InvalidDataException` with the
   offending value in the message; Application wraps nothing; App shows them via
@@ -2013,6 +2033,22 @@ check that decides done.
 - Input: user report (the .nc output of the heart at cell 0.025 and tolerance 0.0025 shows moves one cell long; the solver does not look for the longest directions, the fine does not work)
 - Output: no change of the fine or the solver; the cause is the tolerance below the cell size, documented in section 6.4 and on the Cutting tab label; an XY floor of one cell was implemented, failed the coverage and collision tests (uncut wall strips at full level height, head hits) and was reverted; the staircase rule is tested
 - Acceptance: a slope one-in-six staircase of eight runs at cell 0.25 keeps every corner at tolerance 0.05 and becomes one chord at tolerance 0.25 with a deviation between 0.9 and 1 cell; the circle test unchanged; the user's project measured with the statistics script: tolerance 0.0025 gives 1,257,006 moves (1,031,101 one cell, 59.2 m, 99.5 percent slow feed), tolerance 0.05 gives 69,628 moves (1,433 one cell, 49.4 m, 191 min against about 222); the heart golden unchanged; 785 tests pass
+- Status: done
+
+#### T-159 Simulation in the native library
+- Depends on: T-134, T-144
+- Files: `src/Miller.Native/src/mn_simulate.c`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Core/Native/CoreNative.cs`, `src/Miller.Core/Simulation/MaterialRemover.cs`, `src/Miller.Core/Simulation/CollisionDetector.cs`, `src/Miller.Core/HeightMap/ToolProfile.cs`, `tests/Miller.Tests/Core/Simulation/NativeSimulationTests.cs`
+- Input: user request (translate the toolpath simulation into the C dll and make its execution faster)
+- Output: `mn_sweep`, `mn_stamp`, `mn_check_tip` with the rules of section 6.6 (native simulation); `MaterialRemover` and `CollisionDetector` as facades with unchanged signatures over the C# stock `HeightMap`; `ToolProfile` carries its offsets and annulus in the native layout; the C# rules kept as the reference of the tests
+- Acceptance: sweeps of flat 2.2, ball 3 and flat 6 mm tools over a 20 x 20 stock equal the reference bit for bit, dirty rectangles equal, a NaN cell stays NaN; checks with a rapid into material, a head hit and a clear position give the same event, message and entered cells in the same order; the heart at 0.4 mm cells through `SimulationEngine.RunToEnd` with a `CollisionRecorder` gives the same stock, events and contacts as the reference and runs at least three times faster (measured 8 ms against 133 ms; 24 ms at 0.2 mm cells); the 35 simulation tests unchanged; 797 tests pass
+- Status: done
+
+#### T-160 Parallel stages of the generation
+- Depends on: T-134, T-159
+- Files: `src/Miller.Native/src/mn_thread.c`, `src/Miller.Native/src/mn_thread.h`, `src/Miller.Native/src/mn_maps.c`, `src/Miller.Native/src/mn_mesh.c`, `src/Miller.Native/src/mn_slicing.c`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/src/mn_checks.c`, `src/Miller.Native/src/mn_solver.c`, `src/Miller.Native/src/mn_collision.c`, `src/Miller.Core/Native/NativeWorkers.cs`, `tests/Miller.Tests/Application/ParallelGenerationTests.cs`
+- Input: user request (parallelize the toolpath generation on each step of the process)
+- Output: `mn_rows_parallel` (a pool for the call, inline for one worker or one row, NULL scratch allowed) and the exports `mn_set_worker_limit`, `mn_workers`; rows on the pool in the triangle transform, the rasterizer (row buckets in triangle order), the tip map, the remaining map and the head limit, the slicing masks, the lower envelope of the distance transforms (columns, then rows), the feed runs of the simplifier (chords assembled in order), the four start walks of the route solver (private buckets and orderings, the cheapest chosen in the fixed order nearest neighbour, smooth, sweep X, sweep Y); `mn_rasterize`, `mn_tip_map`, `mn_remaining`, `mn_head_limit` return a status; the local search (one route evolving by moves) and the dynamic collision check (the stock evolving segment by segment) stay sequential by nature; `NativeWorkers.Count` and `Limit` as the public facade
+- Acceptance: with one worker and with all workers the box in both scopes and the heart in both strategies give identical model, tip, effective tip, head limit, standing maps, plan levels, segments, layers, statistics, status bytes, passes and collision events; the worker limit is honoured and cleared; the heart at 0.2 mm cells is not slower with all workers than with one (`out/generation-timing.txt`, per stage: reach map 62 to 13 ms, simplify 28 to 13 ms, collision check 240 to 170 ms, route 789 against 784 ms because the local search dominates; totals 1098 to 987 ms and 4400 to 4275 ms); the heart golden unchanged; 797 tests pass
 - Status: done
 
 ### M8 Packaging and release
