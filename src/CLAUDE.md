@@ -636,3 +636,20 @@
 - Merging consecutive sweep samples that fall into one cell into their lowest z is exact because
   the stamp is a minimum, and it gives most of the native sweep's speed; the check must keep the
   offset order of the entered cells, because the first entered cell decides the event kind.
+- A regression report after a port is located by differential runs, not by reading: for T-161 the
+  previous build was built in a worktree at a short path (the scratchpad path exceeded MAX_PATH for
+  the MSVC build) and its export compared move for move with the current one, then the toolpath ran
+  through the native and the reference simulation in lockstep. Both were identical; the change the
+  user saw was elsewhere.
+- The simulation panel's collision count depended on the playback cadence (the heart's 11 events
+  became 22 at 60 Hz and 32 at 5 ms steps) because every covered part ended with a head check; the
+  C# sweep had been slow enough to stretch the frames and hide it, the native sweep showed it. The
+  engine now samples at the generation check's positions, numbered from the segment start, so the
+  parts a playback covers a segment in change neither the stock nor the events (T-161).
+- The user's live project is `Mechanical/Lu/project.miller.json` (0.025 mm cells, far stepdown 0.2,
+  scaled and turned model, 0.6 mm bridges), not the `project.miller.json` committed at the root;
+  compare against the file the app actually loads. Its 67 head contacts with the heart's wall at
+  the floor under the frustum head are kept by the recursion (ratio 5) and were 47 in build 1.0.106.
+- The live project at 0.025 mm cells takes about 9 minutes per generation on this machine; the
+  diagnosis ran it in a background shell and read the output file, and a coarser cell (0.05) was
+  used for every comparison that did not need the real resolution.

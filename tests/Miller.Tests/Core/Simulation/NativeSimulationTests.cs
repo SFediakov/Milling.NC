@@ -236,8 +236,23 @@ public sealed class NativeSimulationTests
                 continue;
             }
 
-            ReferenceSweep(referenceStock, profile, s.Start, s.End);
-            RecordReference(referenceStock, profile, cutterLength, s.End, s.Kind, k, result.Model, result.Floor, referenceEvents, reported, contacts);
+            // The generation's check rule (T-161): every sweep sample stamped, the head checked at the
+            // samples at least `spacing` of sweep apart and at the end.
+            var segmentLength = Vector3.Distance(s.Start, s.End);
+            var steps = segmentLength > 0 ? (int)MathF.Ceiling(segmentLength / (profile.CellSize / 2)) : 0;
+            var increment = steps == 0 ? 0f : segmentLength / steps;
+            var since = 0f;
+            for (var n = 0; n <= steps; n++)
+            {
+                var tip = Vector3.Lerp(s.Start, s.End, steps == 0 ? 0f : (float)n / steps);
+                ReferenceStamp(referenceStock, profile, tip);
+                since += increment;
+                if (n == steps || since >= spacing)
+                {
+                    RecordReference(referenceStock, profile, cutterLength, tip, s.Kind, k, result.Model, result.Floor, referenceEvents, reported, contacts);
+                    since = 0;
+                }
+            }
         }
 
         referenceWatch.Stop();
@@ -245,6 +260,7 @@ public sealed class NativeSimulationTests
         Assert.Equal(referenceStock.Z, nativeStock.Z);
         Assert.Equal(referenceEvents.Select(e => (e.Kind, e.Segment, e.Tip, e.Message)), events.Select(e => (e.Kind, e.SegmentIndex, e.Position, e.Message)));
         Assert.Equal(contacts, recorder.Contacts);
+        Assert.Equal(result.Collisions.Report!.Events.Select(e => (e.Kind, e.SegmentIndex, e.Position)), events.Select(e => (e.Kind, e.SegmentIndex, e.Position)));
 
         var line = string.Create(CultureInfo.InvariantCulture, $"heart at 0.4 mm cells, {result.Toolpath.Count} segments: native {nativeWatch.ElapsedMilliseconds} ms, C# reference {referenceWatch.ElapsedMilliseconds} ms");
 

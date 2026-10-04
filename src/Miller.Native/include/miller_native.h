@@ -133,6 +133,11 @@ MN_API int32_t mn_workers(void);
  * included, every footprint cell taking min(stock, z + dz); `dirty` receives the cells that got lower.
  * One tool position: mn_stamp. */
 MN_API int32_t mn_sweep(float* stock, const mn_grid* grid, const mn_offset* offsets, int32_t count, const float* from, const float* to, mn_dirty* dirty);
+/* The sample count of a segment (cell / 2 apart, both ends included) and its length. */
+MN_API int32_t mn_segment_steps(const float* start, const float* end, float cell_size, float* length);
+/* Samples first..last of the whole segment's samples (clamped); the tip of the last one in last_tip
+ * (may be NULL); returns the segment's sample count or a negative status. */
+MN_API int32_t mn_sweep_samples(float* stock, const mn_grid* grid, const mn_offset* offsets, int32_t count, const float* start, const float* end, int32_t first, int32_t last, mn_dirty* dirty, float* last_tip);
 MN_API int32_t mn_stamp(float* stock, const mn_grid* grid, const mn_offset* offsets, int32_t count, const float* tip, mn_dirty* dirty);
 /* The cells one tip enters, in offset order (the footprint of a rapid first, then the head annulus),
  * with the tool surface height there; returns their number (at most `capacity`, else an error) and

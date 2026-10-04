@@ -150,25 +150,46 @@ MN_API int32_t mn_stamp(float* stock, const mn_grid* grid, const mn_offset* offs
     return MN_OK;
 }
 
-MN_API int32_t mn_sweep(float* stock, const mn_grid* grid, const mn_offset* offsets, int32_t count, const float* from, const float* to, mn_dirty* dirty)
+static int segment_steps(mn_v3 a, mn_v3 b, float cell_size, float* length)
 {
-    MN_CHECK(check_arguments(stock, grid, offsets, count, from));
-    if (to == NULL) {
+    *length = mn_v3_distance(a, b);
+    return *length > 0 ? mn_f2i(ceilf(*length / (cell_size / 2.0f))) : 0;
+}
+
+MN_API int32_t mn_segment_steps(const float* start, const float* end, float cell_size, float* length)
+{
+    if (start == NULL || end == NULL || length == NULL || !(cell_size > 0)) {
+        return mn_fail(MN_ERR_ARGUMENT, "The sample count needs both ends, a positive cell size and a length output.");
+    }
+    return segment_steps(mn_v3_make(start[0], start[1], start[2]), mn_v3_make(end[0], end[1], end[2]), cell_size, length);
+}
+
+/* Samples first..last (clamped to 0..steps) of the segment; returns the step count. The samples are
+ * those of the whole segment, so a segment swept in parts gets the same stamps as one swept at once. */
+static int sweep_samples(float* stock, const mn_grid* grid, const mn_offset* offsets, int32_t count, const float* start, const float* end, int first, int last, mn_dirty* dirty, float* last_tip)
+{
+    MN_CHECK(check_arguments(stock, grid, offsets, count, start));
+    if (end == NULL) {
         return mn_fail(MN_ERR_ARGUMENT, "The sweep needs an end point.");
     }
     dirty_clear(dirty);
     mn_footprint fp;
     MN_CHECK(footprint_build(offsets, count, &fp));
-    mn_v3 a = mn_v3_make(from[0], from[1], from[2]);
-    mn_v3 b = mn_v3_make(to[0], to[1], to[2]);
-    float spacing = grid->cell_size / 2.0f;
-    float length = mn_v3_distance(a, b);
-    int steps = length > 0 ? mn_f2i(ceilf(length / spacing)) : 0;
+    mn_v3 a = mn_v3_make(start[0], start[1], start[2]);
+    mn_v3 b = mn_v3_make(end[0], end[1], end[2]);
+    float length;
+    int steps = segment_steps(a, b, grid->cell_size, &length);
+    if (first < 0) {
+        first = 0;
+    }
+    if (last > steps) {
+        last = steps;
+    }
     int pending = 0;
     int pci = 0;
     int pcj = 0;
     float pz = 0.0f;
-    for (int s = 0; s <= steps; s++) {
+    for (int s = first; s <= last; s++) {
         float t = steps == 0 ? 0.0f : (float)s / (float)steps;
         mn_v3 tip = mn_v3_lerp(a, b, t);
         int ci = mn_cell_i(grid, tip.x);
@@ -191,7 +212,25 @@ MN_API int32_t mn_sweep(float* stock, const mn_grid* grid, const mn_offset* offs
         stamp_spans(stock, grid, &fp, pci, pcj, pz, dirty);
     }
     free(fp.spans);
-    return MN_OK;
+    if (last_tip != NULL) {
+        int at = last < 0 ? 0 : last;
+        mn_v3 tip = steps == 0 ? a : mn_v3_lerp(a, b, (float)at / (float)steps);
+        last_tip[0] = tip.x;
+        last_tip[1] = tip.y;
+        last_tip[2] = tip.z;
+    }
+    return steps;
+}
+
+MN_API int32_t mn_sweep_samples(float* stock, const mn_grid* grid, const mn_offset* offsets, int32_t count, const float* start, const float* end, int32_t first, int32_t last, mn_dirty* dirty, float* last_tip)
+{
+    return sweep_samples(stock, grid, offsets, count, start, end, first, last, dirty, last_tip);
+}
+
+MN_API int32_t mn_sweep(float* stock, const mn_grid* grid, const mn_offset* offsets, int32_t count, const float* from, const float* to, mn_dirty* dirty)
+{
+    int steps = sweep_samples(stock, grid, offsets, count, from, to, 0, INT32_MAX, dirty, NULL);
+    return steps < 0 ? steps : MN_OK;
 }
 
 /* Entered cells of one tip in offset order: the footprint of a rapid (the tool bottom below the

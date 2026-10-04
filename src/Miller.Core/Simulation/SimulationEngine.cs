@@ -6,14 +6,18 @@ namespace Miller.Core.Simulation;
 
 public sealed record StepResult(Vector3 ToolPosition, DirtyRect Dirty, int SegmentsCompleted, bool Finished);
 
-// A tool position the engine visited: the end of every covered part, and points along rapids at
-// RapidSampleSpacing so a listener can check them against the stock.
+// A tool position the engine visited for a collision check: on feeds and plunges the sweep samples
+// at least SampleSpacing apart and the segment end, on rapids the start, every SampleSpacing along
+// and the end. The positions belong to the segment, not to the parts a playback covers it in, so a
+// listener sees the same positions at any speed (T-161).
 public readonly record struct SimulationSample(int SegmentIndex, MoveKind Kind, Vector3 Tip);
 
 // Walks the toolpath by time or by distance: each segment is covered at its own rate (mm/min),
 // feed and plunge parts sweep the stock, rapids remove nothing. Steps compose: covering a segment
-// in parts gives the same stock as covering it at once because every sweep samples all cells on
-// its path. SeekTo covers forward only; a position behind the current one needs Reset first.
+// in parts gives the same stock and the same samples as covering it at once, because the sweep
+// stamps the samples of the whole segment (cell / 2 apart) and reports the positions the
+// generation's collision check uses. SeekTo covers forward only; a position behind the current
+// one needs Reset first.
 public sealed class SimulationEngine
 {
     private readonly Toolpath _toolpath;
@@ -23,6 +27,15 @@ public sealed class SimulationEngine
     private float _covered;
     private float _doneLength;
     private double _doneSeconds;
+
+    // The sampling of the current segment: its sweep sample count and length, the next sample to
+    // stamp, the sweep length since the last head check, and the next rapid check distance.
+    private bool _planned;
+    private int _steps;
+    private float _length;
+    private int _nextSample;
+    private float _sinceCheck;
+    private float _nextRapid;
 
     public SimulationEngine(Toolpath toolpath, HeightMap stock, ToolProfile profile)
     {
@@ -65,7 +78,8 @@ public sealed class SimulationEngine
     // Simulated seconds the covered path takes at the segment rates.
     public double ElapsedSeconds => _doneSeconds + (IsFinished ? 0 : _covered / (_toolpath.Segments[_index].FeedRate / 60f));
 
-    // Rapids are checked at least once per cutter radius, and never coarser than a cell.
+    // The head is checked at least once per cutter radius along every segment, and never coarser than
+    // a cell: the spacing of the generation's collision check.
     public float RapidSampleSpacing => MathF.Max(_profile.CellSize, _profile.Tool.CutterRadius);
 
     public StepResult Step(double simSeconds)
@@ -186,6 +200,7 @@ public sealed class SimulationEngine
         _covered = 0;
         _doneLength = 0;
         _doneSeconds = 0;
+        _planned = false;
         ToolPosition = StartPosition();
     }
 
@@ -195,46 +210,89 @@ public sealed class SimulationEngine
         _doneSeconds += segment.Length / (segment.FeedRate / 60f);
         _index++;
         _covered = 0;
+        _planned = false;
     }
 
     private Vector3 StartPosition() => _toolpath.Count > 0 ? _toolpath.Segments[0].Start : Vector3.Zero;
 
+    private void Plan(ToolpathSegment segment)
+    {
+        _steps = MaterialRemover.SampleCount(Stock, segment.Start, segment.End, out _length);
+        _nextSample = 0;
+        _sinceCheck = 0;
+        _nextRapid = RapidSampleSpacing;
+        _planned = true;
+    }
+
+    // The part [fromDistance, toDistance] of the segment: the stamps and the checks are the segment's
+    // own samples that fall into the part, the tool position the part's end.
     private DirtyRect Cover(ToolpathSegment segment, float fromDistance, float toDistance)
     {
-        var from = PointAt(segment, fromDistance);
-        var to = PointAt(segment, toDistance);
-        ToolPosition = to;
+        if (!_planned)
+        {
+            Plan(segment);
+        }
+
+        ToolPosition = PointAt(segment, toDistance);
         if (segment.Kind == MoveKind.Rapid)
         {
             SampleRapid(segment, fromDistance, toDistance);
             return DirtyRect.Empty;
         }
 
-        var dirty = MaterialRemover.Sweep(Stock, _profile, from, to);
-        Sampled?.Invoke(new SimulationSample(_index, segment.Kind, to));
+        var atEnd = toDistance >= _length;
+        var last = atEnd || _length <= 0 ? _steps : Math.Min(_steps, (int)MathF.Floor(toDistance / _length * _steps));
+        var spacing = RapidSampleSpacing;
+        var increment = _steps == 0 ? 0f : _length / _steps;
+        var dirty = DirtyRect.Empty;
+        var first = _nextSample;
+        for (var n = _nextSample; n <= last; n++)
+        {
+            _sinceCheck += increment;
+            if (n == _steps || _sinceCheck >= spacing)
+            {
+                dirty = dirty.Union(MaterialRemover.SweepSamples(Stock, _profile, segment.Start, segment.End, first, n, out var tip));
+                Sampled?.Invoke(new SimulationSample(_index, segment.Kind, tip));
+                _sinceCheck = 0;
+                first = n + 1;
+            }
+        }
+
+        if (first <= last)
+        {
+            dirty = dirty.Union(MaterialRemover.SweepSamples(Stock, _profile, segment.Start, segment.End, first, last, out _));
+        }
+
+        _nextSample = Math.Max(_nextSample, last + 1);
         return dirty;
     }
 
+    // Rapids: the start, every RapidSampleSpacing along the segment and the end; each position once,
+    // in the part that reaches it.
     private void SampleRapid(ToolpathSegment segment, float fromDistance, float toDistance)
     {
-        if (Sampled is null)
+        if (_nextSample == 0)
         {
-            return;
+            Sampled?.Invoke(new SimulationSample(_index, MoveKind.Rapid, segment.Start));
+            _nextSample = 1;
         }
 
-        if (fromDistance == 0)
+        while (_nextRapid < _length && _nextRapid <= toDistance)
         {
-            Sampled(new SimulationSample(_index, MoveKind.Rapid, segment.Start));
+            Sampled?.Invoke(new SimulationSample(_index, MoveKind.Rapid, TipAt(segment, _nextRapid)));
+            _nextRapid += RapidSampleSpacing;
         }
 
-        var spacing = RapidSampleSpacing;
-        for (var d = fromDistance + spacing; d < toDistance; d += spacing)
+        if (toDistance >= _length && _nextSample == 1)
         {
-            Sampled(new SimulationSample(_index, MoveKind.Rapid, PointAt(segment, d)));
+            Sampled?.Invoke(new SimulationSample(_index, MoveKind.Rapid, segment.End));
+            _nextSample = 2;
         }
-
-        Sampled(new SimulationSample(_index, MoveKind.Rapid, PointAt(segment, toDistance)));
     }
+
+    // The point at a distance along the segment, by the segment's native length (the check's rule).
+    private Vector3 TipAt(ToolpathSegment segment, float distance)
+        => _length <= 0 ? segment.Start : Vector3.Lerp(segment.Start, segment.End, Math.Clamp(distance / _length, 0f, 1f));
 
     private static Vector3 PointAt(ToolpathSegment segment, float distance)
     {
