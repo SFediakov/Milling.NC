@@ -63,6 +63,56 @@ public static class MaterialRemover
         return new DirtyRect(dirty.I0, dirty.J0, dirty.I1, dirty.J1);
     }
 
+    // The samples of a segment: cell / 2 apart along it, both ends included, numbered 0 to the count.
+    public static unsafe int SampleCount(HeightMap stock, Vector3 start, Vector3 end, out float length)
+    {
+        ArgumentNullException.ThrowIfNull(stock);
+        var a = stackalloc float[] { start.X, start.Y, start.Z };
+        var b = stackalloc float[] { end.X, end.Y, end.Z };
+        float segmentLength;
+        var steps = CoreNative.mn_segment_steps(a, b, stock.CellSize, &segmentLength);
+        if (steps < 0)
+        {
+            CoreNative.Check(steps);
+        }
+
+        length = segmentLength;
+        return steps;
+    }
+
+    // Stamps the samples first..last of the segment (the samples of the whole segment, so parts give
+    // the same stamps as the whole) and returns the tip of the last one.
+    public static unsafe DirtyRect SweepSamples(HeightMap stock, ToolProfile profile, Vector3 start, Vector3 end, int first, int last, out Vector3 lastTip)
+    {
+        ArgumentNullException.ThrowIfNull(stock);
+        ArgumentNullException.ThrowIfNull(profile);
+        if (profile.CellSize != stock.CellSize)
+        {
+            throw new ArgumentException($"Profile cell size {profile.CellSize} differs from the stock cell size {stock.CellSize}.", nameof(profile));
+        }
+
+        var grid = CoreNative.GridOf(stock);
+        var offsets = profile.NativeOffsets;
+        var a = stackalloc float[] { start.X, start.Y, start.Z };
+        var b = stackalloc float[] { end.X, end.Y, end.Z };
+        var tip = stackalloc float[3];
+        CoreNative.Dirty dirty;
+        int steps;
+        fixed (float* z = stock.Z)
+        fixed (CoreNative.Offset* o = offsets)
+        {
+            steps = CoreNative.mn_sweep_samples(z, &grid, o, offsets.Length, a, b, first, last, &dirty, tip);
+        }
+
+        if (steps < 0)
+        {
+            CoreNative.Check(steps);
+        }
+
+        lastTip = new Vector3(tip[0], tip[1], tip[2]);
+        return new DirtyRect(dirty.I0, dirty.J0, dirty.I1, dirty.J1);
+    }
+
     // One tool position; returns the cells that got lower.
     public static unsafe DirtyRect Stamp(HeightMap stock, ToolProfile profile, Vector3 tip)
     {

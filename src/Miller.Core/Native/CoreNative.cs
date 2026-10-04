@@ -184,6 +184,8 @@ internal static unsafe class CoreNative
     [DllImport(Library)] public static extern int mn_workers();
 
     [DllImport(Library)] public static extern int mn_sweep(float* stock, Grid* grid, Offset* offsets, int count, float* from, float* to, Dirty* dirty);
+    [DllImport(Library)] public static extern int mn_segment_steps(float* start, float* end, float cellSize, float* length);
+    [DllImport(Library)] public static extern int mn_sweep_samples(float* stock, Grid* grid, Offset* offsets, int count, float* start, float* end, int first, int last, Dirty* dirty, float* lastTip);
     [DllImport(Library)] public static extern int mn_stamp(float* stock, Grid* grid, Offset* offsets, int count, float* tip, Dirty* dirty);
     [DllImport(Library)] public static extern int mn_check_tip(float* stock, Grid* grid, Offset* offsets, int offsetCount, Offset* annulus, int annulusCount, float cutterLength, float tolerance, float* tip, int rapid, int* cells, float* surfaces, int capacity, int* firstKind, float* firstStock, float* firstSurface);
 

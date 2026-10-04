@@ -245,9 +245,9 @@ placeholder; the task that implements it is written in the placeholder header.
 | GCode | `PostProcessorRegistry.cs` | Explicit static list; `GetById`, `All` |
 | GCode | `GrblPostProcessor.cs` | Id `grbl`, extension `.nc`. Header comments, `G21 G90 G94 G17`, `S.. M3`, `G0`/`G1` with `F`, `M5`, `M30` |
 | Simulation | `StockModel.cs` | Stock `HeightMap` from `StockDefinition` (cylinder: NaN outside the circle), positioned relative to the model per `AxisSetup` |
-| Simulation | `MaterialRemover.cs` | Facade of `mn_sweep` and `mn_stamp` (T-159) over the C# stock `HeightMap`: sweeps one segment part with samples at most `CellSize / 2` apart; per sample `stock = min(stock, z + dz)` over the footprint; returns the dirty rectangle |
+| Simulation | `MaterialRemover.cs` | Facade of `mn_sweep`, `mn_sweep_samples`, `mn_segment_steps` and `mn_stamp` (T-159, T-161) over the C# stock `HeightMap`: the samples of a segment lie `CellSize / 2` apart from its start, both ends included, and a part stamps the samples that fall into it; per sample `stock = min(stock, z + dz)` over the footprint; returns the dirty rectangle |
 | Simulation | `SimulationClock.cs` | Speed factor clamped to [0.1, 1000]; `Advance(realSeconds) -> simSeconds`; pause; `Seek(simSeconds)` |
-| Simulation | `SimulationEngine.cs` | Position along the toolpath (segment index + distance), `Step(simSeconds)`, `SeekTo(length)` (forward, by path length), `SeekToSegment(index)` (forward, whole segments), `RunToEnd()`, `Reset()`, current tool position, progress, `ElapsedSeconds` |
+| Simulation | `SimulationEngine.cs` | Position along the toolpath (segment index + distance), `Step(simSeconds)`, `SeekTo(length)` (forward, by path length), `SeekToSegment(index)` (forward, whole segments), `RunToEnd()`, `Reset()`, current tool position, progress, `ElapsedSeconds`; `Sampled` at the positions of the generation's collision check, whatever the parts (T-161) |
 | Simulation | `CollisionDetector.cs` | Facade of `mn_check_tip` (T-159): head annulus vs current stock, rapid move into material; emits `SimulationEvent` and reports every entered cell with the tool surface height there, in offset order |
 | Simulation | `CollisionRecorder.cs` | Collisions of one run: one event per segment and kind (shared by the simulation panel and the collision check), per stock cell `CollisionContact` (None, Stock, Model: the tool surface lay below the model surface), the segments that entered the model; `Report()` gives a `CollisionReport` |
 | Simulation | `SimulationEvent.cs` | Kind (HeadCollision, RapidIntoMaterial), segment index, position |
@@ -405,8 +405,8 @@ nature: each move and each segment depends on the state the previous one left.
 ```
 real dt (seconds) -> SimulationClock (x speed factor) -> sim dt
 sim dt -> SimulationEngine.Step: distance = rate(kind) * simDt / 60
-       -> for each covered segment part: MaterialRemover.Sweep(stock, segment part)
-       -> CollisionDetector.Check(stock, tool position)
+       -> for each covered segment part: MaterialRemover.SweepSamples(stock, segment, samples in the part)
+       -> CollisionDetector.Check(stock, sample) at the generation check's positions (T-161)
        -> snapshot: tool position, dirty rectangle, events
 snapshot -> ViewportViewModel -> HeightMapRenderer (partial update), ToolRenderer
 ```

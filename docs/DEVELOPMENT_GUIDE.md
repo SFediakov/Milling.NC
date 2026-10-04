@@ -634,6 +634,18 @@ M30
   clipped to the grid as spans, a flat tip stamps one constant. The C# rules are
   kept as the reference in `NativeSimulationTests`; the heart at 0.4 mm cells
   runs `RunToEnd` in 8 ms against 133 ms with them (`out/simulation-timing.txt`).
+- Sampling (T-161): the engine stamps the sweep samples of the whole segment
+  (`MaterialRemover.SweepSamples`, `mn_sweep_samples`: cell / 2 apart, both ends,
+  numbered from the segment start) and raises `Sampled` at the positions of the
+  generation's collision check (`mn_check_path`): on feeds and plunges the
+  samples at least `max(CellSize, cutter radius)` of sweep after the previous
+  check and the segment end, on rapids the start, every such spacing from the
+  start and the end. The parts a playback covers a segment in (frame time,
+  speed factor, seeks) change neither the stock nor the events, so Run to end,
+  the panel at any speed and the generation's collision summary report the same
+  events. Before T-161 every covered part ended with a head check: the heart's
+  own 11 events became 22 at a 60 Hz playback and 32 at 5 ms steps, and the
+  native sweep of T-159 made the frames regular enough to show them.
 
 ### 6.7 Validation rules (`ProjectValidator`)
 
@@ -2049,6 +2061,14 @@ check that decides done.
 - Input: user request (parallelize the toolpath generation on each step of the process)
 - Output: `mn_rows_parallel` (a pool for the call, inline for one worker or one row, NULL scratch allowed) and the exports `mn_set_worker_limit`, `mn_workers`; rows on the pool in the triangle transform, the rasterizer (row buckets in triangle order), the tip map, the remaining map and the head limit, the slicing masks, the lower envelope of the distance transforms (columns, then rows), the feed runs of the simplifier (chords assembled in order), the four start walks of the route solver (private buckets and orderings, the cheapest chosen in the fixed order nearest neighbour, smooth, sweep X, sweep Y); `mn_rasterize`, `mn_tip_map`, `mn_remaining`, `mn_head_limit` return a status; the local search (one route evolving by moves) and the dynamic collision check (the stock evolving segment by segment) stay sequential by nature; `NativeWorkers.Count` and `Limit` as the public facade
 - Acceptance: with one worker and with all workers the box in both scopes and the heart in both strategies give identical model, tip, effective tip, head limit, standing maps, plan levels, segments, layers, statistics, status bytes, passes and collision events; the worker limit is honoured and cleared; the heart at 0.2 mm cells is not slower with all workers than with one (`out/generation-timing.txt`, per stage: reach map 62 to 13 ms, simplify 28 to 13 ms, collision check 240 to 170 ms, route 789 against 784 ms because the local search dominates; totals 1098 to 987 ms and 4400 to 4275 ms); the heart golden unchanged; 797 tests pass
+- Status: done
+
+#### T-161 Simulation sampling independent of the playback cadence
+- Depends on: T-159
+- Files: `src/Miller.Core/Simulation/SimulationEngine.cs`, `src/Miller.Core/Simulation/MaterialRemover.cs`, `src/Miller.Native/src/mn_simulate.c`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Core/Native/CoreNative.cs`, `tests/Miller.Tests/Core/Simulation/SimulationCadenceTests.cs`, `tests/Miller.Tests/Core/Simulation/NativeSimulationTests.cs`
+- Input: user report after T-159 and T-160 (collisions reported where there were none earlier)
+- Output: the cause located by differential runs on the user's project: the exports of builds 1.0.111 to 1.0.113 are identical move for move, the native simulation equals the C# rules bit for bit on it (0 differing cells, 66 events each at its 0.025 mm cells), and build 1.0.106 reports the same head contacts with the model wall at the same places (47 against 35 at 0.05 mm cells); what changed was the simulation panel's count, which depended on the playback cadence because every covered part ended with a head check; the engine now samples as section 6.6 (sampling) says, with `mn_sweep_samples` and `mn_segment_steps` exported and `MaterialRemover.SweepSamples` and `SampleCount` as facades
+- Acceptance: the heart in both strategies, the short cutter under the far block and the slotted plate with kept head events in both collision modes give bit-identical stock and identical events run to end, in 3 ms steps, in 0.7 s steps and over 37 seeks, and those events equal the generation's collision report; a rapid's samples are the same whole or in parts; the heart reference test holds with the generation's rule and its events equal the report; 803 tests pass
 - Status: done
 
 ### M8 Packaging and release
