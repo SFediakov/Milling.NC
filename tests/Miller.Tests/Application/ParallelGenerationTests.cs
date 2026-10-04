@@ -91,6 +91,11 @@ public sealed class ParallelGenerationTests
         }
 
         Assert.Equal(all, NativeWorkers.Count);
+        NativeWorkers.Limit(-3);
+        Assert.Equal(all, NativeWorkers.Count);
+        NativeWorkers.Limit(int.MaxValue);
+        Assert.Equal(all, NativeWorkers.Count);
+        NativeWorkers.Limit(0);
     }
 
     [Theory]
