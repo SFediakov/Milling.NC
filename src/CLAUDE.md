@@ -67,6 +67,14 @@
   collision check and steers the Z layer's far region of the next pass, so it lives in the pass loop
   of `mn_pipeline.c` beside the recursion's resolution; `FarWithdrawal` is only the facade of
   `mn_far_withdraw` for its tests.
+- The route units (T-166, T-167) are not a cluster of their own: they are the schedule of the Z layer's
+  routes inside `mn_z_layer`, built from its groups and cave trees and run on the generation's pool.
+  One run keeps waves of one unit (the same routine, not a second path): its guard decides every node
+  against what the earlier units actually did, which no replay can know in advance.
+- Phase 6 left a failing test on purpose (T-168, user request): the live project confirmation compares
+  the kept events with the 63 of Build_1.0.118 and gets 61. The difference comes from the unit
+  boundaries the request itself defines (isolation below), so no code fix exists inside the request; the
+  decision is the user's, and the test runs only with MILLER_LIVE_PROJECT set.
 - The slow zones (T-155, `mn_slow.c`) and the layer marks (T-154) are not clusters of their own:
   both are stages of the native generation between the simplifier and the statistics (user request:
   all generation in the C library), and the layer stepping is part of the simulation cluster
@@ -694,3 +702,16 @@
   positions at the floor beside the heart's walls, which the far stepdown never cut. The user had set
   the head bottom to 0.81 mm by then; at 0.05 mm cells a 0.8 mm bottom keeps 40 events and a 0.6 mm
   bottom (T-165) none, in one pass. Measure against a baseline before claiming that a rule helps.
+- Isolating a collision change of the route units on the live project at 0.05 mm cells (T-168): units with
+  one cave per slab and no fixed exits on one worker gave Build_1.0.118 bit for bit (322 entered cells in
+  pass 1, 40 kept events, 204.5 min), so the per-unit budget shares, the replayed planned heights and the
+  merge change nothing; splitting the slabs into caves gave 347 and 42, the fixed exits the rest (370 and
+  47 at first). The kept count moves by up to 15 percent with any change of where routes begin and end
+  (31 with a full budget per unit, 40 with entries farthest from the model), so a count is no measure of a
+  parallelization; a bit-identical sequential variant is.
+- Probing a long run without blocking the build: copy `tests/Miller.Tests/bin/Release/net10.0` to the
+  scratchpad, delete the probe source from the repository, and run `dotnet test Miller.Tests.dll` there;
+  a baseline of another commit builds in a worktree at a short path (MAX_PATH).
+- At 0.025 mm cells the route stage scales less (345 s against 687 s) than at 0.05 mm (107 s against
+  362 s): every route copies the planned map and lifts the uncut stock over the whole grid, which is
+  memory bound, and the group preparation before the units (far steps, cave trees) stays sequential.

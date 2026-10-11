@@ -548,6 +548,37 @@ Uncuttable classification (`UncuttableRegions`):
   kept. The result carries the first pass's far area, the kept pass's far
   area and the positions withdrawn before the kept pass, and per pass the far
   positions and the withdrawn ones; the statistics show both in mm2 per pass.
+- Route units (T-166, T-167, user request): before any route is solved, the Z
+  layer divides its plan into units: one per cave of every slab of far
+  stepdown height (the level groups; the whole plan is one slab without a far
+  stepdown), a cave being a connected area of the union of the slab's level
+  masks. A unit runs the routes of its cave in the established order (the band
+  route above the first level in the first unit, the slab's far block steps over
+  the cave, then the depth-first walk over the slab's caves inside it, so a cave
+  that splits inside the slab is finished branch by branch from the level it
+  splits at). Units follow slab after slab; inside a slab the cave whose entry
+  lies nearest to the entry before goes next. The entry of a unit is a node of
+  its first route (its first far step, else its root caves) at
+  `MN_UNIT_MODEL_DISTANCE` (1 mm) or more from the model in XY, the nearest to
+  that distance, or the farthest node when none reaches it; ties go to the node
+  nearest to the previous entry, then to the lower cell. The exit of a unit is
+  the next unit's entry, at that route's height: it is the last node of the
+  unit's last route (the solver's fixed end, `mn_solve` with `end`), and the
+  walk visits the branch to the leaf cave nearest to it last, so the way there
+  is short. The units are solved in waves of up to min(`MN_MAX_WORKERS` (64),
+  processors) at once, each from its own copy of the planned heights the units
+  before it leave (replayed region by region: the routes write only regions
+  while the guard is off) and with its own writer placed at its entry; the
+  paths and layer marks are appended in unit order and the established stages
+  (simplifier, slow zones, statistics, check) continue. The evaluation budget
+  is shared by node count in unit order. One run decides every node against the
+  material the earlier routes actually left, so its waves hold one unit. The
+  result is the same for every worker count. With one unit (no far stepdown,
+  one cave at the top) the path is the established one bit for bit; with
+  several, the fixed unit boundaries change the routes there, and with them the
+  collision count: the user's heart at 0.025 mm cells kept 61 events against 63
+  of Build_1.0.118 (34 segments touching the model in both, 229.5 against 228.8
+  estimated minutes), its route stage took 345 s against 687 s.
 - One run (`CollisionMode.OneRun`, T-150): both strategies keep the material as
   their routes leave it (the footprint of every visited node stamped into a copy
   of the stock) and evaluate every node of a route against it before the route
@@ -2141,6 +2172,30 @@ check that decides done.
 - Output: the rule of section 6.4 (far stepdown withdrawn around collisions), the far areas in the generation result and the statistics
 - Acceptance: one place on 21 x 21 cells of 0.25 mm withdraws exactly the 49 cells within 1 mm, once; a negative or NaN radius, a zero cell and a mismatched mask are rejected; a 2 mm cutter under a 7 to 10 mm frustum beside a box taller than the cutter (recursion: 4 mm box, stepover 1, far stepdown 4; one run: 6 mm box, stepover 2, far stepdown 8) withdraws far positions after the first pass, runs further passes, every later pass mills at most the first far area less what was withdrawn before it, the kept pass mills nothing withdrawn and nothing outside the first area, its withdrawn area equals the sum of the withdrawals before it, no gouge; without a far stepdown nothing is withdrawn and one run stays one pass; the statistics name the far areas only with a far stepdown; the heart golden unchanged; on the user's live project (cell 0.025, far stepdown 0.2, head bottom 0.81, recursion ratio 5) 50.1 of 176.1 mm2 of far area are withdrawn after the first pass and the kept pass reports 63 events against 68 without the withdrawal (8 passes each, 228.8 against 214.5 estimated minutes); at cell 0.05 it is 40 against 36: the contacts lie beside the walls in the near band, not in the far block; 820 tests pass
 - Status: done
+
+#### T-166 Route units with fixed entries and exits
+- Depends on: T-156, T-157, T-162
+- Files: `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_solver.c`, `src/Miller.Native/src/mn_writer.c`, `src/Miller.Native/src/mn_internal.h`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Solver/RouteSolver.cs`, `tests/Miller.Tests/Solver/RouteSolverFixedEndTests.cs`, `tests/Miller.Tests/Application/RouteUnitsTests.cs`
+- Input: user request (before the solver, divide the model in Z into layers of far stepdown size, treat caves as separate layers, define for each part the input and output coordinates 1 mm from the model or as far as possible, every deeper layer starting where the one before ended)
+- Output: the route units of section 6.4: slab caves, the unit order, the entry rule, the exit as the fixed end of the unit's last route, the walk's exit branch last; `mn_route_solve` and `RouteSolver.Solve` take a fixed end
+- Acceptance: the solver keeps a fixed end last from any start, rejects an end equal to the start, outside the nodes or with a successor, and stays within 5 percent of the free route when the free route's own end is fixed; a 40 x 4 x 6 wall across a 40 x 40 x 9 stock with far stepdown 4 gives five units, every entry 1 mm or more from the model and reached in unit order on a continuous path, every unit below the wall top cutting in the pocket of its entry until its approach to the next entry, in both collision modes; a 1.5 mm slot takes the farthest position of the slot; without a far stepdown a box gives one unit and the heart golden is unchanged
+- Status: done
+
+#### T-167 Route units solved in parallel
+- Depends on: T-160, T-166
+- Files: `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_thread.c`, `src/Miller.Native/src/mn_thread.h`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Application/Services/PipelineService.cs`, `src/Miller.App/ViewModels/StrategySelectionViewModel.cs`
+- Input: user request (sub-processes, up to 64 in parallel, each solving its own area; merge the toolpaths and continue the established process)
+- Output: waves of units on the worker pool with replayed planned heights, own writers and scratch, a thread-local worker cap for the solver's start walks inside a wave, the merge in unit order, the unit entries in the result and "Route units" in the statistics
+- Acceptance: worker limits 1, 2 and the processor count give the same toolpath, entries and events on the wall fixture; the box and heart parallel tests hold; the user's heart at 0.05 mm cells routes in 107 s against 362 s and at 0.025 mm cells in 345 s against 687 s; 834 tests pass
+- Status: done
+
+#### T-168 Confirmation on the user's project
+- Depends on: T-167
+- Files: `tests/Miller.Tests/Application/LiveProjectConfirmationTests.cs`
+- Input: user request (a test on the attached project that the number of collisions does not differ before and after the change)
+- Output: a test that runs the project named by `MILLER_LIVE_PROJECT` and compares the kept events with the 63 of Build_1.0.118
+- Acceptance: not met: 61 kept events against 63 (8 passes each); the same code without fixed exits and with one cave per slab, run on one worker, reproduces Build_1.0.118 bit for bit at 0.05 mm cells (322 entered cells in the first pass, 40 kept events), so the difference comes from the unit boundaries the request defines, not from the parallel solving
+- Status: open (needs the user's decision)
 
 #### T-165 Head bottom down to half the cutter diameter
 - Depends on: T-135, T-162
