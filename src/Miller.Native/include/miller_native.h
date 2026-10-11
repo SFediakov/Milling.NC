@@ -280,6 +280,15 @@ typedef struct mn_collision {
  * (cells) receives MODEL and, per entered cell, COLLISION; SHOULD_REMOVE is not touched. */
 MN_API int32_t mn_collision_check(const mn_segment* segments, int32_t count, const mn_grid* grid, const float* stock, const float* model, float floor, const mn_tool* tool, float tolerance, uint8_t* status, mn_collision** events, int32_t* event_count);
 
+/* Far stepdown withdrawal (T-164): a collision's place (a cell the head or a rapid entered, and the
+ * tool axis cell that entered it) and everything within this many millimetres of it in XY are
+ * withdrawn from the far stepdown for every later pass and milled with the normal stepdown. */
+#define MN_FAR_WITHDRAW_RADIUS 1.0f
+
+/* Clears `allowed` within `radius` of every marked place; returns how many allowed cells it cleared
+ * or a negative status. */
+MN_API int32_t mn_far_withdraw(const uint8_t* places, int32_t width, int32_t height, float cell_size, float radius, uint8_t* allowed);
+
 /* Everything a strategy reads. Masks of the plan come from mn_plan; should_cut may be NULL. In one
  * run mode (collision_mode MN_COLLISION_ONE_RUN, ratio Y) the strategy evaluates every node against
  * the standing material and writes the raised tips of the positions it does not achieve into
@@ -300,6 +309,10 @@ typedef struct mn_context {
     int32_t collision_mode;
     float ratio;
     float* raised;
+    /* Z layer with a far stepdown (T-164): the positions the far block may take (NULL: every far
+     * position), and, when not NULL, 1 per position it milled with the far stepdown, 0 elsewhere. */
+    const uint8_t* far_allowed;
+    uint8_t* far_area;
 } mn_context;
 
 /* 3 axis freedom helpers: the level map max(tip, level) with NaN kept, and whether a cell of a map
@@ -396,6 +409,11 @@ MN_API int32_t mn_generate(const mn_job* job, mn_stage_fn progress, void* contex
 #define MN_CONTACT_NONE 0
 #define MN_CONTACT_STOCK 1
 #define MN_CONTACT_MODEL 2
+/* Far stepdown (T-164): the positions the first pass milled with it, those the kept pass milled with
+ * it, and those of the first pass the kept pass was no longer allowed (withdrawn around collisions). */
+#define MN_MASK_FAR_FIRST 4
+#define MN_MASK_FAR_MILLED 5
+#define MN_MASK_FAR_WITHDRAWN 6
 
 MN_API void mn_result_grid(const mn_result* result, mn_grid* grid);
 MN_API void mn_result_numbers(const mn_result* result, float* stock_top, float* stock_bottom, float* floor);
@@ -415,6 +433,8 @@ MN_API void mn_result_layers(const mn_result* result, int32_t* segment, float* l
 MN_API int32_t mn_result_passes(const mn_result* result);
 /* Per pass (mn_result_passes entries): the distinct cells its check entered and its events. */
 MN_API void mn_result_pass_counts(const mn_result* result, int32_t* entered, int32_t* events);
+/* Per pass: the positions it milled with the far stepdown and those withdrawn after its check. */
+MN_API void mn_result_pass_far(const mn_result* result, int32_t* milled, int32_t* withdrawn);
 /* Holding bridges of the kept pass: the parts the trench frees, the bridges wanted (parts times the
  * count) and the bridges placed. */
 MN_API void mn_result_bridges(const mn_result* result, int32_t* parts, int32_t* wanted, int32_t* placed);

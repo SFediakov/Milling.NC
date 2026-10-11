@@ -519,3 +519,25 @@ int mn_resolve(const mn_grid* g, const mn_profile* profile, float cutter_length,
     }
     return changed + propagated;
 }
+
+MN_API int32_t mn_far_withdraw(const uint8_t* places, int32_t width, int32_t height, float cell_size, float radius, uint8_t* allowed)
+{
+    if (places == NULL || allowed == NULL || width <= 0 || height <= 0 || !(cell_size > 0) || !(radius >= 0)) {
+        return mn_fail(MN_ERR_ARGUMENT, "The far withdrawal needs the places, the allowed mask, a positive grid and a radius of 0 or more.");
+    }
+    int cells = width * height;
+    uint8_t* near = (uint8_t*)mn_alloc((size_t)cells, 1);
+    if (near == NULL) {
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for the far withdrawal.");
+    }
+    int status = mn_within_radius(places, width, height, cell_size, radius, near);
+    int withdrawn = 0;
+    for (int c = 0; c < cells && status == MN_OK; c++) {
+        if (allowed[c] && near[c]) {
+            allowed[c] = 0;
+            withdrawn++;
+        }
+    }
+    free(near);
+    return status == MN_OK ? withdrawn : status;
+}

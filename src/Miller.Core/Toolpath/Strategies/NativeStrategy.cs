@@ -38,6 +38,8 @@ internal static class NativeStrategy
                 CollisionMode = (int)context.CollisionMode,
                 Ratio = context.Ratio,
                 Raised = null,
+                FarAllowed = null,
+                FarArea = null,
             };
             CoreNative.Check(CoreNative.mn_strategy_generate(strategy, &native, callback.Pointer, IntPtr.Zero, cancel.Pointer, &segments, &count), cancellation);
         }

@@ -281,6 +281,37 @@ public sealed class SettingsViewModelsTests : IDisposable
         Assert.Equal(StrategySelectionViewModel.NoToolpathText, _vm.Strategy.StatisticsText);
     }
 
+    // T-164: with a far stepdown the statistics name the far area of every pass and what the collisions
+    // withdrew from it, in square millimetres; without one the line is absent.
+    [Fact]
+    public void Statistics_NameTheFarStepdownAreas_OnlyWithAFarStepdown()
+    {
+        var project = MillingProject.Default();
+        project.Stock.AlignZ = StockAlignment.Min;
+        project.Tool.CutterLength = 2f;
+        project.Tool.HeadShape = HeadShape.Frustum;
+        project.Tool.HeadDiameter = 7f;
+        project.Tool.HeadTopDiameter = 10f;
+        project.Tool.HeadLength = 10f;
+        project.Parameters.FarStepdown = 4f;
+        project.Parameters.Stepover = 1f;
+        project.Stock.SizeX = 40;
+        project.Stock.SizeY = 40;
+        project.Stock.SizeZ = 9;
+        project.Parameters.CellSize = 0.5f;
+        project.Models.Add(new ModelPlacement { StlPath = "box.stl" });
+        var meshes = new[] { TestMeshes.Box(10, 10, 4) };
+        var result = new Miller.Application.Services.PipelineService().Run(project, meshes, null, CancellationToken.None);
+        _vm.Strategy.ShowResult(result);
+        var milled = string.Join(", ", result.PassCollisions.Select(p => (p.FarCells * 0.25f).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)));
+        Assert.Contains($"Far stepdown area per pass: {milled} mm2, withdrawn around collisions: ", _vm.Strategy.StatisticsText);
+        Assert.True(result.PassCollisions[0].WithdrawnCells > 0);
+
+        project.Parameters.FarStepdown = 0f;
+        _vm.Strategy.ShowResult(new Miller.Application.Services.PipelineService().Run(project, meshes, null, CancellationToken.None));
+        Assert.DoesNotContain("Far stepdown", _vm.Strategy.StatisticsText);
+    }
+
     // T-151: the collision mode enables its own ratio, both ratios validate, a new project resets them.
     [Fact]
     public void Strategy_CollisionMode_EnablesItsRatioAndValidates()

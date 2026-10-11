@@ -1101,10 +1101,12 @@ static void z_group_free(mn_z_group* group)
 /* The far region of a level (T-156): the cells of its mask at least the stepover away from every cell
  * whose strategy tip stands above the level (the model, the standing stock and the raised positions;
  * cells without a tip are no obstacle). The footprints of those positions cover exactly the material
- * at least the stepover away from what stays, the band nearer to it is left to the other positions. */
+ * at least the stepover away from what stays, the band nearer to it is left to the other positions.
+ * A position withdrawn around a collision (T-164, far_allowed) is never far. */
 static int far_cells_of(const mn_context* context, const uint8_t* mask, float level, mn_ints* far)
 {
     const mn_grid* g = &context->grid;
+    const uint8_t* allowed = context->far_allowed;
     int cells = mn_cells(g);
     uint8_t* obstacles = (uint8_t*)mn_alloc((size_t)cells, 1);
     float* distance = (float*)mn_alloc((size_t)cells, sizeof(float));
@@ -1118,7 +1120,7 @@ static int far_cells_of(const mn_context* context, const uint8_t* mask, float le
         }
         status = mn_distance_transform(obstacles, g->width, g->height, g->cell_size, distance);
         for (int c = 0; c < cells && status == MN_OK; c++) {
-            if (mask[c] && distance[c] + MN_LEVEL_TOLERANCE >= context->parameters.stepover) {
+            if (mask[c] && (allowed == NULL || allowed[c]) && distance[c] + MN_LEVEL_TOLERANCE >= context->parameters.stepover) {
                 status = mn_ints_push(far, c);
             }
         }
@@ -1266,6 +1268,9 @@ static int far_steps_of(mn_z_state* s, mn_z_group* group, const mn_ints* far, co
             continue;
         }
         int c = far->items[n];
+        if (context->far_area != NULL) {
+            context->far_area[c] = 1;
+        }
         for (int k = 0; k <= group->steps[deepest[n]].level - first; k++) {
             group->plan.masks[(size_t)k * (size_t)cells + (size_t)c] = 0;
         }
@@ -1598,7 +1603,10 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
         status = mn_fail(MN_ERR_MEMORY, "Out of memory for the layer strategy.");
         goto done;
     }
-    s.lifted = (float*)mn_alloc(2 * (size_t)cells, sizeof(float));
+    if (context->far_area != NULL) {
+        memset(context->far_area, 0, (size_t)cells);
+    }
+    s.lifted =(float*)mn_alloc(2 * (size_t)cells, sizeof(float));
     status = s.lifted == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the route floor of %d cells.", cells) : mn_profile_build(&context->tool, g->cell_size, &profile);
     if (status != MN_OK) {
         goto done;

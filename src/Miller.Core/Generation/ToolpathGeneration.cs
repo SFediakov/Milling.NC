@@ -15,7 +15,8 @@ namespace Miller.Core.Generation;
 // raised (the head, not the cutter, decides the depth there); ShouldCut the stock the dynamic check
 // found in the way of the head; Status the native status byte per cell; Collisions the check of the
 // kept pass with the rule of the simulation panel; Passes how many passes ran; Layers the layers of
-// the toolpath (ToolpathLayer).
+// the toolpath (ToolpathLayer); FarStepdown the far positions of the first and the kept pass and those
+// withdrawn around collisions (T-164).
 public sealed record GenerationResult(
     Mesh MachineMesh,
     StockGeometry Stock,
@@ -36,10 +37,17 @@ public sealed record GenerationResult(
     int Passes,
     IReadOnlyList<PassCollisions> PassCollisions,
     BridgeReport Bridges,
-    IReadOnlyList<ToolpathLayer> Layers);
+    IReadOnlyList<ToolpathLayer> Layers,
+    FarStepdownAreas FarStepdown);
 
-// What one generation pass's check found: the distinct entered cells and the events.
-public readonly record struct PassCollisions(int EnteredCells, int Events);
+// What one generation pass's check found: the distinct entered cells and the events; with a far
+// stepdown the positions the pass milled with it and those withdrawn around its collisions (T-164).
+public readonly record struct PassCollisions(int EnteredCells, int Events, int FarCells, int WithdrawnCells);
+
+// Far stepdown positions per cell (T-164): those the first pass milled with it, those the kept pass
+// milled with it, and those of the first pass the kept pass was no longer allowed because a collision
+// lay within 1 mm. All false without a far stepdown.
+public sealed record FarStepdownAreas(bool[,] FirstArea, bool[,] Milled, bool[,] Withdrawn);
 
 // Holding bridges of the kept pass (separation scope): the parts the trench frees at the floor, the
 // bridges wanted (parts times the bridge count) and the bridges placed.
@@ -268,16 +276,21 @@ public static class ToolpathGeneration
         var passes = CoreNative.mn_result_passes(result);
         var entered = new int[Math.Max(passes, 1)];
         var passEvents = new int[Math.Max(passes, 1)];
-        fixed (int* e = entered, v = passEvents)
+        var farCells = new int[Math.Max(passes, 1)];
+        var withdrawnCells = new int[Math.Max(passes, 1)];
+        fixed (int* e = entered, v = passEvents, f = farCells, w = withdrawnCells)
         {
             CoreNative.mn_result_pass_counts(result, e, v);
+            CoreNative.mn_result_pass_far(result, f, w);
         }
 
         var passCollisions = new PassCollisions[passes];
         for (var k = 0; k < passes; k++)
         {
-            passCollisions[k] = new PassCollisions(entered[k], passEvents[k]);
+            passCollisions[k] = new PassCollisions(entered[k], passEvents[k], farCells[k], withdrawnCells[k]);
         }
+
+        var farStepdown = new FarStepdownAreas(Mask(CoreNative.MaskFarFirst), Mask(CoreNative.MaskFarMilled), Mask(CoreNative.MaskFarWithdrawn));
 
         int parts, wanted, placed;
         CoreNative.mn_result_bridges(result, &parts, &wanted, &placed);
@@ -311,6 +324,7 @@ public static class ToolpathGeneration
             passes,
             passCollisions,
             new BridgeReport(parts, wanted, placed),
-            layers);
+            layers,
+            farStepdown);
     }
 }
