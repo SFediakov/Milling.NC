@@ -1366,27 +1366,34 @@ done:
     return status;
 }
 
-/* The standing map after the levels first..last are cut: every cell within the cutter radius of a
- * position of a level's mask drops to that level plus the tool bottom height at its distance. */
-static int standing_fold(const mn_context* context, int first, int last, float* distance, float* standing)
+/* Every cell within the cutter radius of a position of `mask` drops to `level` plus the tool bottom
+ * height at its distance. */
+static int fold_level(const mn_context* context, const uint8_t* mask, float level, float* distance, float* standing)
 {
-    const mn_plan* plan = context->plan;
     const mn_grid* g = &context->grid;
     int cells = mn_cells(g);
     float r = context->tool.cutter_diameter / 2.0f;
-    for (int k = first; k <= last; k++) {
-        MN_CHECK(mn_distance_transform(plan->masks + (size_t)k * (size_t)cells, g->width, g->height, g->cell_size, distance));
-        float level = plan->levels[k];
-        for (int c = 0; c < cells; c++) {
-            float d = distance[c];
-            if (!(d <= r + MN_RADIUS_TOLERANCE) || mn_isnan(standing[c])) {
-                continue;
-            }
-            float cut = level + mn_bottom_height(context->tool.tip_type, r, d);
-            if (cut < standing[c]) {
-                standing[c] = cut;
-            }
+    MN_CHECK(mn_distance_transform(mask, g->width, g->height, g->cell_size, distance));
+    for (int c = 0; c < cells; c++) {
+        float d = distance[c];
+        if (!(d <= r + MN_RADIUS_TOLERANCE) || mn_isnan(standing[c])) {
+            continue;
         }
+        float cut = level + mn_bottom_height(context->tool.tip_type, r, d);
+        if (cut < standing[c]) {
+            standing[c] = cut;
+        }
+    }
+    return MN_OK;
+}
+
+/* The standing map after the levels first..last are cut. */
+static int standing_fold(const mn_context* context, int first, int last, float* distance, float* standing)
+{
+    const mn_plan* plan = context->plan;
+    int cells = mn_cells(&context->grid);
+    for (int k = first; k <= last; k++) {
+        MN_CHECK(fold_level(context, plan->masks + (size_t)k * (size_t)cells, plan->levels[k], distance, standing));
     }
     return MN_OK;
 }
@@ -1464,9 +1471,55 @@ static int group_components(mn_z_state* s, mn_z_group* group)
     return status;
 }
 
+/* The far go of a Backwards slab (T-171): one step at the group's last level over the given positions,
+ * which leave the masks of every level of the group. */
+static int given_far_step(mn_z_state* s, mn_z_group* group, const uint8_t* far, int* max_nodes)
+{
+    const mn_context* context = s->context;
+    int cells = mn_cells(&context->grid);
+    int levels = group->last - group->first + 1;
+    mn_ints list = { 0 };
+    int status = MN_OK;
+    for (int c = 0; c < cells && status == MN_OK; c++) {
+        if (far[c]) {
+            status = mn_ints_push(&list, c);
+        }
+    }
+    if (status != MN_OK || list.count == 0) {
+        mn_ints_free(&list);
+        return status;
+    }
+    group->steps = (mn_z_step*)mn_alloc(1, sizeof(mn_z_step));
+    if (group->steps == NULL) {
+        mn_ints_free(&list);
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for the far go.");
+    }
+    group->step_count = 1;
+    mn_z_step* step = &group->steps[0];
+    step->level = group->last;
+    step->cells = list;
+    memset(s->inside, 0, (size_t)cells);
+    for (int m = 0; m < list.count; m++) {
+        int c = list.items[m];
+        s->inside[c] = 1;
+        if (context->far_area != NULL) {
+            context->far_area[c] = 1;
+        }
+        for (int k = 0; k < levels; k++) {
+            group->plan.masks[(size_t)k * (size_t)cells + (size_t)c] = 0;
+        }
+    }
+    MN_CHECK(region_nodes(s, s->inside, &step->nodes));
+    count_pass(s, &step->nodes, max_nodes);
+    return MN_OK;
+}
+
 /* Prepares the group of the plan levels first..last: its plan, its far region, its cave tree and the
- * nodes of every route. */
-static int z_group_prepare(mn_z_state* s, int first, int last, int far_on, const float* standing, mn_z_group* group, int* max_nodes)
+ * nodes of every route. With `own_plan` the group plan holds its own levels, their masks taken from
+ * `masks` (NULL: the plan's, level first first) and its far block either the one step `far` gives at
+ * the group's last level (Backwards, T-171) or, for NULL, the far region of far_cells_of in the steps
+ * of far_steps_of; otherwise the group is the whole plan. */
+static int z_group_prepare(mn_z_state* s, int first, int last, int own_plan, const uint8_t* masks, const uint8_t* far, const float* standing, mn_z_group* group, int* max_nodes)
 {
     const mn_context* context = s->context;
     const mn_plan* plan = context->plan;
@@ -1475,7 +1528,7 @@ static int z_group_prepare(mn_z_state* s, int first, int last, int far_on, const
     memset(group, 0, sizeof(*group));
     group->first = first;
     group->last = last;
-    if (!far_on) {
+    if (!own_plan) {
         group->plan = *plan;
     } else {
         int count = last - first + 1 + (last + 1 < plan->count ? 1 : 0);
@@ -1489,19 +1542,22 @@ static int z_group_prepare(mn_z_state* s, int first, int last, int far_on, const
         if (group->plan.levels == NULL || group->plan.masks == NULL) {
             return mn_fail(MN_ERR_MEMORY, "Out of memory for a group of %d levels.", count);
         }
+        const uint8_t* source = masks != NULL ? masks : plan->masks + (size_t)first * (size_t)cells;
         for (int k = 0; k < count; k++) {
             group->plan.levels[k] = plan->levels[first + k];
             if (first + k <= last) {
-                memcpy(group->plan.masks + (size_t)k * (size_t)cells, plan->masks + (size_t)(first + k) * (size_t)cells, (size_t)cells);
+                memcpy(group->plan.masks + (size_t)k * (size_t)cells, source + (size_t)k * (size_t)cells, (size_t)cells);
             }
         }
-        if (last > first) {
-            mn_ints far = { 0 };
-            int status = far_cells_of(context, plan->masks + (size_t)last * (size_t)cells, plan->levels[last], &far);
+        if (far != NULL) {
+            MN_CHECK(given_far_step(s, group, far, max_nodes));
+        } else if (last > first) {
+            mn_ints region = { 0 };
+            int status = far_cells_of(context, plan->masks + (size_t)last * (size_t)cells, plan->levels[last], &region);
             if (status == MN_OK) {
-                status = far_steps_of(s, group, &far, standing, max_nodes);
+                status = far_steps_of(s, group, &region, standing, max_nodes);
             }
-            mn_ints_free(&far);
+            mn_ints_free(&region);
             MN_CHECK(status);
         }
     }
@@ -2137,9 +2193,7 @@ static void unit_row(void* context, int row, void* scratch)
     const mn_z_unit* unit = &job->units[job->first + row];
     const mn_z_state* base = job->base;
     /* Several units at once fill the processors: the solver's start walks run inline. */
-    if (job->count > 1) {
-        mn_set_thread_cap(1);
-    }
+    int cap = job->count > 1 ? mn_set_thread_cap(1) : 0;
     mn_monitor quiet;
     quiet.progress = NULL;
     quiet.context = NULL;
@@ -2181,39 +2235,65 @@ static void unit_row(void* context, int row, void* scratch)
     job->status[row] = status;
     mn_writer_free(writer);
     if (job->count > 1) {
-        mn_set_thread_cap(0);
+        mn_set_thread_cap(cap);
     }
+}
+
+/* The XY distance of every cell to the model (cells whose model stands above the floor). */
+static int model_distance_of(mn_z_state* s, float** result)
+{
+    const mn_context* context = s->context;
+    const mn_grid* g = &context->grid;
+    int cells = mn_cells(g);
+    float* distance = (float*)mn_alloc((size_t)cells, sizeof(float));
+    if (distance == NULL) {
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for the distance to the model.");
+    }
+    for (int k = 0; k < cells; k++) {
+        s->inside[k] = (uint8_t)(context->model[k] > context->floor + MN_FLOOR_TOLERANCE);
+    }
+    int status = mn_distance_transform(s->inside, g->width, g->height, g->cell_size, distance);
+    if (status != MN_OK) {
+        free(distance);
+        return status;
+    }
+    *result = distance;
+    return MN_OK;
 }
 
 /* Routes every unit and appends their paths to `writer` in unit order (T-167): waves of up to
  * min(MN_MAX_WORKERS, processors) units run at once, each from the planned heights the units before
  * it leave (replayed for the units after the first of a wave); with the guard on (one run) a wave holds
- * one unit, because every node decision depends on what the units before it actually did. */
-static int z_units(mn_z_state* s, const mn_z_group* groups, int group_count, const mn_ints* top_nodes, int max_nodes, mn_writer* writer, mn_points* entries)
+ * one unit, because every node decision depends on what the units before it actually did. A Backwards
+ * slab (T-171) ends at `final_exit` (NULL: anywhere) and, with `first_entry`, starts at the entry of
+ * its first unit: the writer is placed there and the entry returned (`has_first_entry` 0 without units). */
+static int z_units(mn_z_state* s, const mn_z_group* groups, int group_count, const mn_ints* top_nodes, int max_nodes, const float* model_distance, const mn_v3* final_exit, mn_writer* writer,
+    mn_points* entries, mn_v3* first_entry, int* has_first_entry)
 {
     const mn_context* context = s->context;
     const mn_grid* g = &context->grid;
     int cells = mn_cells(g);
     mn_z_unit* units = NULL;
     int unit_count = 0;
-    float* model_distance = (float*)mn_alloc((size_t)cells, sizeof(float));
-    if (model_distance == NULL) {
-        return mn_fail(MN_ERR_MEMORY, "Out of memory for the distance to the model.");
-    }
-    for (int k = 0; k < cells; k++) {
-        s->inside[k] = (uint8_t)(context->model[k] > context->floor + MN_FLOOR_TOLERANCE);
-    }
-    int status = mn_distance_transform(s->inside, g->width, g->height, g->cell_size, model_distance);
-    if (status == MN_OK) {
-        status = plan_units(s, groups, group_count, top_nodes->count, model_distance, &units, &unit_count);
-    }
-    free(model_distance);
+    int status = plan_units(s, groups, group_count, top_nodes->count, model_distance, &units, &unit_count);
     for (int u = 1; u < unit_count && status == MN_OK && entries != NULL; u++) {
         status = mn_points_push(entries, units[u].entry);
+    }
+    if (has_first_entry != NULL) {
+        *has_first_entry = 0;
     }
     if (status != MN_OK || unit_count == 0) {
         free(units);
         return status;
+    }
+    if (final_exit != NULL) {
+        units[unit_count - 1].has_exit = 1;
+        units[unit_count - 1].exit = *final_exit;
+    }
+    if (first_entry != NULL) {
+        mn_writer_place(writer, units[0].entry);
+        *first_entry = units[0].entry;
+        *has_first_entry = 1;
     }
 
     int workers = s->guard->enabled ? 1 : mn_mini(mn_mini(MN_MAX_WORKERS, mn_worker_count()), unit_count);
@@ -2339,7 +2419,9 @@ done:
     return status;
 }
 
-int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks, mn_points* entries)
+static int z_backwards(const mn_context* source, const mn_monitor* monitor, int group_size, mn_segments* result, mn_marks* marks, mn_points* entries, mn_unreached* unreached);
+
+int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks, mn_points* entries, mn_unreached* unreached)
 {
     const mn_grid* g = &context->grid;
     const mn_plan* plan = context->plan;
@@ -2348,6 +2430,9 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
     float far = context->parameters.far_stepdown;
     int far_on = far > 0;
     int group_size = plan->count > 0 ? plan->count : 1;
+    if (unreached != NULL) {
+        memset(unreached, 0, sizeof(*unreached));
+    }
     if (far_on) {
         float stepdown = context->parameters.stepdown;
         int k = mn_f2i(rintf(far / stepdown));
@@ -2355,6 +2440,9 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
             return mn_fail(MN_ERR_ARGUMENT, "Far stepdown %g must be a whole multiple of the stepdown %g, at least twice it.", (double)far, (double)stepdown);
         }
         group_size = k;
+    }
+    if (context->collision_mode == MN_COLLISION_BACKWARDS) {
+        return z_backwards(context, monitor, far_on ? group_size : 1, result, marks, entries, unreached);
     }
     mn_guard guard;
     MN_CHECK(guard_init(&guard, context));
@@ -2421,7 +2509,7 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
     for (int gi = 0; gi < group_count && status == MN_OK; gi++) {
         int first = gi * group_size;
         int last = mn_mini(first + group_size, plan->count) - 1;
-        status = z_group_prepare(&s, first, last, far_on, standing, &groups[gi], &max_nodes);
+        status = z_group_prepare(&s, first, last, far_on, NULL, NULL, standing, &groups[gi], &max_nodes);
         if (status == MN_OK && far_on) {
             status = standing_fold(context, first, last, distance, standing);
         }
@@ -2445,7 +2533,12 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
     }
 
     s.total = s.nodes_left;
-    status = z_units(&s, groups, group_count, &top_nodes, max_nodes, writer, entries);
+    float* model_distance = NULL;
+    status = model_distance_of(&s, &model_distance);
+    if (status == MN_OK) {
+        status = z_units(&s, groups, group_count, &top_nodes, max_nodes, model_distance, NULL, writer, entries, NULL, NULL);
+    }
+    free(model_distance);
     if (status == MN_OK) {
         status = mn_writer_take(writer, result, marks);
     }
@@ -2471,6 +2564,246 @@ done:
     free(standing);
     free(distance);
     mn_writer_free(writer);
+    guard_free(&guard);
+    return status;
+}
+
+/* ---- Backwards (T-170, T-171) ---- */
+
+/* The progress of one slab as its share of all of them. */
+typedef struct mn_slab_monitor {
+    const mn_monitor* outer;
+    int index;
+    int count;
+} mn_slab_monitor;
+
+static void slab_progress(void* context, int32_t step, int32_t steps, float fraction)
+{
+    (void)step;
+    (void)steps;
+    const mn_slab_monitor* m = (const mn_slab_monitor*)context;
+    mn_report(m->outer, m->index + 1, m->count, ((float)m->index + mn_clamp(fraction, 0.0f, 1.0f)) / (float)m->count);
+}
+
+/* Collision mode Backwards: the backward check (mn_backwards.c) runs on a thread of its own with half
+ * the workers and hands over the far stepdown slabs from the lowest; this side solves every slab as it
+ * comes with the other half: its far go (the positions reached on every level of the slab) at the slab's
+ * bottom level, then its levels without them, cave by cave, in route units as the Z layer does (T-166,
+ * T-167). A slab starts at the entry of its first unit and ends where the slab below it (solved before
+ * it) starts; the lowest slab ends where its routes end. The check settles every level before it hands
+ * over the first slab, so the route floor of a slab is what the slabs above leave: every position at the
+ * deepest level it reaches above the slab, the stock where it reaches none. The paths are joined from the
+ * top slab down, the program starting with a plunge from the safe plane to the first slab's entry. */
+static int z_backwards(const mn_context* source, const mn_monitor* monitor, int group_size, mn_segments* result, mn_marks* marks, mn_points* entries, mn_unreached* unreached)
+{
+    mn_context copy = *source;
+    copy.should_cut = NULL;
+    const mn_context* context = &copy;
+    const mn_grid* g = &context->grid;
+    const mn_plan* plan = context->plan;
+    int cells = mn_cells(g);
+    const volatile int32_t* cancel = monitor != NULL ? monitor->cancel : NULL;
+    int workers = mn_worker_count();
+    int check_workers = mn_maxi(1, workers / 2);
+    int solve_workers = mn_maxi(1, workers - check_workers);
+    if (context->far_area != NULL) {
+        memset(context->far_area, 0, (size_t)cells);
+    }
+    mn_backwards* check = NULL;
+    MN_CHECK(mn_backwards_start(source, group_size, check_workers, cancel, &check));
+    int cap = mn_set_thread_cap(solve_workers);
+    int slab_count = mn_backwards_batch_count(check);
+
+    mn_guard guard;
+    int status = guard_init(&guard, context);
+    mn_z_state s;
+    memset(&s, 0, sizeof(s));
+    s.context = context;
+    s.guard = &guard;
+    s.step = mn_lattice_step(context->parameters.stepover, g->cell_size);
+    mn_profile profile = { 0 };
+    s.profile = &profile;
+    mn_slab_monitor slab = { monitor, 0, slab_count > 0 ? slab_count : 1 };
+    mn_monitor inner;
+    inner.progress = slab_progress;
+    inner.context = &slab;
+    inner.cancel = cancel;
+    s.monitor = &inner;
+    mn_ints no_top = { 0 };
+    float* model_distance = NULL;
+    int64_t* level_cells = (int64_t*)mn_alloc((size_t)(plan->count > 0 ? plan->count : 1), sizeof(int64_t));
+    mn_segments* paths = (mn_segments*)mn_alloc((size_t)(slab_count > 0 ? slab_count : 1), sizeof(mn_segments));
+    mn_marks* path_marks = (mn_marks*)mn_alloc((size_t)(slab_count > 0 ? slab_count : 1), sizeof(mn_marks));
+    mn_points* unit_entries = (mn_points*)mn_alloc((size_t)(slab_count > 0 ? slab_count : 1), sizeof(mn_points));
+    mn_v3* starts = (mn_v3*)mn_alloc((size_t)(slab_count > 0 ? slab_count : 1), sizeof(mn_v3));
+    int* has_start = (int*)mn_alloc((size_t)(slab_count > 0 ? slab_count : 1), sizeof(int));
+    s.touches = (uint8_t*)mn_alloc((size_t)cells, 1);
+    s.inside = (uint8_t*)mn_alloc((size_t)cells, 1);
+    s.covered = (uint8_t*)mn_alloc((size_t)cells, 1);
+    s.planned = (float*)mn_alloc((size_t)cells, sizeof(float));
+    s.clearance = (float*)mn_alloc((size_t)cells, sizeof(float));
+    s.lifted = (float*)mn_alloc(2 * (size_t)cells, sizeof(float));
+    if (status == MN_OK && (level_cells == NULL || paths == NULL || path_marks == NULL || unit_entries == NULL || starts == NULL || has_start == NULL || s.touches == NULL
+        || s.inside == NULL || s.covered == NULL || s.planned == NULL || s.clearance == NULL || s.lifted == NULL)) {
+        status = mn_fail(MN_ERR_MEMORY, "Out of memory for the backwards routes.");
+    }
+    if (status == MN_OK) {
+        status = mn_profile_build(&context->tool, g->cell_size, &profile);
+    }
+    if (status == MN_OK) {
+        status = model_distance_of(&s, &model_distance);
+    }
+    int64_t all_cells = 0;
+    for (int k = 0; k < plan->count && status == MN_OK; k++) {
+        const uint8_t* mask = plan->masks + (size_t)k * (size_t)cells;
+        for (int c = 0; c < cells; c++) {
+            level_cells[k] += mask[c];
+        }
+        all_cells += level_cells[k];
+    }
+
+    /* Slab by slab from the lowest: the far go and the levels of the slab, its units ending where the
+     * slab below starts. */
+    int has_lower = 0;
+    mn_v3 lower = mn_v3_make(0.0f, 0.0f, 0.0f);
+    for (int n = 0; n < slab_count && status == MN_OK; n++) {
+        const mn_backwards_batch* batch = NULL;
+        status = mn_backwards_take(check, n, &batch);
+        if (status != MN_OK) {
+            break;
+        }
+        int b = slab_count - 1 - n;
+        slab.index = n;
+        mn_z_group group;
+        memset(&group, 0, sizeof(group));
+        s.nodes_left = 0;
+        s.pass = 0;
+        s.pass_count = 0;
+        s.done = 0;
+        s.unit_nodes = 0;
+        int max_nodes = 0;
+        status = z_group_prepare(&s, batch->first, batch->last, 1, batch->reached, batch->far, NULL, &group, &max_nodes);
+        if (status == MN_OK) {
+            const int* deepest = mn_backwards_deepest(check);
+            memcpy(s.planned, context->stock, (size_t)cells * sizeof(float));
+            for (int c = 0; batch->first > 0 && c < cells; c++) {
+                if (deepest[c] >= 0) {
+                    s.planned[c] = plan->levels[mn_mini(deepest[c], batch->first - 1)];
+                }
+            }
+        }
+        int64_t slab_cells = 0;
+        for (int k = batch->first; k <= batch->last; k++) {
+            slab_cells += level_cells[k];
+        }
+        mn_backwards_release(check, n);
+        if (status == MN_OK) {
+            s.budget.total = all_cells > 0 ? mn_d2l((double)MN_BUDGET_MAX_EVALUATIONS * (double)slab_cells / (double)all_cells) : 0;
+            s.budget.used = 0;
+            s.total = s.nodes_left;
+            free(s.xs);
+            free(s.ys);
+            free(s.zs);
+            s.xs = (float*)mn_alloc((size_t)max_nodes + 1, sizeof(float));
+            s.ys = (float*)mn_alloc((size_t)max_nodes + 1, sizeof(float));
+            s.zs = (float*)mn_alloc((size_t)max_nodes + 1, sizeof(float));
+            if (s.xs == NULL || s.ys == NULL || s.zs == NULL) {
+                status = mn_fail(MN_ERR_MEMORY, "Out of memory for the routes of a slab.");
+            }
+        }
+        if (status == MN_OK) {
+            mn_writer* writer = NULL;
+            status = writer_for(context, &writer);
+            if (status == MN_OK) {
+                status = z_units(&s, &group, 1, &no_top, max_nodes, model_distance, has_lower ? &lower : NULL, writer, &unit_entries[b], &starts[b], &has_start[b]);
+            }
+            if (status == MN_OK) {
+                status = mn_writer_release(writer, &paths[b], &path_marks[b]);
+            }
+            mn_writer_free(writer);
+        }
+        if (status == MN_OK && has_start[b]) {
+            lower = starts[b];
+            has_lower = 1;
+        }
+        z_group_free(&group);
+        if (status == MN_OK) {
+            mn_report(monitor, n + 1, slab_count, (float)(n + 1) / (float)slab_count);
+        }
+    }
+
+    int64_t counted = 0;
+    int64_t model_cells = 0;
+    int sweeps = 0;
+    int check_status = mn_backwards_finish(check, status != MN_OK, &counted, &model_cells, &sweeps);
+    if (status == MN_OK) {
+        status = check_status;
+    }
+    mn_set_thread_cap(cap);
+    if (status == MN_OK && unreached != NULL) {
+        unreached->checked = 1;
+        unreached->unreached = counted;
+        unreached->model_cells = model_cells;
+        unreached->sweeps = sweeps;
+    }
+
+    /* The program from the top slab down. */
+    if (status == MN_OK) {
+        mn_writer* writer = NULL;
+        status = writer_for(context, &writer);
+        int started = 0;
+        for (int b = 0; b < slab_count && status == MN_OK; b++) {
+            if (!has_start[b]) {
+                continue;
+            }
+            if (!started) {
+                mn_route_grid grid = { *g, s.planned, s.planned };
+                status = mn_writer_travel_to(writer, starts[b], &grid);
+                started = 1;
+            } else if (entries != NULL) {
+                status = mn_points_push(entries, starts[b]);
+            }
+            for (int u = 0; u < unit_entries[b].count && status == MN_OK && entries != NULL; u++) {
+                status = mn_points_push(entries, unit_entries[b].items[u]);
+            }
+            if (status == MN_OK) {
+                status = mn_writer_append(writer, &paths[b], &path_marks[b]);
+            }
+        }
+        if (status == MN_OK) {
+            status = mn_writer_take(writer, result, marks);
+        }
+        mn_writer_free(writer);
+    }
+
+    for (int b = 0; b < slab_count; b++) {
+        if (paths != NULL) {
+            mn_segments_free(&paths[b]);
+        }
+        if (path_marks != NULL) {
+            mn_marks_free(&path_marks[b]);
+        }
+        if (unit_entries != NULL) {
+            mn_points_free(&unit_entries[b]);
+        }
+    }
+    free(paths);
+    free(path_marks);
+    free(unit_entries);
+    free(starts);
+    free(has_start);
+    free(level_cells);
+    free(model_distance);
+    free(s.touches);
+    free(s.inside);
+    free(s.covered);
+    free(s.planned);
+    free(s.clearance);
+    free(s.lifted);
+    free(s.xs);
+    free(s.ys);
+    free(s.zs);
+    mn_profile_free(&profile);
     guard_free(&guard);
     return status;
 }
@@ -2719,8 +3052,11 @@ done:
 
 MN_API int32_t mn_strategy_generate(int32_t strategy, const mn_context* context, mn_progress_fn progress, void* progress_context, const volatile int32_t* cancel, mn_segment** segments, int32_t* count)
 {
-    if (context->collision_mode != MN_COLLISION_RECURSION && context->collision_mode != MN_COLLISION_ONE_RUN) {
+    if (context->collision_mode != MN_COLLISION_RECURSION && context->collision_mode != MN_COLLISION_ONE_RUN && context->collision_mode != MN_COLLISION_BACKWARDS) {
         return mn_fail(MN_ERR_ARGUMENT, "Unknown collision mode %d.", context->collision_mode);
+    }
+    if (context->collision_mode == MN_COLLISION_BACKWARDS && strategy != MN_STRATEGY_Z_LAYER) {
+        return mn_fail(MN_ERR_ARGUMENT, "The backwards collision handling works with the Z layer strategy only.");
     }
     if (context->collision_mode == MN_COLLISION_ONE_RUN && !(context->ratio >= 0)) {
         return mn_fail(MN_ERR_ARGUMENT, "The one run ratio must be zero or positive.");
@@ -2732,7 +3068,7 @@ MN_API int32_t mn_strategy_generate(int32_t strategy, const mn_context* context,
     mn_segments result = { 0 };
     int status;
     if (strategy == MN_STRATEGY_Z_LAYER) {
-        status = mn_z_layer(context, &monitor, &result, NULL, NULL);
+        status = mn_z_layer(context, &monitor, &result, NULL, NULL, NULL);
     } else if (strategy == MN_STRATEGY_THREE_AXIS_FREEDOM) {
         status = mn_three_axis_freedom(context, &monitor, &result, NULL);
     } else {

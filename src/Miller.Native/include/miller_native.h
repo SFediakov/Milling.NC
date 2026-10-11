@@ -253,9 +253,13 @@ MN_API void mn_writer_free(mn_writer* writer);
 #define MN_CELL_BRIDGE 16
 
 /* Recursion: generate, check, resolve and generate again while collisions decrease. One run: the
- * strategies evaluate every node against the standing material before its route (T-150). */
+ * strategies evaluate every node against the standing material before its route (T-150). Backwards
+ * (T-169 to T-172, Z layer only): a check from the lowest level up excludes the positions whose head
+ * would meet material only cutting the model frees, and the routes of every far stepdown slab are
+ * solved from the bottom while it runs. */
 #define MN_COLLISION_RECURSION 0
 #define MN_COLLISION_ONE_RUN 1
+#define MN_COLLISION_BACKWARDS 2
 
 #define MN_EVENT_HEAD 0
 #define MN_EVENT_RAPID 1
@@ -443,6 +447,10 @@ MN_API void mn_result_pass_far(const mn_result* result, int32_t* milled, int32_t
 /* Holding bridges of the kept pass: the parts the trench frees, the bridges wanted (parts times the
  * count) and the bridges placed. */
 MN_API void mn_result_bridges(const mn_result* result, int32_t* parts, int32_t* wanted, int32_t* placed);
+/* Backwards (T-172): 1 when the kept pass ran the backward check, then the positions it left unreached
+ * and the model cells, both summed over the levels (a cell counts on every level the model stands above),
+ * and the sweeps from the lowest level up the check took to settle. */
+MN_API int32_t mn_result_unreached(const mn_result* result, int64_t* unreached, int64_t* model_cells, int32_t* sweeps);
 MN_API int32_t mn_result_collision_count(const mn_result* result);
 MN_API void mn_result_collisions(const mn_result* result, mn_collision* collisions);
 MN_API void mn_result_profile(const mn_result* result, int32_t* offset_count, int32_t* annulus_count);

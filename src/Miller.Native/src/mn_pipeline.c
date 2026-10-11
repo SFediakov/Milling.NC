@@ -8,8 +8,10 @@
  * the raised tips, and the pass is repeated while the number of entered cells decreases, at most
  * MN_MAX_PASSES times; the pass with the fewest entered cells is kept. In one run mode (T-150) the
  * strategy evaluates its nodes against the standing material and one pass is checked for the
- * report. With a far stepdown under the Z layer (T-164) every collision's place and the
- * MN_FAR_WITHDRAW_RADIUS around it are withdrawn from the far stepdown after each pass: later passes
+ * report; in backwards mode (T-170, Z layer only) the strategy leaves out the positions the backward
+ * check finds unreached and one pass is checked the same way. With a far stepdown under the Z layer
+ * (T-164) every collision's place and the MN_FAR_WITHDRAW_RADIUS around it are withdrawn from the far
+ * stepdown after each pass: later passes
  * may take only the first pass's far positions that were never withdrawn, and a withdrawal that
  * removes a position starts another pass in either mode. Progress goes to the caller per pass and
  * stage; cancellation is honoured between the stages and inside the long ones. */
@@ -36,6 +38,8 @@ typedef struct mn_pass {
     int far_cells;
     /* The entry of every route unit after the first (T-166). */
     mn_points units;
+    /* Backwards (T-172): the counts of the backward check. */
+    mn_unreached unreached;
     int entered;
     int valid;
 } mn_pass;
@@ -333,7 +337,7 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
     }
     mn_segments routed = { 0 };
     if (job->strategy == MN_STRATEGY_Z_LAYER) {
-        status_code = mn_z_layer(&context, &monitor, &routed, &pass->layers, &pass->units);
+        status_code = mn_z_layer(&context, &monitor, &routed, &pass->layers, &pass->units, &pass->unreached);
     } else if (job->strategy == MN_STRATEGY_THREE_AXIS_FREEDOM) {
         status_code = mn_three_axis_freedom(&context, &monitor, &routed, &pass->layers);
     } else {
@@ -414,8 +418,11 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
 
 static int generate(const mn_job* job, stage_monitor* stage, const volatile int32_t* cancel, mn_result* r)
 {
-    if (job->collision_mode != MN_COLLISION_RECURSION && job->collision_mode != MN_COLLISION_ONE_RUN) {
+    if (job->collision_mode != MN_COLLISION_RECURSION && job->collision_mode != MN_COLLISION_ONE_RUN && job->collision_mode != MN_COLLISION_BACKWARDS) {
         return mn_fail(MN_ERR_ARGUMENT, "Unknown collision mode %d.", job->collision_mode);
+    }
+    if (job->collision_mode == MN_COLLISION_BACKWARDS && job->strategy != MN_STRATEGY_Z_LAYER) {
+        return mn_fail(MN_ERR_ARGUMENT, "The backwards collision handling works with the Z layer strategy only.");
     }
     if (!(job->recursion_ratio >= 0) || !(job->one_run_ratio >= 0)) {
         return mn_fail(MN_ERR_ARGUMENT, "The collision ratios must be zero or positive.");
@@ -495,7 +502,7 @@ static int generate(const mn_job* job, stage_monitor* stage, const volatile int3
         int decreasing = previous_entered < 0 || pass.entered < previous_entered || hits.unremovable < previous_unremovable;
         previous_entered = pass.entered;
         previous_unremovable = hits.unremovable;
-        int last = (job->collision_mode == MN_COLLISION_ONE_RUN && !far_on) || pass.entered == 0 || !decreasing;
+        int last = (job->collision_mode != MN_COLLISION_RECURSION && !far_on) || pass.entered == 0 || !decreasing;
         int changed = 0;
         if (!last && job->collision_mode == MN_COLLISION_RECURSION) {
             changed = mn_resolve(g, &r->profile, job->tool.cutter_length, r->model.z, pass.effective.z, pass.strategy_tip.z, r->floor, job->parameters.tolerance, job->recursion_ratio, &hits, status, raised);
@@ -678,6 +685,14 @@ MN_API void mn_result_bridges(const mn_result* result, int32_t* parts, int32_t* 
     *parts = result->best.bridges.parts;
     *wanted = result->best.bridges.wanted;
     *placed = result->best.bridges.placed;
+}
+
+MN_API int32_t mn_result_unreached(const mn_result* result, int64_t* unreached, int64_t* model_cells, int32_t* sweeps)
+{
+    *unreached = result->best.unreached.unreached;
+    *model_cells = result->best.unreached.model_cells;
+    *sweeps = result->best.unreached.sweeps;
+    return result->best.unreached.checked;
 }
 
 MN_API int32_t mn_result_collision_count(const mn_result* result) { return result->best.events.count; }

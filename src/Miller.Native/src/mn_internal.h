@@ -277,7 +277,44 @@ float mn_distance_to(mn_v3 p, mn_v3 a, mn_v3 b);
 
 /* `marks` (NULL allowed) receives the layer marks of the routes. */
 /* `entries` (may be NULL) receives the entry of every route unit after the first (T-166). */
-int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks, mn_points* entries);
+/* `unreached` (may be NULL) receives the counts of the backward check when the collision mode is
+ * MN_COLLISION_BACKWARDS (T-170). */
+typedef struct mn_unreached {
+    int checked;
+    int64_t unreached;
+    int64_t model_cells;
+    int sweeps;
+} mn_unreached;
+
+int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks, mn_points* entries, mn_unreached* unreached);
+
+/* ---- backward check (T-170, mn_backwards.c) ---- */
+
+/* One batch of levels first..last from the top (one far stepdown slab, one level without a far
+ * stepdown): per level the positions reached there ((last - first + 1) * cells, level first first) and
+ * the positions of the far go (NULL without one). */
+typedef struct mn_backwards_batch {
+    int first;
+    int last;
+    uint8_t* reached;
+    uint8_t* far;
+} mn_backwards_batch;
+
+typedef struct mn_backwards mn_backwards;
+
+/* Starts the check on a thread of its own with `workers` workers; the batches come from the lowest. */
+int mn_backwards_start(const mn_context* context, int group_size, int workers, const volatile int32_t* cancel, mn_backwards** check);
+int mn_backwards_batch_count(const mn_backwards* check);
+/* Per position the deepest level index the check settled on (-1 for none); valid once a batch is taken. */
+const int* mn_backwards_deepest(const mn_backwards* check);
+/* The batch `taken` from the bottom (0 the lowest); waits until the check has it. */
+int mn_backwards_take(mn_backwards* check, int taken, const mn_backwards_batch** batch);
+/* Frees the batch and lets the check run on. */
+void mn_backwards_release(mn_backwards* check, int taken);
+/* Joins the check (stopping it first when `abort`) and frees it; returns the check's status unless it
+ * was aborted, the unreached positions and the model cells summed over the levels, and the sweeps it
+ * took to settle. */
+int mn_backwards_finish(mn_backwards* check, int abort, int64_t* unreached, int64_t* model_cells, int* sweeps);
 int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks);
 int mn_is_clear(const mn_segment* segment, const mn_grid* g, const float* effective_tip, float tolerance);
 /* `marks` (NULL allowed) ends a feed run at every marked segment and gets its indices rewritten for
