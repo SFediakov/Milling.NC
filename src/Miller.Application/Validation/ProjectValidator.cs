@@ -18,6 +18,9 @@ public static class ProjectValidator
     // the App layer reads it as HeightMapRenderer.MaxCellsForInteractiveFrame.
     public const long MaxInteractiveCells = 1_000_000;
 
+    // The head bottom may be up to 50 percent narrower than the cutter (T-165, a necked tool).
+    public const float MinHeadBottomRatio = 0.5f;
+
     public static ValidationResult Validate(MillingProject project, BoundingBox? modelBoundsMachine)
     {
         ArgumentNullException.ThrowIfNull(project);
@@ -29,10 +32,10 @@ public static class ProjectValidator
 
         Positive(errors, "Tool.CutterDiameter", tool.CutterDiameter);
         Positive(errors, "Tool.CutterLength", tool.CutterLength);
-        if (!(tool.HeadDiameter > tool.CutterDiameter))
+        if (!(tool.HeadDiameter >= tool.CutterDiameter * MinHeadBottomRatio))
         {
             errors.Add(new ValidationMessage("Tool.HeadDiameter",
-                $"Head diameter {F(tool.HeadDiameter)} must be larger than the cutter diameter {F(tool.CutterDiameter)}."));
+                $"Head bottom diameter {F(tool.HeadDiameter)} must be at least {F(tool.CutterDiameter * MinHeadBottomRatio)}, half the cutter diameter {F(tool.CutterDiameter)}."));
         }
 
         if (!Enum.IsDefined(tool.HeadShape))

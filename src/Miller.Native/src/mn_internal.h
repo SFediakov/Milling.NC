@@ -32,6 +32,7 @@ void mn_profile_free(mn_profile* profile);
 float mn_head_radius(const mn_tool* tool);
 float mn_head_widening(const mn_tool* tool);
 float mn_head_radius_at(const mn_tool* tool, float h);
+float mn_meet_radius_at(const mn_tool* tool, float h);
 
 /* ---- mesh ---- */
 

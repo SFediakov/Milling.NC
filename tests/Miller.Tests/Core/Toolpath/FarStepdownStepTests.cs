@@ -486,4 +486,58 @@ public sealed class FarStepdownStepTests
         var plain = Strategy.Generate(TallContext(tool, 0f), null, TestContext.Current.CancellationToken);
         AssertSameStock(Simulate(context, plain, plain.Count), Simulate(context, path, path.Count), tolerance);
     }
+
+    // Before the route [from, to) no footprint cell of a tip of its cutting moves stands above the top of
+    // the flutes there: what stands above them is never cut by a horizontal move, whatever the head.
+    private static void AssertFlutesClear(ToolpathContext context, Toolpath path, int from, int to)
+    {
+        var stock = Simulate(context, path, from);
+        var slack = context.Parameters.Tolerance + CollisionDetector.Tolerance;
+        for (var k = from; k < to; k++)
+        {
+            var s = path.Segments[k];
+            if (s.Kind == MoveKind.Rapid)
+            {
+                continue;
+            }
+
+            foreach (var tip in new[] { s.Start, s.End, (s.Start + s.End) / 2 })
+            {
+                var (i, j) = stock.CellOf(tip.X, tip.Y);
+                foreach (var o in context.Profile.Offsets)
+                {
+                    var ii = i + o.Dx;
+                    var jj = j + o.Dy;
+                    if (stock.InBounds(ii, jj))
+                    {
+                        Assert.True(stock[ii, jj] <= tip.Z + CutterLength + slack, $"segment {k} at {tip}: cell ({ii}, {jj}) stands at {stock[ii, jj]} above the flutes");
+                    }
+                }
+            }
+        }
+    }
+
+    // T-165: the tall wall under a frustum whose bottom is half the cutter (3 mm under a 6 mm cutter,
+    // 20 mm after 10 mm): the far block keeps the head and the flutes clear of what stands, and the walk
+    // ends at the stock the plain schedule leaves.
+    [Fact]
+    public void TallWall_UnderAHeadNarrowerThanTheCutter_TheFarBlockKeepsHeadAndFlutesClear()
+    {
+        var tool = new ToolDefinition { CutterDiameter = 6f, CutterLength = CutterLength, HeadShape = HeadShape.Frustum, HeadDiameter = 3f, HeadTopDiameter = 20f, HeadLength = 10f };
+        var context = TallContext(tool, 4f);
+        var path = Strategy.Generate(context, null, TestContext.Current.CancellationToken);
+        Assert.Empty(GougeChecker.Verify(path, context.EffectiveTip, context.Parameters.Tolerance));
+
+        var step3 = FirstCutAt(path, 3f, 0);
+        var step1 = FirstCutAt(path, 1f, step3);
+        var walk = FirstCutAt(path, 3f, step1);
+        Assert.True(step3 < step1 && step1 < walk && walk < path.Count, $"far block at {step3}, {step1}, walk at {walk} of {path.Count}");
+        AssertHeadClear(context, path, step3, step1);
+        AssertHeadClear(context, path, step1, walk);
+        AssertFlutesClear(context, path, step3, step1);
+        AssertFlutesClear(context, path, step1, walk);
+
+        var plain = Strategy.Generate(TallContext(tool, 0f), null, TestContext.Current.CancellationToken);
+        AssertSameStock(Simulate(context, plain, plain.Count), Simulate(context, path, path.Count), context.Parameters.Tolerance);
+    }
 }

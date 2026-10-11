@@ -76,6 +76,11 @@ public sealed class ToolRenderer : IDisposable
         Cylinder(data, headTopRadius, headBottom, headTop, headColor);
         Disc(data, headBottomRadius, tool.CutterLength, -1f, headColor);
         Disc(data, headTopRadius, headTop, 1f, headColor);
+        if (headBottomRadius < r)
+        {
+            // A necked tool: the cutter's top face shows around the narrower head bottom.
+            Disc(data, r, tool.CutterLength, 1f, cutterColor);
+        }
         return data.ToArray();
     }
 

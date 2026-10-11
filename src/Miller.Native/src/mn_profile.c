@@ -60,6 +60,14 @@ float mn_head_radius_at(const mn_tool* tool, float h)
     return bottom + (top - bottom) * mn_max(0.0f, h) / widening;
 }
 
+/* The distance within which material standing h (> 0) above the head bottom meets the tool: the head
+ * radius there, never less than the cutter radius, because the flutes end at the head bottom and a
+ * footprint cannot cut what stands above them (T-165: a head bottom down to half the cutter). */
+float mn_meet_radius_at(const mn_tool* tool, float h)
+{
+    return mn_max(mn_head_radius_at(tool, h), tool->cutter_diameter / 2.0f);
+}
+
 int mn_profile_build(const mn_tool* tool, float cell_size, mn_profile* profile)
 {
     memset(profile, 0, sizeof(*profile));
