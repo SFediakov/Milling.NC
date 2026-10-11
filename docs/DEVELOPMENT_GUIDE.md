@@ -223,7 +223,7 @@ below the tip map by more than `Tolerance`.
 
 ```
         |   |
-        |   |   <- shank / head, diameter HeadDiameter (larger)
+        |   |   <- shank / head, diameter HeadDiameter (at least half the cutter)
    -----+   +-----
         |   |
         |   |   <- cutter, diameter CutterDiameter, usable length CutterLength
@@ -244,6 +244,19 @@ below the tip map by more than `Tolerance`.
   `dz(d) = HeadLength * (d - rb) / (rt - rb)` for `rb < d <= rt`. A frustum that
   narrows upward has its widest part at the bottom and acts as the cylinder of
   `HeadDiameter`.
+- Necked tool (T-165): `HeadDiameter` may be down to half the cutter diameter.
+  The head ring still holds only the cells outside the cutter radius, at their
+  underside height (a cylinder inside the cutter radius has no ring): inside the
+  cutter radius the cutter has already removed what the head could meet. The
+  flutes end at the head bottom and a footprint cannot cut what stands above
+  them, so wherever the planner asks how far material standing h above the head
+  bottom reaches the tool (the far block permission, the separation terraces)
+  it takes `max(R(h), CutterRadius)` (`mn_meet_radius_at`), and the head overhang
+  is 0 for a head inside the cutter radius. For a head wider than the cutter
+  nothing changes; a cylinder head inside the cutter radius generates exactly as
+  a cylinder of the cutter diameter. The collision check has no flute-length
+  test of its own: it relies on the planner never cutting horizontally deeper
+  than the cutter length (layer and far step depths at most the cutter length).
 - The separation terraces (`SeparationRegion`) widen by the head radius at the
   height the slab stands above the head bottom of the deeper positions (the
   widest radius once the slab is a widening height above), plus the head margin.
@@ -337,7 +350,9 @@ every pass) is decided by the same rule, up to 8 rounds, so a wall is cleared
 in one pass instead of one ring of positions per pass. The pass repeats while
 the entered cells or the unremovable ones among them still decrease and the
 resolution added a mark, at most `MN_MAX_PASSES` (8) times; the pass with the
-fewest entered cells is kept and reported. The strategies cut every
+fewest entered cells is kept and reported. With a far stepdown under the Z
+layer the passes also withdraw the far stepdown around collisions (T-164,
+section 6.4). The strategies cut every
 ShouldRemove cell to its closing before the tool goes deeper beside it
 (section 6.4). One run mode (`CollisionMode.OneRun`, T-150) decides inside the
 strategies instead (section 6.4) and runs one pass.
@@ -516,7 +531,23 @@ Uncuttable classification (`UncuttableRegions`):
   depth of step t below that top, c the cutter length, r the cutter radius; T-157
   added r in the chain instead of subtracting it and stopped one step early. Both
   collision modes see nothing to fix in the far block; beside the model they
-  decide as without a far stepdown.
+  decide as without a far stepdown. Under a head narrower than the cutter the
+  disk radius is `max(R(H), r)` (T-165, section 6.2).
+- Far stepdown withdrawn around collisions (T-164, user request): after every
+  pass whose check found collisions, each collision's place (every cell the
+  head or a rapid entered, and the tool axis cell that entered it) and every
+  position within `MN_FAR_WITHDRAW_RADIUS` (1 mm) of it in XY leave the far
+  stepdown for all later passes (`mn_far_withdraw`); those positions stay in
+  the group masks and are milled with the normal Stepdown. The far positions a
+  later pass may take are the first pass's far area less every withdrawal
+  (`far_allowed`, filtered in `far_cells_of`), so the far area never grows. A
+  withdrawal that removed at least one position starts another pass in either
+  collision mode (one run then runs more than one pass), under the same rules
+  as the recursion: only while the entered cells or the unremovable ones still
+  decrease, at most `MN_MAX_PASSES`, the pass with the fewest entered cells
+  kept. The result carries the first pass's far area, the kept pass's far
+  area and the positions withdrawn before the kept pass, and per pass the far
+  positions and the withdrawn ones; the statistics show both in mm2 per pass.
 - One run (`CollisionMode.OneRun`, T-150): both strategies keep the material as
   their routes leave it (the footprint of every visited node stamped into a copy
   of the stock) and evaluate every node of a route against it before the route
@@ -669,7 +700,7 @@ M30
 |---|---|
 | `CutterDiameter > 0` | Tool.CutterDiameter |
 | `CutterLength > 0` | Tool.CutterLength |
-| `HeadDiameter > CutterDiameter` | Tool.HeadDiameter |
+| `HeadDiameter >= 0.5 * CutterDiameter` (`MinHeadBottomRatio`, T-165) | Tool.HeadDiameter |
 | `HeadShape` is `Cylinder` or `Frustum` | Tool.HeadShape |
 | Frustum only: `HeadTopDiameter > CutterDiameter`, finite | Tool.HeadTopDiameter |
 | Frustum only: `HeadLength > 0`, finite | Tool.HeadLength |
@@ -2101,6 +2132,22 @@ check that decides done.
 - Input: user report (collisions reported on the stock, not on the model, with the current setup)
 - Output: the slab of a separation terrace counts `Tolerance` higher than its level in the clearance rule and in the fully widened reach (section 6.2), so a slab level with the head bottom is cleared by the head overhang like every slab above it
 - Acceptance: a 10 x 10 x 10 box in a 30 x 30 x 10 stock under a 4 mm cutter 4 mm long with an 8 mm head: every position within the head overhang less a cell of a floor position that is allowed at level 2 lies in the level 2 trench; the deep stock terrace test, the separation, bridge, collision mode and far stepdown tests hold; the heart golden unchanged; on the user's live project at cell 0.025 with far stepdown 0.2 the stock-only contacts measured before and after the change; build 1.0.106 at the same settings without the far stepdown reports 77 events, 55 touching the model; 805 tests pass
+- Status: done
+
+#### T-164 Far stepdown withdrawn around collisions
+- Depends on: T-148, T-150, T-162
+- Files: `src/Miller.Native/include/miller_native.h`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_collision.c`, `src/Miller.Core/Native/CoreNative.cs`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Core/Generation/FarWithdrawal.cs`, `src/Miller.Application/Services/PipelineService.cs`, `src/Miller.App/ViewModels/StrategySelectionViewModel.cs`, `tests/Miller.Tests/Application/FarWithdrawalTests.cs`
+- Input: user request (where a collision is present, the area of the collision plus 1 mm in XY is forbidden for the far stepdown and milled with the normal layers; later passes may not add far area, only the first run's area where no collision was is allowed)
+- Output: the rule of section 6.4 (far stepdown withdrawn around collisions), the far areas in the generation result and the statistics
+- Acceptance: one place on 21 x 21 cells of 0.25 mm withdraws exactly the 49 cells within 1 mm, once; a negative or NaN radius, a zero cell and a mismatched mask are rejected; a 2 mm cutter under a 7 to 10 mm frustum beside a box taller than the cutter (recursion: 4 mm box, stepover 1, far stepdown 4; one run: 6 mm box, stepover 2, far stepdown 8) withdraws far positions after the first pass, runs further passes, every later pass mills at most the first far area less what was withdrawn before it, the kept pass mills nothing withdrawn and nothing outside the first area, its withdrawn area equals the sum of the withdrawals before it, no gouge; without a far stepdown nothing is withdrawn and one run stays one pass; the statistics name the far areas only with a far stepdown; the heart golden unchanged; on the user's live project (cell 0.025, far stepdown 0.2, head bottom 0.81, recursion ratio 5) 50.1 of 176.1 mm2 of far area are withdrawn after the first pass and the kept pass reports 63 events against 68 without the withdrawal (8 passes each, 228.8 against 214.5 estimated minutes); at cell 0.05 it is 40 against 36: the contacts lie beside the walls in the near band, not in the far block; 820 tests pass
+- Status: done
+
+#### T-165 Head bottom down to half the cutter diameter
+- Depends on: T-135, T-162
+- Files: `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.Native/src/mn_profile.c`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_slicing.c`, `src/Miller.App/Rendering/ToolRenderer.cs`, `tests/Miller.Tests/Application/NarrowHeadTests.cs`
+- Input: user request (allow a head bottom diameter up to 50 percent less than the cutter diameter; test changes pre-approved)
+- Output: the validator rule of section 6.7, the necked tool of section 6.2 (`mn_meet_radius_at` in the far block permission and the terraces, the overhang clamped at 0), the cutter top face drawn around a narrower head
+- Acceptance: head bottom 3 and 6 under a 6 mm cutter valid for cylinder and frustum, 2.99, 0 and NaN rejected; a 3 mm cylinder head has no ring and a 4 to 10 mm frustum rings the cutter from its radius at the underside height; a 3 mm cylinder head generates segment for segment as a 6 mm one in both cut scopes with and without a far stepdown; a 3 to 12 mm frustum in separation scope with a far stepdown has no gouge and the simulation finds the generation's events; under a 3 to 20 mm frustum the tall wall far block keeps head and flutes clear and ends at the plain stock; the renderer adds one cutter-colored disc; the three tests of the old rule changed under the user's pre-approval; the heart golden unchanged; 813 tests pass
 - Status: done
 
 ### M8 Packaging and release
