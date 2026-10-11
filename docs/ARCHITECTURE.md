@@ -190,7 +190,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | Io | `StlBinaryParser.cs` | 80-byte header, uint32 count, 50-byte records, little endian |
 | Io | `StlAsciiParser.cs` | `solid`/`facet normal`/`outer loop`/`vertex`/`endsolid` grammar, invariant culture |
 | Io | `StlImportReport.cs` | Triangle count, bounds, degenerate triangle count, format detected |
-| Setup | `ToolDefinition.cs` | `CutterDiameter`, `CutterLength` (usable length below the head), `HeadDiameter` (> cutter), `TipType` (Flat, Ball), `Name` |
+| Setup | `ToolDefinition.cs` | `CutterDiameter`, `CutterLength` (usable length below the head), `HeadDiameter` (at least half the cutter diameter, T-165), `TipType` (Flat, Ball), `Name` |
 | Setup | `StockDefinition.cs` | `Shape` (Box, Cylinder); Box: `SizeX`, `SizeY`, `SizeZ`; Cylinder: `Diameter`, `Height`; `Placement` (AutoFitWithMargin, Explicit) and `Margin`; auto-fit alignment of the model union per axis `AlignX`, `AlignY`, `AlignZ` (`StockAlignment` Min, Center, Max; defaults Center, Center, Max) |
 | Setup | `AxisSetup.cs` | Mapping of model axes to machine X, Y, Z; direction sign per axis; rotation angles (degrees) about X, Y, Z; `OriginMode` (StockCornerMinXYMinZ, StockCornerMinXYTopZ, StockCenterTopZ, Custom); `ToMatrix()` |
 | Setup | `CuttingParameters.cs` | `FeedRate`, `PlungeRate`, `RapidRate` (mm/min), `SpindleRpm`, `Stepover`, `Stepdown`, `FarStepdown` (0 for none, otherwise a whole multiple of the stepdown: the far area of every group of levels cut in one step), `SafeHeight`, `CellSize`, `Tolerance`, `MillingDirection` (Zigzag, OneWay) |
@@ -282,7 +282,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | `Services/SettingsService.cs` | User preferences JSON in the per-user application data folder: last folders, window size, last speed factor |
 | `Services/PresetService.cs` | Named `MillingPreset`s in one `presets.json` next to the executable (`AppContext.BaseDirectory`); `Load`, `Save` (replace by name, case-insensitive), `Delete`; a corrupt file throws |
 | `Services/LogService.cs` | Append-only text log in `logs/miller.log` next to the executable; exception formatting |
-| `Validation/ProjectValidator.cs` | Rule list with messages: cutter length > 0, head diameter > cutter diameter, stepover in (0, cutter diameter], stepdown > 0, safe height > 0, cell size in [0.01, 5] mm, feed rates > 0, reach percent in (0, 100], model fits inside the stock box in machine space (`ModelLayout.StockBoundsMachine`) |
+| `Validation/ProjectValidator.cs` | Rule list with messages: cutter length > 0, head bottom diameter at least half the cutter diameter, stepover in (0, cutter diameter], stepdown > 0, safe height > 0, cell size in [0.01, 5] mm, feed rates > 0, reach percent in (0, 100], model fits inside the stock box in machine space (`ModelLayout.StockBoundsMachine`) |
 | `Validation/ValidationResult.cs` | Errors and warnings with the field name they refer to |
 | `Progress/ProgressReport.cs` | Stage name, fraction 0..1, message |
 

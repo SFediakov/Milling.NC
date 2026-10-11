@@ -63,6 +63,10 @@
 - The far stepdown (T-156) is not a cluster of its own: it is a schedule of the Z layer strategy
   (groups of levels, the far region first), so it lives in `mn_z_layer`; a separate cluster would
   need the cave walk twice.
+- The far stepdown withdrawal (T-164) is not a cluster of its own: it reads the hits of the pass's
+  collision check and steers the Z layer's far region of the next pass, so it lives in the pass loop
+  of `mn_pipeline.c` beside the recursion's resolution; `FarWithdrawal` is only the facade of
+  `mn_far_withdraw` for its tests.
 - The slow zones (T-155, `mn_slow.c`) and the layer marks (T-154) are not clusters of their own:
   both are stages of the native generation between the simplifier and the statistics (user request:
   all generation in the C library), and the layer stepping is part of the simulation cluster
@@ -676,3 +680,17 @@
   1.0.106 at the user's real settings: 77 events, 55 touching the model, before any far stepdown.
 - When the user compares runs, check the live project file's modification time: it changed during
   the session (reach percent 98 to 97), and the same build then gives different counts (67 to 73).
+- `max(R(H), r)` (T-165) never changes a flat-tip far block: a position allowed at a step was allowed
+  at the step before with the same footprint, so every cell within the cutter radius of it already
+  stands at that step's level and is no source. It matters where a footprint cell stands higher than
+  the level it was cut to (a ball tip's edge) and in the separation terraces, whose widening was
+  skipped while `R(h) - r + margin` was not positive.
+- A far withdrawal fixture needs the far region within 1 mm of the collisions: with the default 3 mm
+  stepover the box fixtures' wall contacts lie farther from every far position and nothing is
+  withdrawn; stepover 1 or 2 brings them in. One run on the 9 mm box still fails with cyclic
+  precedence pairs (known, see the short-cutter lesson), the 6 mm box does not.
+- The withdrawal does not remove the live project's collisions (63 against 68 events at cell 0.025, 40
+  against 36 at 0.05, measured against the same code without it in a worktree): they are near-band
+  positions at the floor beside the heart's walls, which the far stepdown never cut. The user had set
+  the head bottom to 0.81 mm by then; at 0.05 mm cells a 0.8 mm bottom keeps 40 events and a 0.6 mm
+  bottom (T-165) none, in one pass. Measure against a baseline before claiming that a rule helps.
