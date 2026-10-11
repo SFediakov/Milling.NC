@@ -32,7 +32,7 @@ public sealed class SettingsViewModelsTests : IDisposable
         Assert.True(_vm.Project.IsDirty);
         Assert.Null(_vm.Tool.CutterDiameterError);
 
-        _vm.Tool.HeadDiameter = 3f;
+        _vm.Tool.HeadDiameter = 1.5f;
         Assert.NotNull(_vm.Tool.HeadDiameterError);
         _vm.Tool.HeadDiameter = 12f;
         Assert.Null(_vm.Tool.HeadDiameterError);

@@ -75,11 +75,18 @@ public sealed class ProjectValidatorTests
         AssertSingleError(p => p.Tool.CutterLength = -1, "Tool.CutterLength");
     }
 
+    // T-165: the head bottom may be up to half narrower than the 6 mm cutter, cylinder and frustum alike.
     [Fact]
-    public void HeadDiameter_MustExceedCutterDiameter()
+    public void HeadBottomDiameter_MayBeDownToHalfTheCutterDiameter()
     {
-        AssertSingleError(p => p.Tool.HeadDiameter = 6, "Tool.HeadDiameter");
-        AssertSingleError(p => p.Tool.HeadDiameter = 5, "Tool.HeadDiameter");
+        Assert.Equal(0.5f, ProjectValidator.MinHeadBottomRatio);
+        AssertValid(p => p.Tool.HeadDiameter = 6);
+        AssertValid(p => p.Tool.HeadDiameter = 3);
+        AssertValid(p => { p.Tool.HeadShape = HeadShape.Frustum; p.Tool.HeadDiameter = 3; p.Tool.HeadTopDiameter = 8; });
+        AssertSingleError(p => p.Tool.HeadDiameter = 2.99f, "Tool.HeadDiameter");
+        AssertSingleError(p => { p.Tool.HeadShape = HeadShape.Frustum; p.Tool.HeadDiameter = 2.9f; p.Tool.HeadTopDiameter = 8; }, "Tool.HeadDiameter");
+        AssertSingleError(p => p.Tool.HeadDiameter = float.NaN, "Tool.HeadDiameter");
+        AssertSingleError(p => p.Tool.HeadDiameter = 0, "Tool.HeadDiameter");
     }
 
     [Fact]

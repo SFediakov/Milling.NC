@@ -473,8 +473,9 @@ MN_API float mn_adjacency_margin(float cell_size) { return sqrtf(2.0f) * cell_si
 
 MN_API float mn_head_margin(float cell_size, float tolerance) { return mn_adjacency_margin(cell_size) + tolerance; }
 
-/* How far the head reaches beyond the cutter edge; the widest head radius for a frustum. */
-MN_API float mn_head_overhang(const mn_tool* tool) { return mn_head_radius(tool) - tool->cutter_diameter / 2.0f; }
+/* How far the head reaches beyond the cutter edge; the widest head radius for a frustum, 0 for a head
+ * that stays inside the cutter radius (T-165). */
+MN_API float mn_head_overhang(const mn_tool* tool) { return mn_max(0.0f, mn_head_radius(tool) - tool->cutter_diameter / 2.0f); }
 
 int mn_touches_outside(const int* cells, int count, const mn_grid* g, const float* stock)
 {
@@ -578,7 +579,8 @@ MN_API int32_t mn_islands_find(const mn_grid* grid, const float* standing, const
  * wherever the head of a deeper position would meet the slab above it: by the widest head radius
  * where the head bottom lies at least the head's widening height below that slab, and by the head
  * radius at the height the slab stands above the head bottom where it lies closer, so a frustum
- * leaves a slope instead of one tread of its widest radius. The slab counts `tolerance` higher than
+ * leaves a slope instead of one tread of its widest radius; a head narrower than the cutter counts
+ * as the cutter radius, the flutes cannot cut a slab above them (T-165). The slab counts `tolerance` higher than
  * its level, the height the simplifier's chords leave its material at (T-163). */
 int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* stock, const mn_tool* tool, float tolerance, float stock_top, float floor, float min_island_volume, float* standing, mn_ints* island_cells, mn_ints* island_offsets, float** island_volumes, int* island_count)
 {
@@ -644,8 +646,8 @@ int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* 
         int sources = 0;
         for (int c = 0; c < cells; c++) {
             float h = slab_top + tolerance - deepest_position[c] - tool->cutter_length;
-            float radius = mn_head_radius_at(tool, h) - cutter_radius + margin;
-            int widens = h > MN_LEVEL_TOLERANCE && !(h > widening + MN_LEVEL_TOLERANCE) && radius > 0;
+            float radius = mn_meet_radius_at(tool, h) - cutter_radius + margin;
+            int widens = h > MN_LEVEL_TOLERANCE && !(h > widening + MN_LEVEL_TOLERANCE);
             slope[c] = widens ? -(radius / cell_size) * (radius / cell_size) : INFINITY;
             sources += widens;
         }

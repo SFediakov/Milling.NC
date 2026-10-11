@@ -1153,8 +1153,9 @@ static void count_pass(mn_z_state* s, const mn_ints* nodes, int* max_nodes)
 }
 
 /* The steps of a group's far block (T-157): a single step never goes deeper than the cutter length,
- * because the head is wider than the cutter and meets the uncut material ahead of it whatever the
- * order of the nodes, so the far region is cut in steps of the largest multiple of the stepdown within
+ * because the flutes end there and the material ahead above them meets the head (or, under a head
+ * narrower than the cutter, stays uncut above the flutes) whatever the order of the nodes, so the far
+ * region is cut in steps of the largest multiple of the stepdown within
  * the cutter length (one step when the far stepdown fits), shallow to deep; which positions each
  * step may take is decided by far_steps_of (T-162). */
 
@@ -1177,8 +1178,10 @@ static void cover_level(const mn_grid* g, const mn_profile* profile, int cell, f
  * every shallower one, so no route drops more than one step. What stands is the `standing` map (the
  * stock as the levels above the group leave it: the model, uncut stock, the near band at the group's
  * top) and, once a step is assigned, the cells its footprints cut, at that step's level. A cell
- * standing H above the head bottom of a step forbids the positions within R(H) + margin of it
- * (mn_head_radius_at, mn_head_margin); the power-distance lower envelope of those disks tells for
+ * standing H above the head bottom of a step forbids the positions within R(H) + margin of it, R(H)
+ * the head radius there and at least the cutter radius (mn_meet_radius_at, mn_head_margin: a head
+ * narrower than the cutter still leaves above the flutes what a footprint cannot cut, T-165); the
+ * power-distance lower envelope of those disks tells for
  * every position whether one reaches it. With every standing cell at the group's top this is the
  * threshold rule of T-157; a wall higher than that top forbids the far depth as far as the head
  * reaches it, and the near band cuts those positions level by level. */
@@ -1229,7 +1232,7 @@ static int far_steps_of(mn_z_state* s, mn_z_group* group, const mn_ints* far, co
             if (!(h > MN_LEVEL_TOLERANCE)) {
                 continue;
             }
-            float radius = (mn_head_radius_at(&context->tool, h) + margin) / g->cell_size;
+            float radius = (mn_meet_radius_at(&context->tool, h) + margin) / g->cell_size;
             field[c] = -radius * radius;
             sources++;
         }
