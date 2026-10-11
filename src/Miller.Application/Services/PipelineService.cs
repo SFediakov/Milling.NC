@@ -58,6 +58,9 @@ public sealed record PipelineResult(
 
     // Layers of the toolpath in path order (the simulation steps layer by layer over them).
     public IReadOnlyList<ToolpathLayer> Layers { get; init; } = Array.Empty<ToolpathLayer>();
+
+    // Far stepdown positions of the first and the kept pass and those withdrawn around collisions (T-164).
+    public FarStepdownAreas FarStepdown { get; init; } = new(new bool[0, 0], new bool[0, 0], new bool[0, 0]);
 }
 
 // Runs the stages of docs/ARCHITECTURE.md 5.1 in order: the validation here, every later stage in one
@@ -138,6 +141,7 @@ public sealed class PipelineService
             PassCollisions = generated.PassCollisions,
             Bridges = generated.Bridges,
             Layers = generated.Layers,
+            FarStepdown = generated.FarStepdown,
         };
     }
 

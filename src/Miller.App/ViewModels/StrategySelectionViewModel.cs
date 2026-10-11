@@ -127,6 +127,9 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
 
     public BridgeReport Bridges { get; private set; }
 
+    // Area of one grid cell, for the far stepdown areas of every pass (T-164).
+    public float CellArea { get; private set; }
+
     public string StatisticsText
     {
         get
@@ -142,6 +145,13 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Estimated time: {Statistics.EstimatedMinutes:0.0} min, retracts: {Statistics.RetractCount}\n"));
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Levels: {Plan.Levels}, lowest level: {Plan.LowestLevel:0.000} mm\n"));
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Generation passes: {Passes}, collisions per pass: {string.Join(", ", PassCollisions.Select(p => p.Events.ToString(CultureInfo.InvariantCulture)))}"));
+            if (PassCollisions.Any(p => p.FarCells > 0 || p.WithdrawnCells > 0))
+            {
+                var milled = string.Join(", ", PassCollisions.Select(p => (p.FarCells * CellArea).ToString("0.0", CultureInfo.InvariantCulture)));
+                var withdrawn = string.Join(", ", PassCollisions.Select(p => (p.WithdrawnCells * CellArea).ToString("0.0", CultureInfo.InvariantCulture)));
+                text.Append(string.Create(CultureInfo.InvariantCulture, $"\nFar stepdown area per pass: {milled} mm2, withdrawn around collisions: {withdrawn} mm2"));
+            }
+
             if (Bridges.Wanted > 0)
             {
                 text.Append(string.Create(CultureInfo.InvariantCulture, $"\nBridges: {Bridges.Placed} of {Bridges.Wanted} placed on {Bridges.Parts} freed part(s)"));
@@ -159,6 +169,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         Passes = result.Passes;
         PassCollisions = result.PassCollisions;
         Bridges = result.Bridges;
+        CellArea = result.Parameters.CellSize * result.Parameters.CellSize;
         RaiseStatistics();
     }
 
@@ -169,6 +180,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         Passes = 0;
         PassCollisions = Array.Empty<PassCollisions>();
         Bridges = default;
+        CellArea = 0;
         RaiseStatistics();
     }
 
