@@ -105,6 +105,8 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         }
     }
 
+    public string? CollisionModeError => ErrorFor("Strategy.CollisionMode");
+
     public bool IsRecursion => Current.CollisionMode == CollisionMode.Recursion;
 
     public bool IsOneRun => Current.CollisionMode == CollisionMode.OneRun;
@@ -133,6 +135,9 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
     // Route units the route stage solved in parallel (T-167).
     public int RouteUnits { get; private set; }
 
+    // Backwards (T-172): the unreached positions against the model cells; null in the other modes.
+    public UnreachedCells? Unreached { get; private set; }
+
     public string StatisticsText
     {
         get
@@ -156,6 +161,11 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
                 text.Append(string.Create(CultureInfo.InvariantCulture, $"\nFar stepdown area per pass: {milled} mm2, withdrawn around collisions: {withdrawn} mm2"));
             }
 
+            if (Unreached is { } unreached)
+            {
+                text.Append(string.Create(CultureInfo.InvariantCulture, $"\nUnreached cells (Backwards): {unreached.Unreached} of {unreached.ModelCells} model cells, {unreached.Percent:0.00} %"));
+            }
+
             if (Bridges.Wanted > 0)
             {
                 text.Append(string.Create(CultureInfo.InvariantCulture, $"\nBridges: {Bridges.Placed} of {Bridges.Wanted} placed on {Bridges.Parts} freed part(s)"));
@@ -175,6 +185,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         Bridges = result.Bridges;
         CellArea = result.Parameters.CellSize * result.Parameters.CellSize;
         RouteUnits = result.RouteUnitEntries.Count + 1;
+        Unreached = result.Unreached;
         RaiseStatistics();
     }
 
@@ -187,6 +198,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         Bridges = default;
         CellArea = 0;
         RouteUnits = 0;
+        Unreached = null;
         RaiseStatistics();
     }
 
@@ -204,6 +216,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         OnPropertyChanged(nameof(ReachPercent));
         OnPropertyChanged(nameof(ReachPercentError));
         OnPropertyChanged(nameof(CollisionMode));
+        OnPropertyChanged(nameof(CollisionModeError));
         OnPropertyChanged(nameof(IsRecursion));
         OnPropertyChanged(nameof(IsOneRun));
         OnPropertyChanged(nameof(RecursionRatio));
@@ -221,6 +234,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         OnPropertyChanged(nameof(BridgeWidthWarning));
         OnPropertyChanged(nameof(BridgeHeightError));
         OnPropertyChanged(nameof(ReachPercentError));
+        OnPropertyChanged(nameof(CollisionModeError));
         OnPropertyChanged(nameof(RecursionRatioError));
         OnPropertyChanged(nameof(OneRunRatioError));
     }

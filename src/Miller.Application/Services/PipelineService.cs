@@ -65,6 +65,10 @@ public sealed record PipelineResult(
     // Where every route unit after the first begins and the one before it ends (T-166): the route stage
     // solved the units in parallel; one unit when there is no entry.
     public IReadOnlyList<System.Numerics.Vector3> RouteUnitEntries { get; init; } = Array.Empty<System.Numerics.Vector3>();
+
+    // Backwards (T-172): the positions the backward check left unreached against the model cells; null
+    // in the other collision modes.
+    public UnreachedCells? Unreached { get; init; }
 }
 
 // Runs the stages of docs/ARCHITECTURE.md 5.1 in order: the validation here, every later stage in one
@@ -147,6 +151,7 @@ public sealed class PipelineService
             Layers = generated.Layers,
             FarStepdown = generated.FarStepdown,
             RouteUnitEntries = generated.RouteUnitEntries,
+            Unreached = generated.Unreached,
         };
     }
 

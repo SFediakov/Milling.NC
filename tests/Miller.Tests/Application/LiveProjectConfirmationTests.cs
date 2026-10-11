@@ -30,4 +30,26 @@ public sealed class LiveProjectConfirmationTests
         var events = result.Collisions.Report!.Events.Count;
         Assert.True(events == EventsOfBuild118, $"{events} kept events against {EventsOfBuild118} of Build_1.0.118; per pass: {string.Join(", ", result.PassCollisions.Select(p => p.Events))}");
     }
+
+    // T-172 (user request): the same project in collision mode Backwards keeps every head clear in one pass
+    // and reports the unreached share.
+    [Fact]
+    public void LiveProject_Backwards_KeepsEveryHeadClear()
+    {
+        var path = Environment.GetEnvironmentVariable("MILLER_LIVE_PROJECT");
+        Assert.SkipWhen(path is null || !File.Exists(path), "MILLER_LIVE_PROJECT names no project file.");
+        var project = ProjectSerializer.Deserialize(File.ReadAllText(path!));
+        project.CollisionMode = CollisionMode.Backwards;
+        var directory = Path.GetDirectoryName(Path.GetFullPath(path!))!;
+        var import = new MeshImportService();
+        foreach (var model in project.Models)
+        {
+            import.Import(Path.IsPathRooted(model.StlPath) ? model.StlPath : Path.Combine(directory, model.StlPath));
+        }
+
+        var result = new PipelineService().Run(project, import.Meshes, null, TestContext.Current.CancellationToken);
+        var unreached = Assert.NotNull(result.Unreached);
+        Assert.True(result.Collisions.Report!.Events.Count == 0, $"{result.Collisions.Report.Events.Count} events, {unreached.Unreached} of {unreached.ModelCells} unreached");
+        Assert.Equal(1, result.Passes);
+    }
 }

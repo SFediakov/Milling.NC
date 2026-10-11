@@ -1,6 +1,7 @@
 using Miller.App.ViewModels;
 using Miller.Core.Setup;
 using Miller.Core.Toolpaths;
+using Miller.Core.Toolpaths.Strategies;
 using Miller.Tests.Fixtures;
 using Xunit;
 
@@ -339,7 +340,7 @@ public sealed class SettingsViewModelsTests : IDisposable
     [Fact]
     public void Strategy_CollisionMode_EnablesItsRatioAndValidates()
     {
-        Assert.Equal(new[] { CollisionMode.Recursion, CollisionMode.OneRun }, StrategySelectionViewModel.CollisionModes);
+        Assert.Equal(new[] { CollisionMode.Recursion, CollisionMode.OneRun, CollisionMode.Backwards }, StrategySelectionViewModel.CollisionModes);
         Assert.Equal(CollisionMode.Recursion, _vm.Strategy.CollisionMode);
         Assert.True(_vm.Strategy.IsRecursion);
         Assert.False(_vm.Strategy.IsOneRun);
@@ -374,6 +375,59 @@ public sealed class SettingsViewModelsTests : IDisposable
         Assert.Equal(MillingProject.DefaultCollisionRatio, _vm.Strategy.OneRunRatio);
         Assert.Null(_vm.Strategy.RecursionRatioError);
         Assert.Null(_vm.Strategy.OneRunRatioError);
+    }
+
+    // T-169: Backwards takes neither ratio and is offered with every strategy, but only the Z layer accepts
+    // it; the error names the strategy under the collision mode and goes once the strategy fits.
+    [Fact]
+    public void Strategy_Backwards_IsAnErrorOutsideTheZLayer()
+    {
+        _vm.Strategy.CollisionMode = CollisionMode.Backwards;
+        Assert.Equal(CollisionMode.Backwards, _vm.Project.Current.CollisionMode);
+        Assert.False(_vm.Strategy.IsRecursion);
+        Assert.False(_vm.Strategy.IsOneRun);
+        Assert.Null(_vm.Strategy.CollisionModeError);
+
+        var raised = new List<string?>();
+        _vm.Strategy.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        _vm.Strategy.Strategy = StrategySelectionViewModel.Strategies.First(s => s.Id == ThreeAxisFreedomStrategy.StrategyId);
+        Assert.Contains("Z layer by layer", _vm.Strategy.CollisionModeError);
+        Assert.Contains(nameof(StrategySelectionViewModel.CollisionModeError), raised);
+        _vm.Strategy.Strategy = StrategySelectionViewModel.Strategies.First(s => s.Id == ZLayerByLayerStrategy.StrategyId);
+        Assert.Null(_vm.Strategy.CollisionModeError);
+    }
+
+    // T-172: after a Backwards run the statistics name the unreached positions against the model cells; the
+    // other modes have no such line.
+    [Fact]
+    public void Statistics_NameTheUnreachedCells_OfBackwards()
+    {
+        var project = MillingProject.Default();
+        project.CollisionMode = CollisionMode.Backwards;
+        project.Stock.AlignZ = StockAlignment.Min;
+        project.Tool.CutterLength = 2f;
+        project.Tool.HeadShape = HeadShape.Frustum;
+        project.Tool.HeadDiameter = 7f;
+        project.Tool.HeadTopDiameter = 10f;
+        project.Tool.HeadLength = 10f;
+        project.Parameters.Stepover = 1f;
+        project.Stock.SizeX = 40;
+        project.Stock.SizeY = 40;
+        project.Stock.SizeZ = 9;
+        project.Parameters.CellSize = 0.5f;
+        project.Models.Add(new ModelPlacement { StlPath = "box.stl" });
+        var meshes = new[] { TestMeshes.Box(10, 10, 4) };
+        var result = new Miller.Application.Services.PipelineService().Run(project, meshes, null, CancellationToken.None);
+        _vm.Strategy.ShowResult(result);
+        var unreached = result.Unreached!.Value;
+        Assert.Contains(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"Unreached cells (Backwards): {unreached.Unreached} of {unreached.ModelCells} model cells, {unreached.Percent:0.00} %"), _vm.Strategy.StatisticsText);
+
+        project.CollisionMode = CollisionMode.Recursion;
+        _vm.Strategy.ShowResult(new Miller.Application.Services.PipelineService().Run(project, meshes, null, CancellationToken.None));
+        Assert.DoesNotContain("Unreached", _vm.Strategy.StatisticsText);
+        _vm.Strategy.Clear();
+        Assert.Equal(StrategySelectionViewModel.NoToolpathText, _vm.Strategy.StatisticsText);
     }
 
     [Fact]

@@ -4,6 +4,7 @@ using Miller.Core.Geometry;
 using Miller.Core.HeightMaps;
 using Miller.Core.Setup;
 using Miller.Core.Slicing;
+using Miller.Core.Toolpaths.Strategies;
 
 namespace Miller.Application.Validation;
 
@@ -70,6 +71,11 @@ public static class ProjectValidator
             errors.Add(new ValidationMessage("Parameters.FarStepdown",
                 $"Far stepdown {F(p.FarStepdown)} must be 0 (none) or a whole multiple of the stepdown {F(p.Stepdown)} of at least twice it."));
         }
+        else if (p.Stepdown > 0 && project.CollisionMode == CollisionMode.Backwards && p.FarStepdown + p.Tolerance > tool.CutterLength + Slicer.LevelTolerance)
+        {
+            warnings.Add(new ValidationMessage("Parameters.FarStepdown",
+                $"Far stepdown {F(p.FarStepdown)} plus the tolerance {F(p.Tolerance)} exceeds the cutter length {F(tool.CutterLength)}: Backwards cuts the far go only where the head clears the material at the slab top, everything else level by level."));
+        }
         else if (p.Stepdown > 0 && p.FarStepdown > tool.CutterLength + Slicer.LevelTolerance)
         {
             warnings.Add(new ValidationMessage("Parameters.FarStepdown",
@@ -130,6 +136,10 @@ public static class ProjectValidator
         if (!Enum.IsDefined(project.CollisionMode))
         {
             errors.Add(new ValidationMessage("Strategy.CollisionMode", $"Unknown collision mode {project.CollisionMode}."));
+        }
+        else if (project.CollisionMode == CollisionMode.Backwards && project.RoutingStrategyId != ZLayerByLayerStrategy.StrategyId)
+        {
+            errors.Add(new ValidationMessage("Strategy.CollisionMode", "Backwards collision handling works with the Z layer by layer strategy only."));
         }
 
         Finite(errors, "Strategy.RecursionRatio", project.RecursionRatio);

@@ -17,7 +17,8 @@ namespace Miller.Core.Generation;
 // kept pass with the rule of the simulation panel; Passes how many passes ran; Layers the layers of
 // the toolpath (ToolpathLayer); FarStepdown the far positions of the first and the kept pass and those
 // withdrawn around collisions (T-164); RouteUnitEntries where every route unit after the first begins and
-// the one before it ends (T-166).
+// the one before it ends (T-166); Unreached the counts of the backward check, null unless the collision
+// mode was Backwards (T-172).
 public sealed record GenerationResult(
     Mesh MachineMesh,
     StockGeometry Stock,
@@ -40,7 +41,16 @@ public sealed record GenerationResult(
     BridgeReport Bridges,
     IReadOnlyList<ToolpathLayer> Layers,
     FarStepdownAreas FarStepdown,
-    IReadOnlyList<Vector3> RouteUnitEntries);
+    IReadOnlyList<Vector3> RouteUnitEntries,
+    UnreachedCells? Unreached);
+
+// The backward check of the kept pass (T-172): the positions it left unreached and the model cells, both
+// summed over the levels (a cell counts on every level its model stands above), and the sweeps from the
+// lowest level up it took to settle; Percent is the first count as a share of the second.
+public readonly record struct UnreachedCells(long Unreached, long ModelCells, int Sweeps)
+{
+    public double Percent => ModelCells > 0 ? 100.0 * Unreached / ModelCells : 0.0;
+}
 
 // What one generation pass's check found: the distinct entered cells and the events; with a far
 // stepdown the positions the pass milled with it and those withdrawn around its collisions (T-164).
@@ -308,6 +318,9 @@ public static class ToolpathGeneration
 
         int parts, wanted, placed;
         CoreNative.mn_result_bridges(result, &parts, &wanted, &placed);
+        long unreachedCount, modelCells;
+        int sweeps;
+        UnreachedCells? unreached = CoreNative.mn_result_unreached(result, &unreachedCount, &modelCells, &sweeps) != 0 ? new UnreachedCells(unreachedCount, modelCells, sweeps) : null;
 
         var collisionCount = CoreNative.mn_result_collision_count(result);
         var collisions = new CoreNative.Collision[Math.Max(collisionCount, 1)];
@@ -340,6 +353,7 @@ public static class ToolpathGeneration
             new BridgeReport(parts, wanted, placed),
             layers,
             farStepdown,
-            entries);
+            entries,
+            unreached);
     }
 }

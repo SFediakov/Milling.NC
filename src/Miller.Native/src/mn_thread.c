@@ -67,7 +67,12 @@ static _Thread_local int thread_cap = 0;
 
 MN_API void mn_set_worker_limit(int32_t limit) { worker_limit = limit > 0 ? limit : 0; }
 
-void mn_set_thread_cap(int cap) { thread_cap = cap > 0 ? cap : 0; }
+int mn_set_thread_cap(int cap)
+{
+    int previous = thread_cap;
+    thread_cap = cap > 0 ? cap : 0;
+    return previous;
+}
 
 int mn_worker_count(void)
 {
@@ -232,4 +237,111 @@ void mn_pool_destroy(mn_pool* pool)
     mn_condition_destroy(&pool->done);
     mn_mutex_destroy(&pool->mutex);
     free(pool);
+}
+
+struct mn_task {
+    void (*fn)(void* argument);
+    void* argument;
+    mn_thread thread;
+};
+
+#if defined(_WIN32)
+static DWORD WINAPI task_main(LPVOID argument)
+{
+    mn_task* task = (mn_task*)argument;
+    task->fn(task->argument);
+    return 0;
+}
+#else
+static void* task_main(void* argument)
+{
+    mn_task* task = (mn_task*)argument;
+    task->fn(task->argument);
+    return NULL;
+}
+#endif
+
+int mn_task_start(void (*fn)(void* argument), void* argument, mn_task** result)
+{
+    mn_task* task = (mn_task*)mn_alloc(1, sizeof(mn_task));
+    if (task == NULL) {
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for a task.");
+    }
+    task->fn = fn;
+    task->argument = argument;
+#if defined(_WIN32)
+    task->thread = CreateThread(NULL, 0, task_main, task, 0, NULL);
+    int ok = task->thread != NULL;
+#else
+    int ok = pthread_create(&task->thread, NULL, task_main, task) == 0;
+#endif
+    if (!ok) {
+        free(task);
+        return mn_fail(MN_ERR_STATE, "Could not start a task thread.");
+    }
+    *result = task;
+    return MN_OK;
+}
+
+void mn_task_join(mn_task* task)
+{
+    if (task == NULL) {
+        return;
+    }
+#if defined(_WIN32)
+    WaitForSingleObject(task->thread, INFINITE);
+    CloseHandle(task->thread);
+#else
+    pthread_join(task->thread, NULL);
+#endif
+    free(task);
+}
+
+struct mn_signal {
+    mn_mutex mutex;
+    mn_condition changed;
+    int value[2];
+};
+
+int mn_signal_create(mn_signal** result)
+{
+    mn_signal* signal = (mn_signal*)mn_alloc(1, sizeof(mn_signal));
+    if (signal == NULL) {
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for a signal.");
+    }
+    mn_mutex_init(&signal->mutex);
+    mn_condition_init(&signal->changed);
+    *result = signal;
+    return MN_OK;
+}
+
+void mn_signal_raise(mn_signal* signal, int which, int value)
+{
+    mn_lock(&signal->mutex);
+    if (value > signal->value[which]) {
+        signal->value[which] = value;
+    }
+    mn_wake_all(&signal->changed);
+    mn_unlock(&signal->mutex);
+}
+
+int mn_signal_wait(mn_signal* signal, int which, int at_least)
+{
+    mn_lock(&signal->mutex);
+    while (signal->value[which] < at_least) {
+        mn_wait(&signal->changed, &signal->mutex);
+    }
+    int value = signal->value[which];
+    mn_unlock(&signal->mutex);
+    return value;
+}
+
+void mn_signal_destroy(mn_signal* signal)
+{
+    if (signal == NULL) {
+        return;
+    }
+    mn_condition_destroy(&signal->changed);
+    mn_mutex_destroy(&signal->mutex);
+    free(signal);
 }
