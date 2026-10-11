@@ -111,11 +111,15 @@ public sealed class FarStepdownPipelineTests
         var farBlockEnd = far.Layers[steps].FirstSegment;
 
         // No event inside the far block; beside the box the collision handling of either mode may leave
-        // the same events as without a far stepdown, never more.
+        // the same collision places as without a far stepdown, never more. Places are the cells the head
+        // enters: where a route unit begins (T-166) the contacts beside the box can split over more
+        // segments, the cells stay the same.
         var farRun = Finished(far);
         var plainRun = Finished(plain);
         Assert.DoesNotContain(farRun.Events, e => e.SegmentIndex < farBlockEnd);
-        Assert.True(farRun.Events.Count <= plainRun.Events.Count, $"{farRun.Events.Count} events against {plainRun.Events.Count} without a far stepdown");
+        var farCells = far.Collisions.Report!.Contacts.Count(c => c != CollisionContact.None);
+        var plainCells = plain.Collisions.Report!.Contacts.Count(c => c != CollisionContact.None);
+        Assert.True(farCells <= plainCells, $"{farCells} cells entered against {plainCells} without a far stepdown");
 
         // The final stock equals the plain one except where the collision handling of the mode decides
         // differently next to the box: a few cells within the head radius of it, in either direction,

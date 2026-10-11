@@ -277,6 +277,8 @@ internal static unsafe class CoreNative
     [DllImport(Library)] public static extern int mn_result_passes(IntPtr result);
     [DllImport(Library)] public static extern void mn_result_pass_counts(IntPtr result, int* entered, int* events);
     [DllImport(Library)] public static extern void mn_result_pass_far(IntPtr result, int* milled, int* withdrawn);
+    [DllImport(Library)] public static extern int mn_result_unit_count(IntPtr result);
+    [DllImport(Library)] public static extern void mn_result_units(IntPtr result, float* points);
     [DllImport(Library)] public static extern int mn_far_withdraw(byte* places, int width, int height, float cellSize, float radius, byte* allowed);
     [DllImport(Library)] public static extern void mn_result_bridges(IntPtr result, int* parts, int* wanted, int* placed);
     [DllImport(Library)] public static extern int mn_result_collision_count(IntPtr result);

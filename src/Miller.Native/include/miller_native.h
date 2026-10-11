@@ -221,8 +221,9 @@ MN_API float mn_turn_slow_speed_factor(void);
 MN_API float mn_turn_per_slow_millimetre(void);
 MN_API int64_t mn_budget_share(int64_t remaining, int32_t nodes, int64_t nodes_left);
 /* Precedence pairs (T-150): pair k orders node before[k] ahead of node after[k]; pair_count 0 means no
- * pairs. The start must have no predecessor and the pairs must be acyclic. */
-MN_API int32_t mn_route_solve(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, int32_t count, int32_t start, const int32_t* before, const int32_t* after, int32_t pair_count, int64_t allowance, const volatile int32_t* cancel, int32_t* order, int64_t* evaluations);
+ * pairs. The start must have no predecessor and the pairs must be acyclic. `end` (T-166) is -1 for a
+ * path that ends anywhere, or the node it must finish at (not the start, no successor). */
+MN_API int32_t mn_route_solve(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, int32_t count, int32_t start, int32_t end, const int32_t* before, const int32_t* after, int32_t pair_count, int64_t allowance, const volatile int32_t* cancel, int32_t* order, int64_t* evaluations);
 MN_API float mn_route_path_cost(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, const int32_t* order, int32_t count);
 
 /* ---- writer ---- */
@@ -433,6 +434,10 @@ MN_API void mn_result_layers(const mn_result* result, int32_t* segment, float* l
 MN_API int32_t mn_result_passes(const mn_result* result);
 /* Per pass (mn_result_passes entries): the distinct cells its check entered and its events. */
 MN_API void mn_result_pass_counts(const mn_result* result, int32_t* entered, int32_t* events);
+/* Route units of the kept pass (T-166): the entry of every unit after the first (x, y, z each), where
+ * the unit before it ends and it begins. */
+MN_API int32_t mn_result_unit_count(const mn_result* result);
+MN_API void mn_result_units(const mn_result* result, float* points);
 /* Per pass: the positions it milled with the far stepdown and those withdrawn after its check. */
 MN_API void mn_result_pass_far(const mn_result* result, int32_t* milled, int32_t* withdrawn);
 /* Holding bridges of the kept pass: the parts the trench frees, the bridges wanted (parts times the

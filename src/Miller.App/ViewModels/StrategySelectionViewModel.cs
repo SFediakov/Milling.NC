@@ -130,6 +130,9 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
     // Area of one grid cell, for the far stepdown areas of every pass (T-164).
     public float CellArea { get; private set; }
 
+    // Route units the route stage solved in parallel (T-167).
+    public int RouteUnits { get; private set; }
+
     public string StatisticsText
     {
         get
@@ -144,6 +147,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Feed: {Statistics.FeedLength:0.0} mm, plunge: {Statistics.PlungeLength:0.0} mm, rapid: {Statistics.RapidLength:0.0} mm\n"));
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Estimated time: {Statistics.EstimatedMinutes:0.0} min, retracts: {Statistics.RetractCount}\n"));
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Levels: {Plan.Levels}, lowest level: {Plan.LowestLevel:0.000} mm\n"));
+            text.Append(string.Create(CultureInfo.InvariantCulture, $"Route units: {RouteUnits}\n"));
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Generation passes: {Passes}, collisions per pass: {string.Join(", ", PassCollisions.Select(p => p.Events.ToString(CultureInfo.InvariantCulture)))}"));
             if (PassCollisions.Any(p => p.FarCells > 0 || p.WithdrawnCells > 0))
             {
@@ -170,6 +174,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         PassCollisions = result.PassCollisions;
         Bridges = result.Bridges;
         CellArea = result.Parameters.CellSize * result.Parameters.CellSize;
+        RouteUnits = result.RouteUnitEntries.Count + 1;
         RaiseStatistics();
     }
 
@@ -181,6 +186,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         PassCollisions = Array.Empty<PassCollisions>();
         Bridges = default;
         CellArea = 0;
+        RouteUnits = 0;
         RaiseStatistics();
     }
 

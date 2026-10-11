@@ -61,7 +61,13 @@ struct mn_pool {
 
 static int worker_limit = 0;
 
+/* A cap for the stages a worker thread runs itself (T-167: a route unit runs its solver's start walks
+ * inline while the other units occupy the processors); 0 for none. */
+static _Thread_local int thread_cap = 0;
+
 MN_API void mn_set_worker_limit(int32_t limit) { worker_limit = limit > 0 ? limit : 0; }
+
+void mn_set_thread_cap(int cap) { thread_cap = cap > 0 ? cap : 0; }
 
 int mn_worker_count(void)
 {
@@ -75,6 +81,9 @@ int mn_worker_count(void)
 #endif
     if (worker_limit > 0 && count > worker_limit) {
         count = worker_limit;
+    }
+    if (thread_cap > 0 && count > thread_cap) {
+        count = thread_cap;
     }
     return count < 1 ? 1 : count > MN_MAX_WORKERS ? MN_MAX_WORKERS : count;
 }

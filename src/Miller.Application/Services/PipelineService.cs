@@ -61,6 +61,10 @@ public sealed record PipelineResult(
 
     // Far stepdown positions of the first and the kept pass and those withdrawn around collisions (T-164).
     public FarStepdownAreas FarStepdown { get; init; } = new(new bool[0, 0], new bool[0, 0], new bool[0, 0]);
+
+    // Where every route unit after the first begins and the one before it ends (T-166): the route stage
+    // solved the units in parallel; one unit when there is no entry.
+    public IReadOnlyList<System.Numerics.Vector3> RouteUnitEntries { get; init; } = Array.Empty<System.Numerics.Vector3>();
 }
 
 // Runs the stages of docs/ARCHITECTURE.md 5.1 in order: the validation here, every later stage in one
@@ -142,6 +146,7 @@ public sealed class PipelineService
             Bridges = generated.Bridges,
             Layers = generated.Layers,
             FarStepdown = generated.FarStepdown,
+            RouteUnitEntries = generated.RouteUnitEntries,
         };
     }
 

@@ -145,7 +145,9 @@ static inline int mn_turn_is_fined(int defined, float cosine, int side) { return
 int mn_turn_fined(const float* x, const float* y, int a, int b, int c);
 float mn_turn_slow(const float* x, const float* y, const int* order, int count);
 float mn_turn_overlap_of(int zones_a, int zones_b, float gap);
-int mn_solve(const mn_problem* problem, int start, int64_t allowance, const volatile int32_t* cancel, int* order, int64_t* evaluations);
+/* An open path from `start` through every node; with `end` >= 0 (T-166) the path finishes at that node,
+ * which must differ from the start unless the problem has one node and must have no successor. */
+int mn_solve(const mn_problem* problem, int start, int end, int64_t allowance, const volatile int32_t* cancel, int* order, int64_t* evaluations);
 float mn_path_cost(const mn_problem* problem, const int* order, int count);
 
 typedef struct mn_budget {
@@ -192,6 +194,12 @@ int mn_writer_has_position(const mn_writer* writer, mn_v3* position);
 /* Finish: the retract to safe Z, then the segments move to `result` and the marks to `marks` (NULL
  * drops them). */
 int mn_writer_take(mn_writer* writer, mn_segments* result, mn_marks* marks);
+/* Route units (T-166): a unit's writer starts where the tool already is, without a move; its path and
+ * marks are released without the final retract; the merging writer appends them in unit order, the
+ * marks shifted by its segment count and joined like mn_writer_mark joins them. */
+void mn_writer_place(mn_writer* writer, mn_v3 position);
+int mn_writer_release(mn_writer* writer, mn_segments* result, mn_marks* marks);
+int mn_writer_append(mn_writer* writer, const mn_segments* path, const mn_marks* marks);
 
 /* ---- collision check and resolution (T-147, T-148) ---- */
 
@@ -268,7 +276,8 @@ int mn_bridges_place(const mn_grid* g, const float* stock, const float* model, c
 float mn_distance_to(mn_v3 p, mn_v3 a, mn_v3 b);
 
 /* `marks` (NULL allowed) receives the layer marks of the routes. */
-int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks);
+/* `entries` (may be NULL) receives the entry of every route unit after the first (T-166). */
+int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks, mn_points* entries);
 int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks);
 int mn_is_clear(const mn_segment* segment, const mn_grid* g, const float* effective_tip, float tolerance);
 /* `marks` (NULL allowed) ends a feed run at every marked segment and gets its indices rewritten for
