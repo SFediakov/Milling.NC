@@ -75,6 +75,16 @@
   the kept events with the 63 of Build_1.0.118 and gets 61. The difference comes from the unit
   boundaries the request itself defines (isolation below), so no code fix exists inside the request; the
   decision is the user's, and the test runs only with MILLER_LIVE_PROJECT set.
+- The collision mode Backwards (T-169 to T-172) is not a cluster of its own: its check (`mn_backwards.c`)
+  reads the plan masks and uses the far block's envelope test, and its batches become Z layer groups and
+  route units inside `mn_z_layer` (user request: all generation in the C library).
+- Backwards deviates from the literal request in two places, both for its purpose: every cell is a check
+  position (one cell apart, never more than the tolerance while the cell is not larger; the envelope test
+  costs the same for every cell, and the unreached count is then a cell count like the model cells), and
+  the sweep from the lowest level repeats until nothing changes before the first batch goes to the solver,
+  because one sweep cannot know what the unreached positions of the levels above leave (one sweep left 67
+  events on the frustum box fixture, the settled check none). The solver therefore starts after the check
+  settled (two sweeps, seconds, on the user's heart) and then takes the batches from the queue.
 - The slow zones (T-155, `mn_slow.c`) and the layer marks (T-154) are not clusters of their own:
   both are stages of the native generation between the simplifier and the statistics (user request:
   all generation in the C library), and the layer stepping is part of the simulation cluster
@@ -715,3 +725,13 @@
 - At 0.025 mm cells the route stage scales less (345 s against 687 s) than at 0.05 mm (107 s against
   362 s): every route copies the planned map and lifts the uncut stock over the whole grid, which is
   memory bound, and the group preparation before the units (far steps, cave trees) stays sequential.
+- The planned map of the Z layer routes holds a floor per tool position (the level a route took the
+  position to), not the material: seeding it with the material fold of a mask (every cell within the
+  cutter radius) let travels dip below the tip beside the walls (261 gouges on the wall fixture).
+- Route floors from the stock where the material above is unknown are safe but expensive: every travel
+  over such a cell retracts to the safe plane and plunges at the plunge rate. Backwards with stock floors
+  above each batch gave 3,241 retracts, 40 m of plunge and 383.8 minutes on the heart at 0.05 mm; the floors
+  from the settled check gave 192 retracts and 129.3 minutes.
+- A head test that counts the tolerance in height forbids every position when the cutter is as long as the
+  stepdown: the uncut stock top then stands exactly at the head bottom of the first level. The far block's
+  rule counts the tolerance radially only (`mn_head_margin`), and Backwards uses the same rule.

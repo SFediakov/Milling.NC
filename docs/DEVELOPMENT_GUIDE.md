@@ -597,6 +597,43 @@ Uncuttable classification (`UncuttableRegions`):
   The route solver takes the pairs (`RouteProblem.Before`/`After`): the walks
   visit a node once its predecessors are visited and 2-opt or Or-opt applies a
   move only when the route it produces keeps every pair.
+- Backwards (`CollisionMode.Backwards`, T-169 to T-172, user request; Z layer
+  only, the validator refuses it with 3 axis freedom): a check from the lowest
+  level up (`mn_backwards.c`) on a thread of its own with half the workers
+  (max(1, W / 2), its rows split over them), the route solver on the other half.
+  Every cell of a level's mask is a tool position (one cell apart, at most the
+  tolerance whenever the cell is not larger). A position of level k is reached
+  when its head clears what stands before level k: per cell
+  `min(stock, max(A, level above k))`, A the closing (`mn_remaining_compute`)
+  of the deepest level every position reaches, the stock where none covers the
+  cell; material standing h above the head bottom forbids the positions within
+  `mn_meet_radius_at(h)` plus the head margin (the far block's power-distance
+  envelope, `far_steps_of`). A position whose head would meet such material is
+  unreached: only cutting the model (under the reach rule) would free it. The
+  first sweep takes the deepest levels of the plan's masks; a lower level is
+  swept before the levels above it are known, so every sweep then starts from
+  the deepest levels the sweep before reached, until one changes nothing (a
+  position only loses levels; the result equals the cut from the top down for a
+  flat tip, a ball tip's scallops above the level above are not counted). The
+  settled levels go to the solver as batches of far stepdown / stepdown levels
+  (one level without a far stepdown), the lowest first, at most 4 ahead of it.
+  A batch's far go is every position reached on all of its levels (never one
+  withdrawn around a collision, T-164), cut in one step at its bottom level;
+  where the batch top stands higher above that level than the cutter length the
+  far go is tested against the material at the batch top as well. The solver
+  takes each batch as it comes and routes it like a Z layer slab: the far go,
+  then the batch's levels without the far go positions, cave by cave in route
+  units (T-166, T-167) over the material the batches above leave (every
+  position at the deepest level it reaches above the batch). A batch starts at
+  the entry of its first unit and its last unit ends at the start of the batch
+  below it (solved before it); the lowest batch ends where its routes end. The
+  batches' paths are then joined from the top one down, the program starting
+  with a plunge from the safe plane to the first batch's entry, and the
+  established stages follow (simplifier, slow zones, statistics, check; the far
+  withdrawal of T-164 may start another pass). Statistics: "Unreached cells
+  (Backwards): U of M model cells, P %", U the unreached positions summed over
+  the levels, M the cells whose model stands above a level summed over the
+  levels, P = 100 U / M.
 - "3 axis freedom": one free route per level of the plan. At level L the nodes
   are the coverage cells whose tip lies below the previous level (the stock top
   for the first), each at `max(tip, L)`, and the moves follow the surface
@@ -740,13 +777,15 @@ M30
 | `Stepdown > 0` | Parameters.Stepdown |
 | `FarStepdown == 0` or a whole multiple of `Stepdown` of at least `2 * Stepdown` (within `Slicer.LevelTolerance`) | Parameters.FarStepdown |
 | `FarStepdown <= CutterLength` (warning, not error: the far block then steps by the cutter length) | Parameters.FarStepdown |
+| Backwards: `FarStepdown + Tolerance <= CutterLength` (warning, not error: the far go then cuts only where the head clears the batch top) | Parameters.FarStepdown |
 | `SafeHeight > 0` (clearance above the stock top) | Parameters.SafeHeight |
 | `0.01 <= CellSize <= 5` | Parameters.CellSize |
 | `FeedRate, PlungeRate, RapidRate > 0` | Parameters.* |
 | `SpindleRpm > 0` | Parameters.SpindleRpm |
 | `0 < ReachPercent <= 100` | Strategy.ReachPercent |
 | `MinIslandVolume >= 0` | Strategy.MinIslandVolume |
-| `CollisionMode` is `Recursion` or `OneRun` | Strategy.CollisionMode |
+| `CollisionMode` is `Recursion`, `OneRun` or `Backwards` | Strategy.CollisionMode |
+| `Backwards` only with the Z layer by layer strategy | Strategy.CollisionMode |
 | `RecursionRatio`, `OneRunRatio` finite and `>= 0` | Strategy.RecursionRatio, Strategy.OneRunRatio |
 | Stock dimensions > 0 | Stock.* |
 | Model bounds inside the stock box in machine space (`ModelLayout.StockBoundsMachine`; warning, not error) | Stock.Placement |
@@ -2196,6 +2235,38 @@ check that decides done.
 - Output: a test that runs the project named by `MILLER_LIVE_PROJECT` and compares the kept events with the 63 of Build_1.0.118
 - Acceptance: not met: 61 kept events against 63 (8 passes each); the same code without fixed exits and with one cave per slab, run on one worker, reproduces Build_1.0.118 bit for bit at 0.05 mm cells (322 entered cells in the first pass, 40 kept events), so the difference comes from the unit boundaries the request defines, not from the parallel solving
 - Status: open (needs the user's decision)
+
+#### T-169 Collision mode Backwards
+- Depends on: T-149
+- Files: `src/Miller.Core/Setup/MillingProject.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.App/ViewModels/StrategySelectionViewModel.cs`, `src/Miller.App/Views/StrategySelectionView.axaml`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Native/src/mn_pipeline.c`
+- Input: user request (a third collision check approach "Backwards", available with the Z layer by layer strategy)
+- Output: `CollisionMode.Backwards` (2, `MN_COLLISION_BACKWARDS`), the validator rules of section 6.7, the error line under the collision mode; the native library refuses it outside the Z layer; one pass unless the far withdrawal starts another
+- Acceptance: the mode round-trips by name; with 3 axis freedom the validator reports `Strategy.CollisionMode` and the panel shows it until the strategy is the Z layer; the native 3 axis freedom refuses the mode; neither ratio box is enabled for it
+- Status: done
+
+#### T-170 Backward check
+- Depends on: T-162, T-169
+- Files: `src/Miller.Native/src/mn_backwards.c`, `src/Miller.Native/src/mn_thread.c`, `src/Miller.Native/src/mn_thread.h`, `src/Miller.Native/src/mn_internal.h`
+- Input: user request (from the lowest layer up, the cells to cut, the cutter positions a tolerance apart, the cells the head needs cut on the higher levels, a position whose needed cell only cutting the model frees is unreached and counted; batches of far stepdown layers to the solver's queue; the region split over half the threads)
+- Output: the check of section 6.4 (settled sweeps from the lowest level, batches from the lowest with their far go), a task thread and a two-counter signal in `mn_thread.c`
+- Acceptance: the unreached count and the model cells equal a cell-by-cell evaluation of the rule on a frustum and a wall fixture, with and without a far stepdown; the wall needs no unreached position and one sweep, the frustum box at least two sweeps; the same result for 1, 2 and every worker; a cancel during the routes ends the run with the check thread joined
+- Status: done
+
+#### T-171 Batches routed from the bottom
+- Depends on: T-166, T-167, T-170
+- Files: `src/Miller.Native/src/mn_strategies.c`
+- Input: user request (the solver cuts what is reached on every small layer of a batch in one far stepdown go and the rest at the small stepdown; it starts anywhere and ends where the batch before it starts, the last one without a limit; each batch's path goes on top of those saved before)
+- Output: `z_backwards`: batch groups from the reached masks with the far go as one step (`given_far_step`), route units with the batch below's entry as the last exit and the first unit placed at its entry, the floors the batches above leave, the join from the top
+- Acceptance: on the wall and the frustum fixtures zero head events, no gouge, a continuous path starting with a plunge from the safe plane; the wall with far stepdown 4 cuts its layers 5, 7, 1, 0 (far go first), every unit entry is reached in order, and its final stock equals the one of Recursion within two tolerances with and without far goes
+- Status: done
+
+#### T-172 Unreached share and the established stages
+- Depends on: T-171
+- Files: `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Core/Native/CoreNative.cs`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Application/Services/PipelineService.cs`, `src/Miller.App/ViewModels/StrategySelectionViewModel.cs`, `tests/Miller.Tests/Application/BackwardsTests.cs`
+- Input: user request (organise the result in the structure in use, count the model cells and give the unreached cells as a percentage of them at the end)
+- Output: `mn_result_unreached`, `UnreachedCells` on the generation and pipeline results, the statistics line of section 6.4
+- Acceptance: the line shows the counts and the percentage after a Backwards run and is absent after the other modes; the result keeps toolpath, layers, unit entries, statistics and collision report; the user's heart at its 0.025 mm cells: 0 events in one pass, 9,508 of 56,171,255 model cells unreached (0.017 percent, two sweeps), 324 s and 154.1 estimated minutes against 975 s, 61 events and 229.5 minutes of Recursion; at 0.05 mm cells its final stock keeps 4.24 mm3 more than Recursion's (6,352 cells beside the walls, at most 2.05 mm) and 0.61 mm3 less; 849 tests pass
+- Status: done
 
 #### T-165 Head bottom down to half the cutter diameter
 - Depends on: T-135, T-162
