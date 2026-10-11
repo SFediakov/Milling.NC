@@ -9,6 +9,9 @@ typedef struct mn_pool mn_pool;
 
 int mn_worker_count(void);
 
+/* Caps mn_worker_count on the calling thread (0 removes the cap). */
+void mn_set_thread_cap(int cap);
+
 /* Starts workers - 1 threads; scratch[w] is handed to every row worker w runs (worker 0 is the
  * calling thread of mn_pool_run). Fails when a thread cannot be started. */
 int mn_pool_create(int workers, void** scratch, mn_pool** pool);

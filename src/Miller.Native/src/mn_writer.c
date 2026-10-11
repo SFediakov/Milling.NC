@@ -127,17 +127,18 @@ void mn_marks_free(mn_marks* list)
     list->capacity = 0;
 }
 
-int mn_writer_mark(mn_writer* writer, float level)
+static int mark_at(mn_marks* m, int segment, float level)
 {
-    mn_marks* m = &writer->marks;
-    if (m->count > 0 && m->segment[m->count - 1] == writer->path.count) {
+    if (m->count > 0 && m->segment[m->count - 1] == segment) {
         m->count--;
     }
     if (m->count > 0 && m->level[m->count - 1] == level) {
         return MN_OK;
     }
-    return mn_marks_push(m, writer->path.count, level);
+    return mn_marks_push(m, segment, level);
 }
+
+int mn_writer_mark(mn_writer* writer, float level) { return mark_at(&writer->marks, writer->path.count, level); }
 
 static mn_v3 seg_start(const mn_segment* s) { return mn_v3_make(s->start_x, s->start_y, s->start_z); }
 
@@ -314,12 +315,35 @@ int mn_writer_has_position(const mn_writer* writer, mn_v3* position)
     return writer->has_position;
 }
 
+void mn_writer_place(mn_writer* w, mn_v3 position)
+{
+    w->position = position;
+    w->has_position = 1;
+}
+
+int mn_writer_append(mn_writer* w, const mn_segments* path, const mn_marks* marks)
+{
+    int offset = w->path.count;
+    for (int k = 0; k < marks->count; k++) {
+        MN_CHECK(mark_at(&w->marks, offset + marks->segment[k], marks->level[k]));
+    }
+    for (int k = 0; k < path->count; k++) {
+        MN_CHECK(add(w, path->items[k]));
+    }
+    return MN_OK;
+}
+
 int mn_writer_take(mn_writer* w, mn_segments* result, mn_marks* marks)
 {
     if (w->has_position) {
         mn_v3 last = w->position;
         MN_CHECK(add(w, make_segment(last, mn_v3_make(last.x, last.y, w->safe_z), MN_MOVE_RAPID, w->parameters.rapid_rate)));
     }
+    return mn_writer_release(w, result, marks);
+}
+
+int mn_writer_release(mn_writer* w, mn_segments* result, mn_marks* marks)
+{
     /* A mark after the last segment belongs to a route that wrote nothing. */
     while (w->marks.count > 0 && w->marks.segment[w->marks.count - 1] >= w->path.count) {
         w->marks.count--;

@@ -13,12 +13,15 @@ namespace Miller.Solver;
 // open regions it can cross in straight runs and arcs, the nearest-neighbour walk wherever avoiding
 // a turn would only strand nodes for a long way back. Everything is deterministic: the same problem
 // gives the same path. The native library (mn_route_solve) runs it; cancellation is polled between
-// the phases and every 65536 evaluations.
+// the phases and every 65536 evaluations. With `end` (T-166) the path finishes at that node: the start
+// walks put it last and no local move takes it from there.
 public static class RouteSolver
 {
     public const int CandidateCount = 10;
 
-    public static unsafe int[] Solve(RouteProblem problem, int start, RouteBudget budget, long allowance, CancellationToken cancellation)
+    public const int OpenEnd = -1;
+
+    public static unsafe int[] Solve(RouteProblem problem, int start, RouteBudget budget, long allowance, CancellationToken cancellation, int end = OpenEnd)
     {
         ArgumentNullException.ThrowIfNull(problem);
         ArgumentNullException.ThrowIfNull(budget);
@@ -50,7 +53,7 @@ public static class RouteSolver
         fixed (float* floor = problem.Grid.Floor, x = problem.X, y = problem.Y, z = problem.Z)
         fixed (int* result = order, before = problem.Before, after = problem.After)
         {
-            SolverNative.Check(SolverNative.mn_route_solve(&grid, floor, x, y, z, n, start, before, after, problem.PairCount, allowance, flag.Pointer, result, &evaluations), cancellation);
+            SolverNative.Check(SolverNative.mn_route_solve(&grid, floor, x, y, z, n, start, end, before, after, problem.PairCount, allowance, flag.Pointer, result, &evaluations), cancellation);
         }
 
         budget.Consume(evaluations);

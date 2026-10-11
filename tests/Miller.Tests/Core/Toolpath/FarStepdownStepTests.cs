@@ -273,13 +273,15 @@ public sealed class FarStepdownStepTests
         Assert.Empty(GougeChecker.Verify(path, context.EffectiveTip, context.Parameters.Tolerance));
         // Steps at 7, 5, 3 and 1 (the fourth on a strip along the stock border), then the walk 7, 5, 3, 1
         // and the last group at 0. Travels between the corner patches of a step feed over the floor of the
-        // step before, so the order of the first cuts and of the walk's return to 7 is asserted, not every entry.
+        // step before, and the walk ends at the last group's entry at 0 (T-166), so the order of the first
+        // cuts and of the first visits after the walk's return to 7 is asserted, not every entry.
         var sequence = LevelSequence(path, levels);
         var order = $"levels {string.Join(", ", sequence)}";
         Assert.True(sequence[0] == 7f && sequence[1] == 5f && sequence[2] == 3f, order);
         Assert.True(sequence.IndexOf(3f) < sequence.IndexOf(1f) && sequence.IndexOf(1f) < sequence.LastIndexOf(7f), order);
         Assert.True(sequence.IndexOf(1f) < sequence.IndexOf(0f), order);
-        Assert.True(sequence.Skip(sequence.LastIndexOf(7f)).SequenceEqual(new[] { 7f, 5f, 3f, 1f, 0f }), order);
+        var walk = sequence.Skip(sequence.LastIndexOf(7f)).ToList();
+        Assert.True(walk.IndexOf(5f) > 0 && walk.IndexOf(5f) < walk.IndexOf(3f) && walk.IndexOf(3f) < walk.IndexOf(1f) && walk.IndexOf(1f) < walk.IndexOf(0f) && walk[^1] == 0f, order);
 
         var depths = new[] { 2f, 4f, 6f, 8f };
         var margin = MathF.Sqrt(2f) * Cell + context.Parameters.Tolerance;

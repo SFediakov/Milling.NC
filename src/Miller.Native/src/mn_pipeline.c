@@ -34,6 +34,8 @@ typedef struct mn_pass {
     uint8_t* far_area;
     uint8_t* far_allowed;
     int far_cells;
+    /* The entry of every route unit after the first (T-166). */
+    mn_points units;
     int entered;
     int valid;
 } mn_pass;
@@ -92,6 +94,7 @@ static void pass_free(mn_pass* pass)
     free(pass->contacts);
     free(pass->far_area);
     free(pass->far_allowed);
+    mn_points_free(&pass->units);
     mn_plan_free(pass->plan);
     mn_segments_free(&pass->toolpath);
     mn_marks_free(&pass->layers);
@@ -330,7 +333,7 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
     }
     mn_segments routed = { 0 };
     if (job->strategy == MN_STRATEGY_Z_LAYER) {
-        status_code = mn_z_layer(&context, &monitor, &routed, &pass->layers);
+        status_code = mn_z_layer(&context, &monitor, &routed, &pass->layers, &pass->units);
     } else if (job->strategy == MN_STRATEGY_THREE_AXIS_FREEDOM) {
         status_code = mn_three_axis_freedom(&context, &monitor, &routed, &pass->layers);
     } else {
@@ -656,6 +659,17 @@ MN_API void mn_result_pass_far(const mn_result* result, int32_t* milled, int32_t
     for (int k = 0; k < result->passes; k++) {
         milled[k] = result->pass_far[k];
         withdrawn[k] = result->pass_withdrawn[k];
+    }
+}
+
+MN_API int32_t mn_result_unit_count(const mn_result* result) { return result->best.units.count; }
+
+MN_API void mn_result_units(const mn_result* result, float* points)
+{
+    for (int k = 0; k < result->best.units.count; k++) {
+        points[3 * k] = result->best.units.items[k].x;
+        points[3 * k + 1] = result->best.units.items[k].y;
+        points[3 * k + 2] = result->best.units.items[k].z;
     }
 }
 

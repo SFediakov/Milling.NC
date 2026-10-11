@@ -312,6 +312,29 @@ public sealed class SettingsViewModelsTests : IDisposable
         Assert.DoesNotContain("Far stepdown", _vm.Strategy.StatisticsText);
     }
 
+    // T-167: the statistics name how many route units the route stage solved: a 40 x 4 x 6 wall across a
+    // 40 x 40 x 9 stock with far stepdown 4 gives one unit above the wall and two pockets in each of the two
+    // slabs below its top; without a far stepdown the one slab has one cave at its top.
+    [Fact]
+    public void Statistics_NameTheRouteUnits()
+    {
+        var project = MillingProject.Default();
+        project.Stock.AlignZ = StockAlignment.Min;
+        project.Parameters.FarStepdown = 4f;
+        project.Stock.SizeX = 40;
+        project.Stock.SizeY = 40;
+        project.Stock.SizeZ = 9;
+        project.Parameters.CellSize = 0.5f;
+        project.Models.Add(new ModelPlacement { StlPath = "wall.stl" });
+        var meshes = new[] { TestMeshes.Box(40, 4, 6) };
+        _vm.Strategy.ShowResult(new Miller.Application.Services.PipelineService().Run(project, meshes, null, CancellationToken.None));
+        Assert.Contains("Route units: 5\n", _vm.Strategy.StatisticsText);
+
+        project.Parameters.FarStepdown = 0f;
+        _vm.Strategy.ShowResult(new Miller.Application.Services.PipelineService().Run(project, meshes, null, CancellationToken.None));
+        Assert.Contains("Route units: 1\n", _vm.Strategy.StatisticsText);
+    }
+
     // T-151: the collision mode enables its own ratio, both ratios validate, a new project resets them.
     [Fact]
     public void Strategy_CollisionMode_EnablesItsRatioAndValidates()

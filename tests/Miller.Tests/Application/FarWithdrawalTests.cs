@@ -92,12 +92,13 @@ public sealed class FarWithdrawalTests
         return n;
     }
 
-    // Recursion on a 4 mm box (stepover 1, far stepdown 4) ends at no collision; one run on a 6 mm box
-    // (stepover 2, far stepdown 8) keeps its third pass.
+    // Recursion on a 4 mm box (stepover 1, far stepdown 4) ends at no collision in a later pass; one run on a
+    // 6 mm box (stepover 2, far stepdown 8) withdraws after its first pass, and with the route units of
+    // T-166 its first pass stays the one with the fewest entered cells.
     [Theory]
-    [InlineData(CollisionMode.Recursion, 4f, 4f, 1f)]
-    [InlineData(CollisionMode.OneRun, 8f, 6f, 2f)]
-    public void CollisionsWithdrawTheFarStepdown_AndTheFarAreaNeverGrows(CollisionMode mode, float farStepdown, float boxHeight, float stepover)
+    [InlineData(CollisionMode.Recursion, 4f, 4f, 1f, true)]
+    [InlineData(CollisionMode.OneRun, 8f, 6f, 2f, false)]
+    public void CollisionsWithdrawTheFarStepdown_AndTheFarAreaNeverGrows(CollisionMode mode, float farStepdown, float boxHeight, float stepover, bool keptAfterWithdrawal)
     {
         var result = Run(mode, farStepdown, boxHeight, stepover);
         var passes = result.PassCollisions;
@@ -141,7 +142,7 @@ public sealed class FarWithdrawalTests
             }
         }
 
-        Assert.True(kept > 0 && Count(areas.Withdrawn) > 0, $"kept pass {kept + 1}, {Count(areas.Withdrawn)} withdrawn");
+        Assert.Equal(keptAfterWithdrawal, kept > 0 && Count(areas.Withdrawn) > 0);
         Assert.Empty(GougeChecker.Verify(result.Toolpath, result.EffectiveTip, result.Tolerance));
     }
 

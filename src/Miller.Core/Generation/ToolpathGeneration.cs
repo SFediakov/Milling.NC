@@ -16,7 +16,8 @@ namespace Miller.Core.Generation;
 // found in the way of the head; Status the native status byte per cell; Collisions the check of the
 // kept pass with the rule of the simulation panel; Passes how many passes ran; Layers the layers of
 // the toolpath (ToolpathLayer); FarStepdown the far positions of the first and the kept pass and those
-// withdrawn around collisions (T-164).
+// withdrawn around collisions (T-164); RouteUnitEntries where every route unit after the first begins and
+// the one before it ends (T-166).
 public sealed record GenerationResult(
     Mesh MachineMesh,
     StockGeometry Stock,
@@ -38,7 +39,8 @@ public sealed record GenerationResult(
     IReadOnlyList<PassCollisions> PassCollisions,
     BridgeReport Bridges,
     IReadOnlyList<ToolpathLayer> Layers,
-    FarStepdownAreas FarStepdown);
+    FarStepdownAreas FarStepdown,
+    IReadOnlyList<Vector3> RouteUnitEntries);
 
 // What one generation pass's check found: the distinct entered cells and the events; with a far
 // stepdown the positions the pass milled with it and those withdrawn around its collisions (T-164).
@@ -291,6 +293,18 @@ public static class ToolpathGeneration
         }
 
         var farStepdown = new FarStepdownAreas(Mask(CoreNative.MaskFarFirst), Mask(CoreNative.MaskFarMilled), Mask(CoreNative.MaskFarWithdrawn));
+        var unitCount = CoreNative.mn_result_unit_count(result);
+        var unitPoints = new float[Math.Max(unitCount * 3, 1)];
+        fixed (float* u = unitPoints)
+        {
+            CoreNative.mn_result_units(result, u);
+        }
+
+        var entries = new Vector3[unitCount];
+        for (var k = 0; k < unitCount; k++)
+        {
+            entries[k] = new Vector3(unitPoints[3 * k], unitPoints[3 * k + 1], unitPoints[3 * k + 2]);
+        }
 
         int parts, wanted, placed;
         CoreNative.mn_result_bridges(result, &parts, &wanted, &placed);
@@ -325,6 +339,7 @@ public static class ToolpathGeneration
             passCollisions,
             new BridgeReport(parts, wanted, placed),
             layers,
-            farStepdown);
+            farStepdown,
+            entries);
     }
 }
