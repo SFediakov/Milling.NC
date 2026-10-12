@@ -634,6 +634,32 @@ Uncuttable classification (`UncuttableRegions`):
   (Backwards): U of M model cells, P %", U the unreached positions summed over
   the levels, M the cells whose model stands above a level summed over the
   levels, P = 100 U / M.
+- Not cut (T-173, user request, every mode): after the check the generation
+  compares the stock as the check's walk leaves it (the final stock) with what
+  the first pass's plan intended, the closing of the deepest level of every
+  position in its masks (before any collision handling lifts a position). A
+  cell standing more than the tolerance above that surface is not cut; the
+  summary window after a generation names their count, area (mm2), the volume
+  above the surface (mm3) and the highest of them, in Backwards also the
+  unreached positions, and the status bar ends with "not cut: N cells".
+- Backwards_GPU (`CollisionMode.Backwards_GPU`, T-174 to T-177, user request:
+  a copy of Backwards whose data-parallel processes run on the discrete GPU):
+  OpenCL loaded at run time from the graphics driver (`OpenCL.dll`,
+  `libOpenCL.so.1`; no SDK, nothing vendored), the GPU device without memory
+  shared with the host chosen first, kernels built once per process with
+  `FP_CONTRACT OFF` and correctly rounded division and square root. On the GPU:
+  the backward check's sweeps (the closing of the deepest levels and the level
+  tests of all levels of a chunk; the power-distance envelope is two windowed
+  minima per cell over the widest radius of the level, which decide every
+  verdict the CPU's line scans decide), the intended surface, the route floors
+  of every route (the stock and the strategy tip uploaded once, the floor of a
+  route up and its lifted floors down) and 64 start tours per route built in
+  parallel (tour 0 the nearest-neighbour walk, the others under distances
+  stretched up to 25 percent by a fixed hash), of which the 4 shortest in XY
+  are priced exactly beside the CPU's start walks. The validator refuses the
+  mode without an OpenCL GPU; there is no CPU path behind a GPU call. The
+  statistics name the GPU and every process time (`ProcessTimes`,
+  `mn_result_timings`).
 - "3 axis freedom": one free route per level of the plan. At level L the nodes
   are the coverage cells whose tip lies below the previous level (the stock top
   for the first), each at `max(tip, L)`, and the moves follow the surface
@@ -784,8 +810,9 @@ M30
 | `SpindleRpm > 0` | Parameters.SpindleRpm |
 | `0 < ReachPercent <= 100` | Strategy.ReachPercent |
 | `MinIslandVolume >= 0` | Strategy.MinIslandVolume |
-| `CollisionMode` is `Recursion`, `OneRun` or `Backwards` | Strategy.CollisionMode |
-| `Backwards` only with the Z layer by layer strategy | Strategy.CollisionMode |
+| `CollisionMode` is `Recursion`, `OneRun`, `Backwards` or `Backwards_GPU` | Strategy.CollisionMode |
+| `Backwards` and `Backwards_GPU` only with the Z layer by layer strategy | Strategy.CollisionMode |
+| `Backwards_GPU` only with an OpenCL GPU (`GpuDevice.Available`) | Strategy.CollisionMode |
 | `RecursionRatio`, `OneRunRatio` finite and `>= 0` | Strategy.RecursionRatio, Strategy.OneRunRatio |
 | Stock dimensions > 0 | Stock.* |
 | Model bounds inside the stock box in machine space (`ModelLayout.StockBoundsMachine`; warning, not error) | Stock.Placement |
@@ -2266,6 +2293,54 @@ check that decides done.
 - Input: user request (organise the result in the structure in use, count the model cells and give the unreached cells as a percentage of them at the end)
 - Output: `mn_result_unreached`, `UnreachedCells` on the generation and pipeline results, the statistics line of section 6.4
 - Acceptance: the line shows the counts and the percentage after a Backwards run and is absent after the other modes; the result keeps toolpath, layers, unit entries, statistics and collision report; the user's heart at its 0.025 mm cells: 0 events in one pass, 9,508 of 56,171,255 model cells unreached (0.017 percent, two sweeps), 324 s and 154.1 estimated minutes against 975 s, 61 events and 229.5 minutes of Recursion; at 0.05 mm cells its final stock keeps 4.24 mm3 more than Recursion's (6,352 cells beside the walls, at most 2.05 mm) and 0.61 mm3 less; 849 tests pass
+- Status: done
+
+#### T-173 Cells not cut that should be
+- Depends on: T-172
+- Files: `src/Miller.Native/src/mn_collision.c`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Application/Services/UncutReport.cs`, `src/Miller.App/ViewModels/MainWindowViewModel.cs`, `tests/Miller.Tests/Application/UncutTests.cs`
+- Input: user request (at the end a summary of the cells that were not cut but should have been; only collisions were shown)
+- Output: the not-cut comparison of section 6.4 (`mn_result_uncut`, `UncutCells`), its text in the summary window and the status bar
+- Acceptance: the counts, area, volume and highest cell equal a simulation run to the end against the plan on the wall and frustum fixtures in Backwards, Recursion and one run; the wall is cut whole in Backwards and Recursion, the frustum box is not; the summary window and the status bar carry the text; the heart golden unchanged
+- Status: done
+
+#### T-174 Collision mode Backwards_GPU
+- Depends on: T-169
+- Files: `src/Miller.Core/Setup/MillingProject.cs`, `src/Miller.Core/Native/GpuDevice.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_pipeline.c`
+- Input: user request (a copy of the collision check "backwards" named "Backwards_GPU" whose suitable steps run on the discrete GPU)
+- Output: `CollisionMode.Backwards_GPU` (3, `MN_COLLISION_BACKWARDS_GPU`), the validator rules of section 6.7, the GPU name in the statistics
+- Acceptance: the mode round-trips by name; outside the Z layer and without a GPU the validator refuses it; on the frustum fixture with and without a far stepdown it gives the toolpath, unreached and not-cut counts of Backwards
+- Status: done
+
+#### T-175 GPU runtime
+- Depends on: T-174
+- Files: `src/Miller.Native/src/mn_gpu.c`, `src/Miller.Native/src/mn_gpu.h`, `src/Miller.Native/src/mn_thread.c`, `src/Miller.Native/CMakeLists.txt`
+- Input: user request (unload steps to the discrete GPU)
+- Output: OpenCL loaded at run time, the device choice, the kernels, the shared lock, `mn_gpu_device`
+- Acceptance: the Quadro T2000 is found and its kernels build in 0.22 s on the first call; every OpenCL failure returns a status with its message (a build failure with the build log)
+- Status: done
+
+#### T-176 Analysis of the steps
+- Depends on: T-172
+- Files: `src/Miller.Native/src/mn_thread.c`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_solver.c`, `src/Miller.Native/src/mn_backwards.c`
+- Input: user request (which steps or parts of steps can go from the CPU to the GPU)
+- Output: process timers (`mn_seconds`, per-thread accumulators, `mn_result_timings`, `ProcessTimes`) and the analysis of section 6.4 below
+- Acceptance: the user's heart at 0.025 mm in Backwards: total 254.8 s; route stage 228.5 s, of it slab groups 76.8 s (sequential), route units 146.9 s with route floors 103.9 s, local search 21.9 s, candidate lists 9.6 s and start walks 7.7 s summed over the units; backward closings 1.9 s, level tests 2.5 s, batches 0.7 s; collision check 16.2 s, slice 6.0 s, reach map 3.0 s, intended surface 0.6 s
+- Status: done
+
+#### T-177 GPU processes
+- Depends on: T-175, T-176
+- Files: `src/Miller.Native/src/mn_gpu.c`, `src/Miller.Native/src/mn_backwards.c`, `src/Miller.Native/src/mn_collision.c`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_solver.c`, `src/Miller.Core/Native/GpuProcesses.cs`, `tests/Miller.Tests/Application/GpuTests.cs`
+- Input: user request (the go/no-go map of every position on the GPU; the route solver running several combinations at once on the GPU and keeping the fastest; more ideas)
+- Output: the GPU processes of section 6.4
+- Acceptance: the closing and the route floor give the CPU's bits on random maps; the start tours are tours from the start to the fixed end, the same every run, shortest first; on the heart the GPU sweeps settle on the CPU's 9,508 unreached positions in 2 sweeps
+- Status: done
+
+#### T-178 Measurement
+- Depends on: T-177
+- Files: none (measured with the timers of T-176)
+- Input: user request (the time of every GPU process against the one measured for Backwards)
+- Output: the comparison below, the same build, one after the other, 0.025 mm cells
+- Acceptance: closings 1.88 s against 0.09 s, level tests 2.54 s against 0.96 s, intended surface 0.62 s against 0.26 s, route floors 103.9 s against 84.2 s (85.5 s of PCIe transfers), route units 146.9 s against 136.3 s, start tours 16.7 s more on the GPU for 147.7 estimated minutes against 154.1; total 254.8 s against 242.0 s; zero events and the same unreached count in both; not ported: slab groups (sequential labelling and greedy gap cover over the whole grid per cave), local search (every move depends on the one before), candidate lists (need the floor of every route on the GPU, the transfer of the route floors), collision check (sequential over the path), slice and reach map (data parallel, 9 s together)
 - Status: done
 
 #### T-165 Head bottom down to half the cutter diameter

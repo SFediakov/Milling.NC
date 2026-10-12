@@ -85,6 +85,17 @@
   because one sweep cannot know what the unreached positions of the levels above leave (one sweep left 67
   events on the frustum box fixture, the settled check none). The solver therefore starts after the check
   settled (two sweeps, seconds, on the user's heart) and then takes the batches from the queue.
+- The GPU runtime (`mn_gpu.c`, T-175) is part of the generation cluster, not a cluster of its own: its
+  kernels port loops of the check, the closing and the route floors and are called from inside the
+  pass. Its insulation: every OpenCL call returns a status with a message, nothing falls back to the
+  CPU; a fault inside the driver ends the process like any native fault.
+- Backwards_GPU computes on the GPU what Backwards computes on the CPU (user request: a copy of the
+  mode with GPU steps), a second implementation of the same processes by design. The GPU envelope of
+  the check is two windowed minima, not the CPU's line scans: only whether a value reaches 0 is used,
+  and within the widest radius both take the same terms, so the verdicts agree (the heart: 9,508
+  unreached in 2 sweeps in both); the closing and the route floor give the CPU's bits.
+- The not-cut report (T-173) is part of the generation cluster: it compares the stock the check's walk
+  leaves with the plan, inside the pass; `UncutReport` only formats it.
 - The slow zones (T-155, `mn_slow.c`) and the layer marks (T-154) are not clusters of their own:
   both are stages of the native generation between the simplifier and the statistics (user request:
   all generation in the C library), and the layer stepping is part of the simulation cluster
@@ -735,3 +746,21 @@
 - A head test that counts the tolerance in height forbids every position when the cutter is as long as the
   stepdown: the uncut stock top then stands exactly at the head bottom of the first level. The far block's
   rule counts the tolerance radially only (`mn_head_margin`), and Backwards uses the same rule.
+- OpenCL C reserves names a C port uses freely: `mix` and `clamp` are built-in functions, `half` is a
+  type, `floor` a built-in too; a kernel that declares them fails to build. Read the build log with its
+  size first (`clGetProgramBuildInfo` with a NULL buffer): a fixed small buffer gets nothing back.
+- A per-line scan ported as one work item per line (Felzenszwalb's envelope) was slower on the Quadro
+  T2000 than 8 CPU threads (4.9 s against 2.2 s for the heart's level tests), its row pass reading with a
+  stride of the grid width; a transpose made it 2.9 s, windowed minima per cell 0.96 s. On the GPU the
+  shape that wins is one work item per output cell with neighbouring items reading neighbouring cells.
+- The route floors are PCIe-bound on the GPU: every route uploads its floor and downloads two lifted
+  floors (34.5 MB at 0.025 mm cells), 85 s of transfers for the heart. Both the CPU and the GPU lift the
+  whole grid although a route only reads the cells between its nodes and the tool's position; bounding
+  the lift to that box is the larger saving, on either side.
+- GPU state that belongs to one generation must not live in the process-wide device struct: a single route
+  floor session there let two Backwards_GPU generations (two test classes at once) overwrite each other's
+  stock and tip, and a statistics test failed one full run in two. Each generation now opens its own
+  `mn_gpu_floors` (held in its guard); `TwoGpuGenerationsAtOnce_GiveTheirOwnResults` covers it.
+- Most of Backwards' time is not GPU work: the slab groups (77 s, sequential labelling and a greedy gap
+  cover that depends on its order) and the route units' local search are sequential; the timers of T-176
+  (`mn_result_timings`) show the split for any project.
