@@ -69,6 +69,15 @@ public sealed record PipelineResult(
     // Backwards (T-172): the positions the backward check left unreached against the model cells; null
     // in the other collision modes.
     public UnreachedCells? Unreached { get; init; }
+
+    // The cells the toolpath leaves above what the plan intended (T-173).
+    public UncutCells Uncut { get; init; }
+
+    // Process times of the generation (T-176).
+    public ProcessTimes Times { get; init; } = new(Array.Empty<double>());
+
+    // The GPU the generation ran on (Backwards_GPU, T-174); null in the other modes.
+    public string? Gpu { get; init; }
 }
 
 // Runs the stages of docs/ARCHITECTURE.md 5.1 in order: the validation here, every later stage in one
@@ -152,6 +161,9 @@ public sealed class PipelineService
             FarStepdown = generated.FarStepdown,
             RouteUnitEntries = generated.RouteUnitEntries,
             Unreached = generated.Unreached,
+            Uncut = generated.Uncut,
+            Times = generated.Times,
+            Gpu = project.CollisionMode == CollisionMode.Backwards_GPU ? Miller.Core.Native.GpuDevice.Description : null,
         };
     }
 

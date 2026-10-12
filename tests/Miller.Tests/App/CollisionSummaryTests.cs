@@ -59,8 +59,9 @@ public sealed class CollisionSummaryTests : IDisposable
         Assert.Equal(MainWindowViewModel.CollisionSummaryTitle, title);
         var check = vm.LastResult!.Collisions;
         Assert.True(check.Succeeded);
-        Assert.Equal(CollisionService.Summarize(check), message);
-        Assert.EndsWith(CollisionService.StatusSuffix(check), vm.StatusText);
+        Assert.Equal(CollisionService.Summarize(check) + "\n\n" + UncutReport.Summarize(vm.LastResult), message);
+        Assert.Contains(CollisionService.StatusSuffix(check) + ", ", vm.StatusText);
+        Assert.EndsWith(UncutReport.StatusSuffix(vm.LastResult), vm.StatusText);
         Assert.StartsWith("Toolpath ready:", vm.StatusText);
         Assert.Equal(check.Report!.Contacts, vm.Analysis.Collisions!.Contacts);
         Assert.Empty(_confirm.Questions);

@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-#include "mn_internal.h"
+#include "mn_gpu.h"
 #include "mn_thread.h"
 
 /* Backward check of the Z layer (T-170, collision mode "Backwards"). It runs on a thread of its own
@@ -30,6 +30,7 @@ struct mn_backwards {
     int group_size;
     int batch_count;
     int workers;
+    int gpu;
     mn_backwards_batch* batches; /* from the top: batch b holds the levels from b * group_size */
     mn_profile profile;
     int* deepest;      /* per position the deepest level index it reaches, -1 for none */
@@ -43,6 +44,7 @@ struct mn_backwards {
     int64_t model_cells;
     volatile int abort;
     int status;
+    double times[MN_TIME_COUNT];
     char error[MN_BACKWARDS_ERROR];
     mn_signal* signal;
     mn_task* task;
@@ -270,15 +272,22 @@ static int check_all(mn_backwards* check)
     MN_CHECK(mn_rows_parallel(g->height, start_row, &job, NULL, check->workers));
     check->model_cells = row_sum(check);
     memcpy(check->next, check->deepest, (size_t)cells * sizeof(int));
-    for (int round = 0; round <= ctx->plan->count; round++) {
+    if (check->gpu) {
+        MN_CHECK(mn_gpu_backward_settle(ctx, &check->profile, check->deepest, &check->sweeps));
+    }
+    for (int round = 0; !check->gpu && round <= ctx->plan->count; round++) {
+        double started = mn_seconds();
         int64_t changed = settle(check);
+        mn_time_add(MN_TIME_BACK_SETTLE, mn_seconds() - started);
         if (changed < 0) {
             return (int)changed;
         }
         if (round > 0 && changed == 0) {
             break;
         }
+        started = mn_seconds();
         MN_CHECK(sweep(check));
+        mn_time_add(MN_TIME_BACK_LEVELS, mn_seconds() - started);
         check->sweeps++;
     }
     for (int n = 0; n < check->batch_count; n++) {
@@ -291,7 +300,9 @@ static int check_all(mn_backwards* check)
         if (stopped(check)) {
             return mn_fail(MN_ERR_CANCELLED, "Cancelled.");
         }
+        double started = mn_seconds();
         MN_CHECK(fill_batch(check, &check->batches[check->batch_count - 1 - n]));
+        mn_time_add(MN_TIME_BACK_FILL, mn_seconds() - started);
         mn_signal_raise(check->signal, 0, n + 1);
     }
     return MN_OK;
@@ -302,6 +313,7 @@ static void check_main(void* argument)
     mn_backwards* check = (mn_backwards*)argument;
     mn_set_thread_cap(check->workers);
     check->status = check_all(check);
+    mn_time_take(check->times);
     if (check->status != MN_OK) {
         snprintf(check->error, MN_BACKWARDS_ERROR, "%s", mn_last_error());
         mn_signal_raise(check->signal, 0, MN_SIGNAL_DONE);
@@ -325,7 +337,7 @@ static void release_all(mn_backwards* check)
     free(check);
 }
 
-int mn_backwards_start(const mn_context* context, int group_size, int workers, const volatile int32_t* cancel, mn_backwards** result)
+int mn_backwards_start(const mn_context* context, int group_size, int workers, int gpu, const volatile int32_t* cancel, mn_backwards** result)
 {
     const mn_grid* g = &context->grid;
     int cells = mn_cells(g);
@@ -339,6 +351,7 @@ int mn_backwards_start(const mn_context* context, int group_size, int workers, c
     check->group_size = group_size;
     check->batch_count = count > 0 ? (count + group_size - 1) / group_size : 0;
     check->workers = workers;
+    check->gpu = gpu;
     check->batches = (mn_backwards_batch*)mn_alloc((size_t)(check->batch_count > 0 ? check->batch_count : 1), sizeof(mn_backwards_batch));
     check->deepest = (int*)mn_alloc((size_t)cells, sizeof(int));
     check->next = (int*)mn_alloc((size_t)cells, sizeof(int));
@@ -394,6 +407,9 @@ int mn_backwards_finish(mn_backwards* check, int abort, int64_t* unreached, int6
         mn_signal_raise(check->signal, 1, MN_SIGNAL_DONE);
     }
     mn_task_join(check->task);
+    for (int k = 0; k < MN_TIME_COUNT; k++) {
+        mn_time_add(k, check->times[k]);
+    }
     int status = check->status;
     if (!abort && status != MN_OK) {
         status = mn_fail(status, "%s", check->error);

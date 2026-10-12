@@ -1,4 +1,5 @@
-#include "mn_internal.h"
+#include "mn_gpu.h"
+#include "mn_thread.h"
 
 /* Dynamic collision check (T-147) and its resolution (T-148). The check walks the toolpath over a
  * clone of the stock the way the simulation does (CollisionRecorder): feeds and plunges remove
@@ -209,7 +210,7 @@ static mn_v3 point_at(mn_v3 start, mn_v3 end, float length, float distance)
 }
 
 int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const float* stock, const float* model, float floor, const mn_profile* profile, float cutter_radius,
-    float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor)
+    float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, float* final_stock)
 {
     int cells = mn_cells(g);
     float* clone = (float*)mn_alloc((size_t)(cells > 0 ? cells : 1), sizeof(float));
@@ -272,8 +273,62 @@ int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const
         }
         mn_report(monitor, k + 1, count, (float)(k + 1) / (float)count);
     }
+    if (final_stock != NULL) {
+        memcpy(final_stock, clone, (size_t)cells * sizeof(float));
+    }
     free(clone);
     return w.status_code;
+}
+
+typedef struct intended_job {
+    const mn_plan* plan;
+    float* deepest;
+} intended_job;
+
+static void deepest_level_row(void* context, int j, void* scratch)
+{
+    (void)scratch;
+    const intended_job* job = (const intended_job*)context;
+    const mn_plan* plan = job->plan;
+    int width = plan->grid.width;
+    int cells = mn_cells(&plan->grid);
+    for (int i = 0; i < width; i++) {
+        int c = j * width + i;
+        float deepest = NAN;
+        for (int k = plan->count - 1; k >= 0 && mn_isnan(deepest); k--) {
+            if (plan->masks[(size_t)k * (size_t)cells + (size_t)c]) {
+                deepest = plan->levels[k];
+            }
+        }
+        job->deepest[c] = deepest;
+    }
+}
+
+int mn_intended_compute(const mn_plan* plan, const mn_profile* profile, int gpu, float* deepest, float* intended)
+{
+    intended_job job = { plan, deepest };
+    MN_CHECK(mn_rows_parallel(plan->grid.height, deepest_level_row, &job, NULL, mn_worker_count()));
+    return gpu ? mn_gpu_closing(&plan->grid, deepest, profile, intended) : mn_remaining_compute(&plan->grid, deepest, profile->offsets, profile->offset_count, intended);
+}
+
+void mn_uncut_of(const mn_grid* g, const float* final_stock, const float* intended, float tolerance, mn_uncut* uncut)
+{
+    int cells = mn_cells(g);
+    double area = (double)g->cell_size * (double)g->cell_size;
+    memset(uncut, 0, sizeof(*uncut));
+    for (int c = 0; c < cells; c++) {
+        float f = final_stock[c];
+        float t = intended[c];
+        if (mn_isnan(f) || mn_isnan(t) || !(f > t + tolerance + MN_COLLISION_TOLERANCE)) {
+            continue;
+        }
+        float above = f - t;
+        uncut->cells++;
+        uncut->volume += (double)above * area;
+        if (above > uncut->max_height) {
+            uncut->max_height = above;
+        }
+    }
 }
 
 MN_API int32_t mn_collision_check(const mn_segment* segments, int32_t count, const mn_grid* grid, const float* stock, const float* model, float floor, const mn_tool* tool, float tolerance, uint8_t* status, mn_collision** events, int32_t* event_count)
@@ -291,7 +346,7 @@ MN_API int32_t mn_collision_check(const mn_segment* segments, int32_t count, con
     MN_CHECK(mn_profile_build(tool, grid->cell_size, &profile));
     mn_model_bits(model, mn_cells(grid), floor, status);
     mn_collisions list = { 0 };
-    int result = mn_check_path(segments, count, grid, stock, model, floor, &profile, tool->cutter_diameter / 2.0f, tool->cutter_length, tolerance, status, NULL, &list, NULL);
+    int result = mn_check_path(segments, count, grid, stock, model, floor, &profile, tool->cutter_diameter / 2.0f, tool->cutter_length, tolerance, status, NULL, &list, NULL, NULL);
     mn_profile_free(&profile);
     if (result != MN_OK) {
         mn_collisions_free(&list);

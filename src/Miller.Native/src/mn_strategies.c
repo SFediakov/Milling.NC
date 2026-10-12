@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-#include "mn_internal.h"
+#include "mn_gpu.h"
 #include "mn_thread.h"
 
 /* Node lattice, cave tree and the two routing strategies (NodeLattice, CaveTree,
@@ -246,6 +246,8 @@ typedef struct mn_guard {
     mn_ints after;
     mn_ints clearing;
     int enabled;
+    /* Backwards_GPU (T-177): the GPU route floors of this generation. */
+    mn_gpu_floors* floors;
 } mn_guard;
 
 static void guard_free(mn_guard* g)
@@ -809,6 +811,22 @@ static void lift_uncut(const mn_context* context, const mn_guard* guard, const f
     }
 }
 
+MN_API int32_t mn_route_floor(const float* stock, const float* tip, const float* floor, int32_t cells, float safe, float* lifted)
+{
+    mn_context context;
+    memset(&context, 0, sizeof(context));
+    context.grid.width = cells;
+    context.grid.height = 1;
+    context.grid.cell_size = 1.0f;
+    context.stock = stock;
+    context.effective_tip = tip;
+    context.stock_top = safe;
+    mn_guard guard;
+    memset(&guard, 0, sizeof(guard));
+    lift_uncut(&context, &guard, floor, lifted);
+    return MN_OK;
+}
+
 /* The node nearest in XY to the tool among the nodes without a predecessor, or the first such
  * node before the program starts; `exclude` (the fixed end of a route of more than one node, -1 for
  * none) never starts it. */
@@ -850,7 +868,18 @@ static int route_nodes(const mn_context* context, const mn_route_grid* grid, flo
     if (order == NULL) {
         return mn_fail(MN_ERR_MEMORY, "Out of memory for a route of %d nodes.", count);
     }
-    lift_uncut(context, guard, grid->floor, lifted_floor);
+    double started = mn_seconds();
+    int status = MN_OK;
+    if (context->collision_mode == MN_COLLISION_BACKWARDS_GPU) {
+        status = mn_gpu_floors_lift(guard->floors, grid->floor, mn_cells(&grid->g), lifted_floor);
+    } else {
+        lift_uncut(context, guard, grid->floor, lifted_floor);
+    }
+    mn_time_add(MN_TIME_FLOORS, mn_seconds() - started);
+    if (status != MN_OK) {
+        free(order);
+        return status;
+    }
     mn_route_grid lifted = { grid->g, lifted_floor, lifted_floor + mn_cells(&grid->g) };
     mn_problem problem;
     problem.grid = lifted;
@@ -861,15 +890,18 @@ static int route_nodes(const mn_context* context, const mn_route_grid* grid, flo
     problem.before = guard->enabled ? guard->before.items : NULL;
     problem.after = guard->enabled ? guard->after.items : NULL;
     problem.pair_count = guard->enabled ? guard->before.count : 0;
+    problem.gpu_tours = context->collision_mode == MN_COLLISION_BACKWARDS_GPU;
     int start = nearest_node(x, y, count, guard->enabled ? guard->pending : NULL, end, writer);
     int64_t evaluations = 0;
-    int status = mn_solve(&problem, start, count > 1 ? end : -1, mn_share(budget, count, nodes_left), cancel, order, &evaluations);
+    status = mn_solve(&problem, start, count > 1 ? end : -1, mn_share(budget, count, nodes_left), cancel, order, &evaluations);
     if (status == MN_OK) {
         budget->used += evaluations;
+        started = mn_seconds();
         status = mn_writer_travel_to(writer, mn_problem_node(&problem, order[0]), &lifted);
         for (int k = 1; k < count && status == MN_OK; k++) {
             status = mn_writer_follow_to(writer, mn_problem_node(&problem, order[k]), &lifted);
         }
+        mn_time_add(MN_TIME_WRITE, mn_seconds() - started);
     }
     free(order);
     return status;
@@ -2183,6 +2215,7 @@ typedef struct mn_unit_job {
     mn_marks* marks;
     int* routes;
     int* status;
+    double (*times)[MN_TIME_COUNT];
     char (*errors)[MN_UNIT_ERROR];
 } mn_unit_job;
 
@@ -2233,6 +2266,8 @@ static void unit_row(void* context, int row, void* scratch)
     }
     job->routes[row] = s.pass - job->pass_before;
     job->status[row] = status;
+    memset(job->times[row], 0, sizeof(job->times[row]));
+    mn_time_take(job->times[row]);
     mn_writer_free(writer);
     if (job->count > 1) {
         mn_set_thread_cap(cap);
@@ -2308,7 +2343,10 @@ static int z_units(mn_z_state* s, const mn_z_group* groups, int group_count, con
     int* routes = (int*)mn_alloc((size_t)workers, sizeof(int));
     int* row_status = (int*)mn_alloc((size_t)workers, sizeof(int));
     char (*errors)[MN_UNIT_ERROR] = (char (*)[MN_UNIT_ERROR])mn_alloc((size_t)workers, MN_UNIT_ERROR);
-    if (sets == NULL || scratch == NULL || planned == NULL || has_start == NULL || start == NULL || paths == NULL || marks == NULL || routes == NULL || row_status == NULL || errors == NULL) {
+    double (*times)[MN_TIME_COUNT] = (double (*)[MN_TIME_COUNT])mn_alloc((size_t)workers, sizeof(double[MN_TIME_COUNT]));
+    double units_started = mn_seconds();
+    if (sets == NULL || scratch == NULL || planned == NULL || has_start == NULL || start == NULL || paths == NULL || marks == NULL || routes == NULL || row_status == NULL || errors == NULL
+        || times == NULL) {
         status = mn_fail(MN_ERR_MEMORY, "Out of memory for %d route workers.", workers);
         goto done;
     }
@@ -2369,8 +2407,14 @@ static int z_units(mn_z_state* s, const mn_z_group* groups, int group_count, con
         job.marks = marks;
         job.routes = routes;
         job.status = row_status;
+        job.times = times;
         job.errors = errors;
         status = mn_rows_parallel(n, unit_row, &job, scratch, n);
+        for (int i = 0; i < n; i++) {
+            for (int k = 0; k < MN_TIME_COUNT; k++) {
+                mn_time_add(k, times[i][k]);
+            }
+        }
         for (int i = 0; i < n && status == MN_OK; i++) {
             if (row_status[i] == MN_ERR_CANCELLED) {
                 status = mn_fail(MN_ERR_CANCELLED, "Cancelled.");
@@ -2415,7 +2459,9 @@ done:
     free(routes);
     free(row_status);
     free(errors);
+    free(times);
     free(units);
+    mn_time_add(MN_TIME_UNITS, mn_seconds() - units_started);
     return status;
 }
 
@@ -2441,7 +2487,7 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
         }
         group_size = k;
     }
-    if (context->collision_mode == MN_COLLISION_BACKWARDS) {
+    if (mn_backwards_mode(context->collision_mode)) {
         return z_backwards(context, monitor, far_on ? group_size : 1, result, marks, entries, unreached);
     }
     mn_guard guard;
@@ -2609,13 +2655,17 @@ static int z_backwards(const mn_context* source, const mn_monitor* monitor, int 
     if (context->far_area != NULL) {
         memset(context->far_area, 0, (size_t)cells);
     }
+    int gpu = context->collision_mode == MN_COLLISION_BACKWARDS_GPU;
     mn_backwards* check = NULL;
-    MN_CHECK(mn_backwards_start(source, group_size, check_workers, cancel, &check));
+    MN_CHECK(mn_backwards_start(source, group_size, check_workers, gpu, cancel, &check));
     int cap = mn_set_thread_cap(solve_workers);
     int slab_count = mn_backwards_batch_count(check);
 
     mn_guard guard;
     int status = guard_init(&guard, context);
+    if (status == MN_OK && gpu) {
+        status = mn_gpu_floors_open(context->stock, context->effective_tip, cells, context->stock_top + context->parameters.safe_height, &guard.floors);
+    }
     mn_z_state s;
     memset(&s, 0, sizeof(s));
     s.context = context;
@@ -2668,7 +2718,9 @@ static int z_backwards(const mn_context* source, const mn_monitor* monitor, int 
     mn_v3 lower = mn_v3_make(0.0f, 0.0f, 0.0f);
     for (int n = 0; n < slab_count && status == MN_OK; n++) {
         const mn_backwards_batch* batch = NULL;
+        double waited = mn_seconds();
         status = mn_backwards_take(check, n, &batch);
+        mn_time_add(MN_TIME_BACK_WAIT, mn_seconds() - waited);
         if (status != MN_OK) {
             break;
         }
@@ -2682,7 +2734,9 @@ static int z_backwards(const mn_context* source, const mn_monitor* monitor, int 
         s.done = 0;
         s.unit_nodes = 0;
         int max_nodes = 0;
+        double prepared = mn_seconds();
         status = z_group_prepare(&s, batch->first, batch->last, 1, batch->reached, batch->far, NULL, &group, &max_nodes);
+        mn_time_add(MN_TIME_GROUPS, mn_seconds() - prepared);
         if (status == MN_OK) {
             const int* deepest = mn_backwards_deepest(check);
             memcpy(s.planned, context->stock, (size_t)cells * sizeof(float));
@@ -2804,6 +2858,7 @@ static int z_backwards(const mn_context* source, const mn_monitor* monitor, int 
     free(s.ys);
     free(s.zs);
     mn_profile_free(&profile);
+    mn_gpu_floors_close(guard.floors);
     guard_free(&guard);
     return status;
 }
@@ -3052,10 +3107,10 @@ done:
 
 MN_API int32_t mn_strategy_generate(int32_t strategy, const mn_context* context, mn_progress_fn progress, void* progress_context, const volatile int32_t* cancel, mn_segment** segments, int32_t* count)
 {
-    if (context->collision_mode != MN_COLLISION_RECURSION && context->collision_mode != MN_COLLISION_ONE_RUN && context->collision_mode != MN_COLLISION_BACKWARDS) {
+    if (context->collision_mode != MN_COLLISION_RECURSION && context->collision_mode != MN_COLLISION_ONE_RUN && !mn_backwards_mode(context->collision_mode)) {
         return mn_fail(MN_ERR_ARGUMENT, "Unknown collision mode %d.", context->collision_mode);
     }
-    if (context->collision_mode == MN_COLLISION_BACKWARDS && strategy != MN_STRATEGY_Z_LAYER) {
+    if (mn_backwards_mode(context->collision_mode) && strategy != MN_STRATEGY_Z_LAYER) {
         return mn_fail(MN_ERR_ARGUMENT, "The backwards collision handling works with the Z layer strategy only.");
     }
     if (context->collision_mode == MN_COLLISION_ONE_RUN && !(context->ratio >= 0)) {

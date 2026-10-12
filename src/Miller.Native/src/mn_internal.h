@@ -121,7 +121,12 @@ typedef struct mn_problem {
     const int* before;
     const int* after;
     int pair_count;
+    /* Backwards_GPU (T-177): the start walks are joined by tours built on the GPU. */
+    int gpu_tours;
 } mn_problem;
+
+/* Whether a collision mode is Backwards on the CPU or on the GPU. */
+static inline int mn_backwards_mode(int collision_mode) { return collision_mode == MN_COLLISION_BACKWARDS || collision_mode == MN_COLLISION_BACKWARDS_GPU; }
 
 static inline mn_v3 mn_problem_node(const mn_problem* p, int k) { return mn_v3_make(p->x[k], p->y[k], p->z[k]); }
 
@@ -243,9 +248,22 @@ void mn_model_bits(const float* model, int cells, float floor, uint8_t* status);
 
 /* Clears MN_CELL_COLLISION, walks the segments over a clone of `stock` and sets it again on every
  * entered cell; `hits` may be NULL, otherwise its closing map must be set. Events hold one collision
- * per segment and kind. */
+ * per segment and kind. `final_stock` (cells, may be NULL) receives the clone as the walk leaves it. */
 int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const float* stock, const float* model, float floor, const mn_profile* profile, float cutter_radius,
-    float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor);
+    float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, float* final_stock);
+
+/* Not cut (T-173): the cells whose material after the toolpath stands more than the tolerance above
+ * what the plan intended, their volume above it and the highest of them. */
+typedef struct mn_uncut {
+    int cells;
+    double volume;
+    float max_height;
+} mn_uncut;
+
+/* What the plan intends to leave: the closing of the deepest level of every position in its masks
+ * (NaN where no position covers a cell). */
+int mn_intended_compute(const mn_plan* plan, const mn_profile* profile, int gpu, float* deepest, float* intended);
+void mn_uncut_of(const mn_grid* g, const float* final_stock, const float* intended, float tolerance, mn_uncut* uncut);
 
 /* Resolution of one check (recursion mode): entered removable stock becomes SHOULD_REMOVE without
  * COLLISION; a position whose head hit unremovable cells is forbidden (its tip in `raised` lifted
@@ -302,8 +320,9 @@ typedef struct mn_backwards_batch {
 
 typedef struct mn_backwards mn_backwards;
 
-/* Starts the check on a thread of its own with `workers` workers; the batches come from the lowest. */
-int mn_backwards_start(const mn_context* context, int group_size, int workers, const volatile int32_t* cancel, mn_backwards** check);
+/* Starts the check on a thread of its own with `workers` workers; the batches come from the lowest.
+ * With `gpu` the sweeps run on the GPU (mn_gpu_backward_settle). */
+int mn_backwards_start(const mn_context* context, int group_size, int workers, int gpu, const volatile int32_t* cancel, mn_backwards** check);
 int mn_backwards_batch_count(const mn_backwards* check);
 /* Per position the deepest level index the check settled on (-1 for none); valid once a batch is taken. */
 const int* mn_backwards_deepest(const mn_backwards* check);

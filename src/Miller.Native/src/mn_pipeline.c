@@ -11,9 +11,8 @@
  * report; in backwards mode (T-170, Z layer only) the strategy leaves out the positions the backward
  * check finds unreached and one pass is checked the same way. With a far stepdown under the Z layer
  * (T-164) every collision's place and the MN_FAR_WITHDRAW_RADIUS around it are withdrawn from the far
- * stepdown after each pass: later passes
- * may take only the first pass's far positions that were never withdrawn, and a withdrawal that
- * removes a position starts another pass in either mode. Progress goes to the caller per pass and
+ * stepdown after each pass: later passes may take only the first pass's far positions that were never
+ * withdrawn, and a withdrawal that removes a position starts another pass in either mode. Progress goes to the caller per pass and
  * stage; cancellation is honoured between the stages and inside the long ones. */
 
 /* Everything one pass produced. */
@@ -40,6 +39,8 @@ typedef struct mn_pass {
     mn_points units;
     /* Backwards (T-172): the counts of the backward check. */
     mn_unreached unreached;
+    /* The cells the pass left above what the first pass's plan intended (T-173). */
+    mn_uncut uncut;
     int entered;
     int valid;
 } mn_pass;
@@ -62,6 +63,7 @@ struct mn_result {
     uint8_t* far_first;
     int pass_far[MN_MAX_PASSES];
     int pass_withdrawn[MN_MAX_PASSES];
+    double times[MN_TIME_COUNT];
 };
 
 typedef struct stage_monitor {
@@ -69,6 +71,7 @@ typedef struct stage_monitor {
     void* context;
     int pass;
     int stage;
+    double since;
 } stage_monitor;
 
 static void forward_progress(void* context, int32_t step, int32_t steps, float fraction)
@@ -79,8 +82,14 @@ static void forward_progress(void* context, int32_t step, int32_t steps, float f
     }
 }
 
+/* A new stage: the time since the last one began goes to that stage (MN_TIME index stage - 1). */
 static void begin(stage_monitor* m, int stage)
 {
+    double now = mn_seconds();
+    if (m->stage > 0) {
+        mn_time_add(m->stage - 1, now - m->since);
+    }
+    m->since = now;
     m->stage = stage;
     forward_progress(m, 0, 0, 0.0f);
 }
@@ -227,8 +236,11 @@ static int far_withdrawal_on(const mn_job* job) { return job->strategy == MN_STR
 /* One pass: the tip under the raised map, slicing and cut scope, holding bridges, routing,
  * simplification, statistics and the check. `status` holds the MODEL and SHOULD_REMOVE bits the pass
  * runs with and receives the BRIDGE bits of its bridges and the COLLISION bits of its check; `hits`
- * receives the check's aggregation when given; `far_allowed` limits the far positions (NULL: all). */
-static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int32_t* cancel, const mn_result* r, const float* raised, const uint8_t* far_allowed, uint8_t* status, mn_hits* hits, mn_pass* pass)
+ * receives the check's aggregation when given; `far_allowed` limits the far positions (NULL: all).
+ * `intended` (T-173) is filled from the first pass's plan, before any collision handling lifts a
+ * position, and every pass's final stock is compared with it. */
+static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int32_t* cancel, const mn_result* r, const float* raised, const uint8_t* far_allowed, uint8_t* status, mn_hits* hits,
+    float* intended, int* intended_ready, mn_pass* pass)
 {
     const mn_parameters* p = &job->parameters;
     const mn_grid* g = &r->grid;
@@ -301,6 +313,19 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
     if (cancelled(cancel)) {
         free(should_cut);
         return mn_fail(MN_ERR_CANCELLED, "Cancelled.");
+    }
+    if (!*intended_ready) {
+        double started = mn_seconds();
+        float* deepest = (float*)mn_alloc((size_t)cells, sizeof(float));
+        status_code = deepest == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the intended surface.")
+                                      : mn_intended_compute(pass->plan, &r->profile, job->collision_mode == MN_COLLISION_BACKWARDS_GPU, deepest, intended);
+        free(deepest);
+        if (status_code != MN_OK) {
+            free(should_cut);
+            return status_code;
+        }
+        *intended_ready = 1;
+        mn_time_add(MN_TIME_INTENDED, mn_seconds() - started);
     }
 
     /* route */
@@ -387,8 +412,14 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
         hits->closing = closing.z;
         hits->slack = p->tolerance;
     }
-    status_code = mn_check_path(pass->toolpath.items, pass->toolpath.count, g, r->stock.z, r->model.z, r->floor, &r->profile, job->tool.cutter_diameter / 2.0f, job->tool.cutter_length,
-        MN_COLLISION_TOLERANCE, status, hits, &pass->events, &monitor);
+    float* final_stock = (float*)mn_alloc((size_t)cells, sizeof(float));
+    status_code = final_stock == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the final stock.")
+                                      : mn_check_path(pass->toolpath.items, pass->toolpath.count, g, r->stock.z, r->model.z, r->floor, &r->profile, job->tool.cutter_diameter / 2.0f,
+                                          job->tool.cutter_length, MN_COLLISION_TOLERANCE, status, hits, &pass->events, &monitor, final_stock);
+    if (status_code == MN_OK) {
+        mn_uncut_of(g, final_stock, intended, p->tolerance, &pass->uncut);
+    }
+    free(final_stock);
     if (status_code != MN_OK) {
         mn_map_free(&closing);
         if (hits != NULL) {
@@ -418,10 +449,10 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
 
 static int generate(const mn_job* job, stage_monitor* stage, const volatile int32_t* cancel, mn_result* r)
 {
-    if (job->collision_mode != MN_COLLISION_RECURSION && job->collision_mode != MN_COLLISION_ONE_RUN && job->collision_mode != MN_COLLISION_BACKWARDS) {
+    if (job->collision_mode != MN_COLLISION_RECURSION && job->collision_mode != MN_COLLISION_ONE_RUN && !mn_backwards_mode(job->collision_mode)) {
         return mn_fail(MN_ERR_ARGUMENT, "Unknown collision mode %d.", job->collision_mode);
     }
-    if (job->collision_mode == MN_COLLISION_BACKWARDS && job->strategy != MN_STRATEGY_Z_LAYER) {
+    if (mn_backwards_mode(job->collision_mode) && job->strategy != MN_STRATEGY_Z_LAYER) {
         return mn_fail(MN_ERR_ARGUMENT, "The backwards collision handling works with the Z layer strategy only.");
     }
     if (!(job->recursion_ratio >= 0) || !(job->one_run_ratio >= 0)) {
@@ -445,10 +476,12 @@ static int generate(const mn_job* job, stage_monitor* stage, const volatile int3
      * places of the last check's collisions. */
     uint8_t* far_allowed = NULL;
     uint8_t* places = far_on ? (uint8_t*)mn_alloc((size_t)cells, 1) : NULL;
+    float* intended = (float*)mn_alloc((size_t)cells, sizeof(float));
+    int intended_ready = 0;
     mn_hits hits;
     int hits_ready = 0;
     int result = MN_OK;
-    if (status == NULL || raised == NULL || (far_on && places == NULL)) {
+    if (status == NULL || raised == NULL || intended == NULL || (far_on && places == NULL)) {
         result = mn_fail(MN_ERR_MEMORY, "Out of memory for the cell status.");
         goto done;
     }
@@ -478,7 +511,7 @@ static int generate(const mn_job* job, stage_monitor* stage, const volatile int3
         }
         hits.entered = 0;
         hits.unremovable = 0;
-        result = run_pass(job, stage, cancel, r, raised, far_allowed, status, &hits, &pass);
+        result = run_pass(job, stage, cancel, r, raised, far_allowed, status, &hits, intended, &intended_ready, &pass);
         if (result != MN_OK) {
             pass_free(&pass);
             goto done;
@@ -549,6 +582,7 @@ done:
     free(raised);
     free(far_allowed);
     free(places);
+    free(intended);
     return result;
 }
 
@@ -565,7 +599,13 @@ MN_API int32_t mn_generate(const mn_job* job, mn_stage_fn progress, void* contex
     stage.context = context;
     stage.pass = 1;
     stage.stage = 0;
+    stage.since = 0.0;
+    mn_time_take(NULL);
     int status = generate(job, &stage, cancel, r);
+    if (stage.stage > 0) {
+        mn_time_add(stage.stage - 1, mn_seconds() - stage.since);
+    }
+    mn_time_take(r->times);
     if (status != MN_OK) {
         mn_result_free(r);
         return status;
@@ -693,6 +733,22 @@ MN_API int32_t mn_result_unreached(const mn_result* result, int64_t* unreached, 
     *model_cells = result->best.unreached.model_cells;
     *sweeps = result->best.unreached.sweeps;
     return result->best.unreached.checked;
+}
+
+MN_API int32_t mn_result_timings(const mn_result* result, double* seconds, int32_t capacity)
+{
+    int count = mn_mini(capacity, MN_TIME_COUNT);
+    for (int k = 0; k < count; k++) {
+        seconds[k] = result->times[k];
+    }
+    return count;
+}
+
+MN_API void mn_result_uncut(const mn_result* result, int32_t* cells, double* volume, float* max_height)
+{
+    *cells = result->best.uncut.cells;
+    *volume = result->best.uncut.volume;
+    *max_height = result->best.uncut.max_height;
 }
 
 MN_API int32_t mn_result_collision_count(const mn_result* result) { return result->best.events.count; }

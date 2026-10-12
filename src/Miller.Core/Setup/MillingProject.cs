@@ -15,12 +15,14 @@ public enum CutScope
 // decrease. OneRun: the route solver evaluates every node before its route with the Y ratio.
 // Backwards (T-169, Z layer by layer only): a check from the lowest level up leaves out every
 // position whose head would meet material only cutting the model frees, and reports the share of
-// those unreached positions against the model cells.
+// those unreached positions against the model cells. Backwards_GPU (T-174, user request; the name the
+// user gave it): Backwards with its data-parallel processes on the discrete GPU (OpenCL).
 public enum CollisionMode
 {
     Recursion,
     OneRun,
     Backwards,
+    Backwards_GPU,
 }
 
 // Everything a .miller.json file contains.

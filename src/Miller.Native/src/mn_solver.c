@@ -1,5 +1,6 @@
-#include "mn_window.h"
+#include "mn_gpu.h"
 #include "mn_thread.h"
+#include "mn_window.h"
 
 /* Orders the nodes of a route problem into one open path from a given start (RouteSolver): four start
  * walks, the nearest-neighbour walk and the smooth walk over candidate lists (the 10 planar-nearest
@@ -1245,6 +1246,11 @@ static int local_search(const mn_problem* problem, const mn_candidates* candidat
 
 #define MN_START_WALKS 4
 
+/* Backwards_GPU (T-177): the tours one route builds on the GPU and the shortest of them the solver
+ * prices exactly beside its own start walks. */
+#define MN_GPU_TOURS 64
+#define MN_GPU_TOURS_KEPT 4
+
 typedef struct walk_job {
     const mn_problem* problem;
     const mn_candidates* candidates;
@@ -1372,12 +1378,15 @@ int mn_solve(const mn_problem* problem, int start, int end, int64_t allowance, c
             goto done;
         }
     }
+    double started = mn_seconds();
     status = buckets_init(&buckets, problem);
     if (status != MN_OK) {
         goto done;
     }
     status = candidates_init(&candidates, problem, &buckets, MN_CANDIDATES);
     buckets_free(&buckets);
+    mn_time_add(MN_TIME_CANDIDATES, mn_seconds() - started);
+    started = mn_seconds();
     if (status != MN_OK) {
         goto done;
     }
@@ -1440,9 +1449,35 @@ int mn_solve(const mn_problem* problem, int start, int end, int64_t allowance, c
             goto done;
         }
     }
+    mn_time_add(MN_TIME_WALKS, mn_seconds() - started);
+    if (problem->gpu_tours) {
+        if (problem->pair_count > 0) {
+            status = mn_fail(MN_ERR_ARGUMENT, "GPU start tours take no precedence pairs.");
+            goto done;
+        }
+        int* tours = (int*)mn_alloc((size_t)MN_GPU_TOURS_KEPT * (size_t)n, sizeof(int));
+        int kept = 0;
+        status = tours == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the GPU tours.") : mn_gpu_tours(problem->x, problem->y, n, start, end, MN_GPU_TOURS, MN_GPU_TOURS_KEPT, tours, &kept);
+        if (status == MN_OK && kept > 0) {
+            float best = mn_path_cost(problem, order, n);
+            for (int t = 0; t < kept; t++) {
+                float cost = mn_path_cost(problem, tours + (size_t)t * (size_t)n, n);
+                if (cost < best) {
+                    memcpy(order, tours + (size_t)t * (size_t)n, (size_t)n * sizeof(int));
+                    best = cost;
+                }
+            }
+        }
+        free(tours);
+        if (status != MN_OK) {
+            goto done;
+        }
+    }
 
     int cancelled = 0;
+    started = mn_seconds();
     status = local_search(problem, &candidates, order, end >= 0, allowance, cancel, evaluations, &cancelled);
+    mn_time_add(MN_TIME_SEARCH, mn_seconds() - started);
     if (status == MN_OK && cancelled) {
         status = mn_fail(MN_ERR_CANCELLED, "Cancelled.");
     }
@@ -1459,6 +1494,7 @@ done:
 MN_API int32_t mn_route_solve(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, int32_t count, int32_t start, int32_t end, const int32_t* before, const int32_t* after, int32_t pair_count, int64_t allowance, const volatile int32_t* cancel, int32_t* order, int64_t* evaluations)
 {
     mn_problem problem;
+    memset(&problem, 0, sizeof(problem));
     problem.grid.g = *grid;
     problem.grid.floor = floor;
     problem.grid.touch = floor;
@@ -1475,6 +1511,7 @@ MN_API int32_t mn_route_solve(const mn_grid* grid, const float* floor, const flo
 MN_API float mn_route_path_cost(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, const int32_t* order, int32_t count)
 {
     mn_problem problem;
+    memset(&problem, 0, sizeof(problem));
     problem.grid.g = *grid;
     problem.grid.floor = floor;
     problem.grid.touch = floor;

@@ -340,7 +340,7 @@ public sealed class SettingsViewModelsTests : IDisposable
     [Fact]
     public void Strategy_CollisionMode_EnablesItsRatioAndValidates()
     {
-        Assert.Equal(new[] { CollisionMode.Recursion, CollisionMode.OneRun, CollisionMode.Backwards }, StrategySelectionViewModel.CollisionModes);
+        Assert.Equal(new[] { CollisionMode.Recursion, CollisionMode.OneRun, CollisionMode.Backwards, CollisionMode.Backwards_GPU }, StrategySelectionViewModel.CollisionModes);
         Assert.Equal(CollisionMode.Recursion, _vm.Strategy.CollisionMode);
         Assert.True(_vm.Strategy.IsRecursion);
         Assert.False(_vm.Strategy.IsOneRun);
@@ -423,9 +423,19 @@ public sealed class SettingsViewModelsTests : IDisposable
         Assert.Contains(string.Create(System.Globalization.CultureInfo.InvariantCulture,
             $"Unreached cells (Backwards): {unreached.Unreached} of {unreached.ModelCells} model cells, {unreached.Percent:0.00} %"), _vm.Strategy.StatisticsText);
 
+        Assert.Contains("\nProcess times (s): ", _vm.Strategy.StatisticsText);
+        Assert.DoesNotContain("GPU:", _vm.Strategy.StatisticsText);
+
         project.CollisionMode = CollisionMode.Recursion;
         _vm.Strategy.ShowResult(new Miller.Application.Services.PipelineService().Run(project, meshes, null, CancellationToken.None));
         Assert.DoesNotContain("Unreached", _vm.Strategy.StatisticsText);
+        if (Miller.Core.Native.GpuDevice.Available)
+        {
+            project.CollisionMode = CollisionMode.Backwards_GPU;
+            _vm.Strategy.ShowResult(new Miller.Application.Services.PipelineService().Run(project, meshes, null, CancellationToken.None));
+            Assert.Contains($"\nGPU: {Miller.Core.Native.GpuDevice.Description}", _vm.Strategy.StatisticsText);
+        }
+
         _vm.Strategy.Clear();
         Assert.Equal(StrategySelectionViewModel.NoToolpathText, _vm.Strategy.StatisticsText);
     }
