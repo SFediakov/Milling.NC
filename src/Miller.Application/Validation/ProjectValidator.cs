@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Numerics;
 using Miller.Core.Geometry;
+using Miller.Core.Native;
 using Miller.Core.HeightMaps;
 using Miller.Core.Setup;
 using Miller.Core.Slicing;
@@ -71,7 +72,7 @@ public static class ProjectValidator
             errors.Add(new ValidationMessage("Parameters.FarStepdown",
                 $"Far stepdown {F(p.FarStepdown)} must be 0 (none) or a whole multiple of the stepdown {F(p.Stepdown)} of at least twice it."));
         }
-        else if (p.Stepdown > 0 && project.CollisionMode == CollisionMode.Backwards && p.FarStepdown + p.Tolerance > tool.CutterLength + Slicer.LevelTolerance)
+        else if (p.Stepdown > 0 && project.CollisionMode is CollisionMode.Backwards or CollisionMode.Backwards_GPU && p.FarStepdown + p.Tolerance > tool.CutterLength + Slicer.LevelTolerance)
         {
             warnings.Add(new ValidationMessage("Parameters.FarStepdown",
                 $"Far stepdown {F(p.FarStepdown)} plus the tolerance {F(p.Tolerance)} exceeds the cutter length {F(tool.CutterLength)}: Backwards cuts the far go only where the head clears the material at the slab top, everything else level by level."));
@@ -137,9 +138,13 @@ public static class ProjectValidator
         {
             errors.Add(new ValidationMessage("Strategy.CollisionMode", $"Unknown collision mode {project.CollisionMode}."));
         }
-        else if (project.CollisionMode == CollisionMode.Backwards && project.RoutingStrategyId != ZLayerByLayerStrategy.StrategyId)
+        else if (project.CollisionMode is CollisionMode.Backwards or CollisionMode.Backwards_GPU && project.RoutingStrategyId != ZLayerByLayerStrategy.StrategyId)
         {
-            errors.Add(new ValidationMessage("Strategy.CollisionMode", "Backwards collision handling works with the Z layer by layer strategy only."));
+            errors.Add(new ValidationMessage("Strategy.CollisionMode", $"{project.CollisionMode} collision handling works with the Z layer by layer strategy only."));
+        }
+        else if (project.CollisionMode == CollisionMode.Backwards_GPU && !GpuDevice.Available)
+        {
+            errors.Add(new ValidationMessage("Strategy.CollisionMode", $"Backwards_GPU needs an OpenCL GPU: {GpuDevice.Description}"));
         }
 
         Finite(errors, "Strategy.RecursionRatio", project.RecursionRatio);

@@ -17,6 +17,9 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
 {
     public const string NoToolpathText = "No toolpath yet.";
 
+    // Process times below this are left out of the statistics.
+    public const double MinShownSeconds = 0.05;
+
     public StrategySelectionViewModel(ProjectService project, IAsyncRelayCommand generate, IRelayCommand cancel)
         : base(project, "Strategy.")
     {
@@ -138,6 +141,11 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
     // Backwards (T-172): the unreached positions against the model cells; null in the other modes.
     public UnreachedCells? Unreached { get; private set; }
 
+    // The process times of the last run (T-176) and the GPU it ran on (Backwards_GPU).
+    public ProcessTimes? Times { get; private set; }
+
+    public string? Gpu { get; private set; }
+
     public string StatisticsText
     {
         get
@@ -166,6 +174,18 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
                 text.Append(string.Create(CultureInfo.InvariantCulture, $"\nUnreached cells (Backwards): {unreached.Unreached} of {unreached.ModelCells} model cells, {unreached.Percent:0.00} %"));
             }
 
+            if (Gpu is not null)
+            {
+                text.Append(string.Create(CultureInfo.InvariantCulture, $"\nGPU: {Gpu}"));
+            }
+
+            if (Times is { } times)
+            {
+                var spent = times.Seconds.Select((s, k) => (Seconds: s, Name: ProcessTimes.Names[k])).Where(t => t.Seconds >= MinShownSeconds)
+                    .Select(t => string.Create(CultureInfo.InvariantCulture, $"{t.Name} {t.Seconds:0.0}"));
+                text.Append("\nProcess times (s): ").Append(string.Join(", ", spent));
+            }
+
             if (Bridges.Wanted > 0)
             {
                 text.Append(string.Create(CultureInfo.InvariantCulture, $"\nBridges: {Bridges.Placed} of {Bridges.Wanted} placed on {Bridges.Parts} freed part(s)"));
@@ -186,6 +206,8 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         CellArea = result.Parameters.CellSize * result.Parameters.CellSize;
         RouteUnits = result.RouteUnitEntries.Count + 1;
         Unreached = result.Unreached;
+        Times = result.Times;
+        Gpu = result.Gpu;
         RaiseStatistics();
     }
 
@@ -199,6 +221,8 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         CellArea = 0;
         RouteUnits = 0;
         Unreached = null;
+        Times = null;
+        Gpu = null;
         RaiseStatistics();
     }
 

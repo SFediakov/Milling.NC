@@ -22,6 +22,7 @@ typedef HANDLE mn_thread;
 #define mn_wake_all(c) WakeAllConditionVariable(c)
 #else
 #include <pthread.h>
+#include <time.h>
 #include <unistd.h>
 typedef pthread_mutex_t mn_mutex;
 typedef pthread_cond_t mn_condition;
@@ -64,6 +65,40 @@ static int worker_limit = 0;
 /* A cap for the stages a worker thread runs itself (T-167: a route unit runs its solver's start walks
  * inline while the other units occupy the processors); 0 for none. */
 static _Thread_local int thread_cap = 0;
+
+static _Thread_local double time_spent[MN_TIME_COUNT];
+
+double mn_seconds(void)
+{
+#if defined(_WIN32)
+    LARGE_INTEGER count;
+    LARGE_INTEGER frequency;
+    QueryPerformanceCounter(&count);
+    QueryPerformanceFrequency(&frequency);
+    return (double)count.QuadPart / (double)frequency.QuadPart;
+#else
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (double)now.tv_sec + (double)now.tv_nsec * 1e-9;
+#endif
+}
+
+void mn_time_add(int which, double seconds)
+{
+    if (which >= 0 && which < MN_TIME_COUNT) {
+        time_spent[which] += seconds;
+    }
+}
+
+void mn_time_take(double* into)
+{
+    for (int k = 0; k < MN_TIME_COUNT; k++) {
+        if (into != NULL) {
+            into[k] += time_spent[k];
+        }
+        time_spent[k] = 0.0;
+    }
+}
 
 MN_API void mn_set_worker_limit(int32_t limit) { worker_limit = limit > 0 ? limit : 0; }
 
@@ -238,6 +273,20 @@ void mn_pool_destroy(mn_pool* pool)
     mn_mutex_destroy(&pool->mutex);
     free(pool);
 }
+
+#if defined(_WIN32)
+static SRWLOCK shared = SRWLOCK_INIT;
+
+void mn_shared_lock(void) { AcquireSRWLockExclusive(&shared); }
+
+void mn_shared_unlock(void) { ReleaseSRWLockExclusive(&shared); }
+#else
+static pthread_mutex_t shared = PTHREAD_MUTEX_INITIALIZER;
+
+void mn_shared_lock(void) { pthread_mutex_lock(&shared); }
+
+void mn_shared_unlock(void) { pthread_mutex_unlock(&shared); }
+#endif
 
 struct mn_task {
     void (*fn)(void* argument);

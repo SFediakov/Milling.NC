@@ -260,6 +260,21 @@ MN_API void mn_writer_free(mn_writer* writer);
 #define MN_COLLISION_RECURSION 0
 #define MN_COLLISION_ONE_RUN 1
 #define MN_COLLISION_BACKWARDS 2
+/* Backwards_GPU (T-174, user request): Backwards with its data-parallel processes on the discrete GPU
+ * (the backward check's sweeps, the intended surface, the route floors, extra start tours of the route
+ * solver); it fails when no OpenCL GPU is found. */
+#define MN_COLLISION_BACKWARDS_GPU 3
+
+/* The OpenCL GPU the Backwards_GPU mode uses: MN_OK and its name, or a status and mn_last_error. */
+MN_API int32_t mn_gpu_device(char* name, int32_t capacity);
+/* The GPU processes on their own, for the comparisons with the CPU (T-177): the closing of a map
+ * (mn_remaining on the GPU), the route floor of one route (the CPU's is mn_route_floor: over uncut stock
+ * the floor rises to `safe` and the touch floor stays above what the tip map keeps; lifted holds both,
+ * 2 * cells) and the start tours of the route solver (orders keep * count, kept their number). */
+MN_API int32_t mn_gpu_remaining(const mn_grid* grid, const float* tip, const mn_offset* offsets, int32_t count, float* remaining);
+MN_API int32_t mn_route_floor(const float* stock, const float* tip, const float* floor, int32_t cells, float safe, float* lifted);
+MN_API int32_t mn_gpu_route_floor(const float* stock, const float* tip, const float* floor, int32_t cells, float safe, float* lifted);
+MN_API int32_t mn_gpu_start_tours(const float* x, const float* y, int32_t count, int32_t start, int32_t end, int32_t tours, int32_t keep, int32_t* orders, int32_t* kept);
 
 #define MN_EVENT_HEAD 0
 #define MN_EVENT_RAPID 1
@@ -451,6 +466,32 @@ MN_API void mn_result_bridges(const mn_result* result, int32_t* parts, int32_t* 
  * and the model cells, both summed over the levels (a cell counts on every level the model stands above),
  * and the sweeps from the lowest level up the check took to settle. */
 MN_API int32_t mn_result_unreached(const mn_result* result, int64_t* unreached, int64_t* model_cells, int32_t* sweeps);
+/* Not cut (T-173): the cells the kept pass's toolpath leaves more than the tolerance above what the
+ * first pass's plan intended (the closing of the deepest level of every position in its masks), the
+ * volume of material above that surface there and the highest of them. */
+MN_API void mn_result_uncut(const mn_result* result, int32_t* cells, double* volume, float* max_height);
+
+/* Process times of the whole generation in seconds (T-176), indexed as below: the wall time of every
+ * stage over all passes, then the parts inside them; the solver parts (candidate lists, start walks,
+ * local search, route floors, writing) are summed over the units, which run on several threads at once.
+ * Returns how many values it wrote (at most `capacity`). */
+#define MN_TIME_INTENDED 10
+#define MN_TIME_BACK_SETTLE 11
+#define MN_TIME_BACK_LEVELS 12
+#define MN_TIME_BACK_FILL 13
+#define MN_TIME_BACK_WAIT 14
+#define MN_TIME_GROUPS 15
+#define MN_TIME_UNITS 16
+#define MN_TIME_CANDIDATES 17
+#define MN_TIME_WALKS 18
+#define MN_TIME_SEARCH 19
+#define MN_TIME_FLOORS 20
+#define MN_TIME_WRITE 21
+#define MN_TIME_GPU_SETUP 22
+#define MN_TIME_GPU_TRANSFER 23
+#define MN_TIME_GPU_TOURS 24
+#define MN_TIME_COUNT 25
+MN_API int32_t mn_result_timings(const mn_result* result, double* seconds, int32_t capacity);
 MN_API int32_t mn_result_collision_count(const mn_result* result);
 MN_API void mn_result_collisions(const mn_result* result, mn_collision* collisions);
 MN_API void mn_result_profile(const mn_result* result, int32_t* offset_count, int32_t* annulus_count);

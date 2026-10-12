@@ -221,8 +221,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             SimulationPanel.OnLoadedChanged();
             Analysis.SetPipeline(result, collisions.Report);
             StatusText = string.Create(CultureInfo.InvariantCulture,
-                $"Toolpath ready: {result.Statistics.SegmentCount} segments, {result.Statistics.EstimatedMinutes:0.0} min, {CollisionService.StatusSuffix(collisions)}");
-            summary = CollisionService.Summarize(collisions);
+                $"Toolpath ready: {result.Statistics.SegmentCount} segments, {result.Statistics.EstimatedMinutes:0.0} min, {CollisionService.StatusSuffix(collisions)}, {UncutReport.StatusSuffix(result)}");
+            summary = CollisionService.Summarize(collisions) + "\n\n" + UncutReport.Summarize(result);
             ToolpathGenerated?.Invoke(this, EventArgs.Empty);
         }
         catch (OperationCanceledException)

@@ -187,6 +187,11 @@ internal static unsafe class CoreNative
     [DllImport(Library)] public static extern void mn_free(void* pointer);
     [DllImport(Library)] public static extern void mn_set_worker_limit(int limit);
     [DllImport(Library)] public static extern int mn_workers();
+    [DllImport(Library)] public static extern int mn_gpu_device(byte* name, int capacity);
+    [DllImport(Library)] public static extern int mn_gpu_remaining(Grid* grid, float* tip, Offset* offsets, int count, float* remaining);
+    [DllImport(Library)] public static extern int mn_route_floor(float* stock, float* tip, float* floor, int cells, float safe, float* lifted);
+    [DllImport(Library)] public static extern int mn_gpu_route_floor(float* stock, float* tip, float* floor, int cells, float safe, float* lifted);
+    [DllImport(Library)] public static extern int mn_gpu_start_tours(float* x, float* y, int count, int start, int end, int tours, int keep, int* orders, int* kept);
 
     [DllImport(Library)] public static extern int mn_sweep(float* stock, Grid* grid, Offset* offsets, int count, float* from, float* to, Dirty* dirty);
     [DllImport(Library)] public static extern int mn_segment_steps(float* start, float* end, float cellSize, float* length);
@@ -282,6 +287,8 @@ internal static unsafe class CoreNative
     [DllImport(Library)] public static extern int mn_far_withdraw(byte* places, int width, int height, float cellSize, float radius, byte* allowed);
     [DllImport(Library)] public static extern void mn_result_bridges(IntPtr result, int* parts, int* wanted, int* placed);
     [DllImport(Library)] public static extern int mn_result_unreached(IntPtr result, long* unreached, long* modelCells, int* sweeps);
+    [DllImport(Library)] public static extern void mn_result_uncut(IntPtr result, int* cells, double* volume, float* maxHeight);
+    [DllImport(Library)] public static extern int mn_result_timings(IntPtr result, double* seconds, int capacity);
     [DllImport(Library)] public static extern int mn_result_collision_count(IntPtr result);
     [DllImport(Library)] public static extern void mn_result_collisions(IntPtr result, Collision* collisions);
     [DllImport(Library)] public static extern void mn_result_profile(IntPtr result, int* offsetCount, int* annulusCount);

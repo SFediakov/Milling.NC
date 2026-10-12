@@ -18,7 +18,7 @@ namespace Miller.Core.Generation;
 // the toolpath (ToolpathLayer); FarStepdown the far positions of the first and the kept pass and those
 // withdrawn around collisions (T-164); RouteUnitEntries where every route unit after the first begins and
 // the one before it ends (T-166); Unreached the counts of the backward check, null unless the collision
-// mode was Backwards (T-172).
+// mode was Backwards (T-172); Uncut the cells the toolpath leaves above what the plan intended (T-173).
 public sealed record GenerationResult(
     Mesh MachineMesh,
     StockGeometry Stock,
@@ -42,7 +42,29 @@ public sealed record GenerationResult(
     IReadOnlyList<ToolpathLayer> Layers,
     FarStepdownAreas FarStepdown,
     IReadOnlyList<Vector3> RouteUnitEntries,
-    UnreachedCells? Unreached);
+    UnreachedCells? Unreached,
+    UncutCells Uncut,
+    ProcessTimes Times);
+
+// The process times of a generation in seconds (T-176, mn_result_timings): the wall time of every stage
+// over all passes, then the parts inside them; the solver parts are summed over route units that run on
+// several threads at once.
+public sealed record ProcessTimes(IReadOnlyList<double> Seconds)
+{
+    public static readonly IReadOnlyList<string> Names = new[]
+    {
+        "transform", "stock", "model map", "reach map", "head clearance", "slice", "route", "simplify", "statistics", "collision check",
+        "intended surface", "backward closings", "backward level tests", "backward batches", "solver waiting for the check", "slab groups",
+        "route units", "solver candidate lists", "solver start walks", "solver local search", "route floors", "route writing",
+        "GPU setup", "GPU transfers", "GPU start tours",
+    };
+}
+
+// Not cut (T-173): the cells whose material after the toolpath (the stock the collision check cuts)
+// stands more than the tolerance above what the first pass's plan intended (the closing of the deepest
+// level of every position in its masks), their area, the volume of material above that surface and the
+// highest of them.
+public readonly record struct UncutCells(int Cells, double AreaMm2, double VolumeMm3, float MaxHeight);
 
 // The backward check of the kept pass (T-172): the positions it left unreached and the model cells, both
 // summed over the levels (a cell counts on every level its model stands above), and the sweeps from the
@@ -318,6 +340,25 @@ public static class ToolpathGeneration
 
         int parts, wanted, placed;
         CoreNative.mn_result_bridges(result, &parts, &wanted, &placed);
+        int uncutCells;
+        double uncutVolume;
+        float uncutHeight;
+        CoreNative.mn_result_uncut(result, &uncutCells, &uncutVolume, &uncutHeight);
+        var uncut = new UncutCells(uncutCells, uncutCells * (double)grid.CellSize * grid.CellSize, uncutVolume, uncutHeight);
+        var timings = new double[ProcessTimes.Names.Count + 1];
+        int written;
+        fixed (double* t = timings)
+        {
+            written = CoreNative.mn_result_timings(result, t, timings.Length);
+        }
+
+        if (written != ProcessTimes.Names.Count)
+        {
+            throw new InvalidOperationException($"The native library reports {written} process times, the names list {ProcessTimes.Names.Count}.");
+        }
+
+        Array.Resize(ref timings, written);
+
         long unreachedCount, modelCells;
         int sweeps;
         UnreachedCells? unreached = CoreNative.mn_result_unreached(result, &unreachedCount, &modelCells, &sweeps) != 0 ? new UnreachedCells(unreachedCount, modelCells, sweeps) : null;
@@ -354,6 +395,8 @@ public static class ToolpathGeneration
             layers,
             farStepdown,
             entries,
-            unreached);
+            unreached,
+            uncut,
+            new ProcessTimes(timings));
     }
 }
