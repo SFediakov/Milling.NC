@@ -23,7 +23,9 @@ public static class ProjectValidator
     // The head bottom may be up to 50 percent narrower than the cutter (T-165, a necked tool).
     public const float MinHeadBottomRatio = 0.5f;
 
-    public static ValidationResult Validate(MillingProject project, BoundingBox? modelBoundsMachine)
+    // modelBoundsInStock: the placed models relative to the stock's minimum corner
+    // (ModelLayout.ModelBoundsInStock), or null to skip the containment test.
+    public static ValidationResult Validate(MillingProject project, BoundingBox? modelBoundsInStock)
     {
         ArgumentNullException.ThrowIfNull(project);
         var errors = new List<ValidationMessage>();
@@ -182,20 +184,21 @@ public static class ProjectValidator
             }
         }
 
-        if (modelBoundsMachine is { IsEmpty: false } model && !StockContains(project, model))
+        if (modelBoundsInStock is { IsEmpty: false } model && !StockContains(project, model))
         {
             warnings.Add(new ValidationMessage("Stock.Placement",
-                $"Model bounds {model.Min} to {model.Max} are not inside the stock."));
+                $"Model bounds {model.Min} to {model.Max} from the stock corner are not inside the stock."));
         }
 
         return new ValidationResult(errors, warnings);
     }
 
-    // Model bounds in machine space against the stock box in machine space (ModelLayout.StockBoundsMachine).
+    // Model bounds relative to the stock's minimum corner (ModelLayout.ModelBoundsInStock) against the
+    // stock box from that corner, so the test holds wherever machine zero is.
     private static bool StockContains(MillingProject project, BoundingBox model)
     {
         var stock = project.Stock;
-        var box = ModelLayout.StockBoundsMachine(project);
+        var box = new BoundingBox(Vector3.Zero, AxisSetup.StockBoundingSize(stock));
         if (!box.Contains(model))
         {
             return false;

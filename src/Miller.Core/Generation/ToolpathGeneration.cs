@@ -120,7 +120,8 @@ public static class ToolpathGeneration
             throw new ArgumentException($"Stock size must be positive, got {size}.", nameof(project));
         }
 
-        var corner = AxisSetup.StockCorner(anchor, project.Stock);
+        var stockBounds = ModelLayout.StockBoundsMachine(project, bounds);
+        var corner = stockBounds.Min;
         var triangles = new float[Math.Max(meshes.Sum(m => m.TriangleCount) * 9, 1)];
         var n = 0;
         foreach (var mesh in meshes)
@@ -184,7 +185,7 @@ public static class ToolpathGeneration
         GC.KeepAlive(callback);
         try
         {
-            return Read(result, project, new BoundingBox(corner, corner + size));
+            return Read(result, project, stockBounds);
         }
         finally
         {

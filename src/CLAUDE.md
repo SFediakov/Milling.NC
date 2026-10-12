@@ -276,7 +276,10 @@
   it used to follow the union of the placed models, which made every offset of a lone model a
   no-op (the stock moved along) and turned alignment into a fixed-point iteration. Every consumer
   of the stock box (pipeline, viewport outline, validator) must read it from ModelLayout
-  (AnchorBoundsMachine, StockBoundsMachine), never recompute it from model bounds.
+  (AnchorBoundsMachine, StockBoundsMachine), never recompute it from model bounds. Since T-179 machine
+  zero can sit on the models or at a global point, so the stock box in machine space needs the models:
+  `StockBoundsMachine(project, modelBounds)`; the overload without models holds for the stock modes only
+  and throws otherwise, and the validator takes the models from the stock corner (`ModelBoundsInStock`).
 - Legacy project files: a nullable StlPath is read for migration and ignored when null on write, so
   the serializer's unknown-member rule still holds; the schema version is rewritten to 2 on load.
 - The end-to-end golden is read from the test output folder, which is refreshed by a build of the

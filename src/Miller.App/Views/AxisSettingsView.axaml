@@ -34,7 +34,7 @@
       <ComboBox Name="OriginModeBox" ItemsSource="{Binding OriginModes}" SelectedItem="{Binding OriginMode}" Width="220" HorizontalAlignment="Left" />
 
       <StackPanel Name="CustomFields" IsVisible="{Binding IsCustom}" Spacing="4">
-        <TextBlock Classes="label" Text="Custom zero relative to the stock corner (mm)" />
+        <TextBlock Name="OffsetLabel" Classes="label" Text="{Binding OffsetLabel}" TextWrapping="Wrap" />
         <StackPanel Orientation="Horizontal" Spacing="4">
           <c:NumericBox Name="OffsetXBox" Classes="numeric" Value="{Binding OffsetX}" />
           <c:NumericBox Name="OffsetYBox" Classes="numeric" Value="{Binding OffsetY}" />
@@ -44,6 +44,9 @@
 
       <TextBlock Classes="header" Text="Model in machine space" />
       <TextBlock Name="MachineBoundsText" Text="{Binding MachineBoundsText}" TextWrapping="Wrap" />
+
+      <TextBlock Classes="header" Text="Stock in machine space" />
+      <TextBlock Name="StockBoundsText" Text="{Binding StockBoundsText}" TextWrapping="Wrap" />
     </StackPanel>
   </ScrollViewer>
 </UserControl>

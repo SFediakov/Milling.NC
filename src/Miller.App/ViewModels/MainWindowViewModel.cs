@@ -377,7 +377,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             Viewport.SetMeshes(meshes.Select((mesh, k) => mesh.Transform(matrices[k])).ToList());
         }
 
-        Viewport.SetStock(ModelLayout.StockBoundsMachine(Project.Current), stock);
+        Viewport.SetStock(ModelLayout.StockBoundsMachine(Project.Current, MeshImport.Bounds), stock);
     }
 
     private bool SameScene(IReadOnlyList<Mesh> meshes, IReadOnlyList<Matrix4x4> matrices)
