@@ -215,9 +215,20 @@ below the tip map by more than `Tolerance`.
 - `AxisSetup` produces one `Matrix4x4` = rotation(Z) x rotation(Y) x rotation(X)
   x axis permutation with signs x translation to the origin mode. It is applied
   once to the mesh. Everything downstream works in machine coordinates.
-- Origin modes: `StockCornerMinXYMinZ` (0,0,0 at stock bottom corner),
-  `StockCornerMinXYTopZ` (0,0,0 at stock top corner, Z negative downward),
-  `StockCenterTopZ` (common for hobby routers), `Custom` (offset vector).
+- Origin modes (machine zero, the origin of the G-code coordinates):
+  - on the stock, moving with it: `StockCornerMinXYMinZ` (0,0,0 at stock bottom
+    corner), `StockCornerMinXYTopZ` (0,0,0 at stock top corner, Z negative
+    downward), `StockCenterTopZ` (common for hobby routers), `Custom` (offset
+    vector from the stock corner);
+  - on the box around the placed models (offsets included), moving with them
+    (T-179): `ModelCornerMinXYMinZ`, `ModelCornerMinXYTopZ`, `ModelCenterTopZ`,
+    `ModelCustom` (offset vector from the models' corner);
+  - `Global` (T-179): a fixed point, the offset vector in the global frame (the
+    model coordinates after the axis mapping, the STL origin at 0). Model
+    offsets move the models and the explicit stock corner moves the stock
+    against it.
+  The viewport draws machine space, its axes at zero: the reference of the
+  mode stays in place and the rest moves.
 
 ### 6.2 Tool model
 
@@ -815,7 +826,7 @@ M30
 | `Backwards_GPU` only with an OpenCL GPU (`GpuDevice.Available`) | Strategy.CollisionMode |
 | `RecursionRatio`, `OneRunRatio` finite and `>= 0` | Strategy.RecursionRatio, Strategy.OneRunRatio |
 | Stock dimensions > 0 | Stock.* |
-| Model bounds inside the stock box in machine space (`ModelLayout.StockBoundsMachine`; warning, not error) | Stock.Placement |
+| Model bounds inside the stock box, both from the stock corner in the global frame (`ModelLayout.ModelBoundsInStock`, independent of the origin mode; warning, not error) | Stock.Placement |
 | Grid size `Width * Height <= 4_000_000` cells | Parameters.CellSize |
 
 ### 6.8 Machine connection (Grbl)
@@ -2341,6 +2352,22 @@ check that decides done.
 - Input: user request (the time of every GPU process against the one measured for Backwards)
 - Output: the comparison below, the same build, one after the other, 0.025 mm cells
 - Acceptance: closings 1.88 s against 0.09 s, level tests 2.54 s against 0.96 s, intended surface 0.62 s against 0.26 s, route floors 103.9 s against 84.2 s (85.5 s of PCIe transfers), route units 146.9 s against 136.3 s, start tours 16.7 s more on the GPU for 147.7 estimated minutes against 154.1; total 254.8 s against 242.0 s; zero events and the same unreached count in both; not ported: slab groups (sequential labelling and greedy gap cover over the whole grid per cave), local search (every move depends on the one before), candidate lists (need the floor of every route on the GPU, the transfer of the route floors), collision check (sequential over the path), slice and reach map (data parallel, 9 s together)
+- Status: done
+
+#### T-179 Machine zero on the stock, the models or a global point
+- Depends on: T-018
+- Files: `src/Miller.Core/Setup/AxisSetup.cs`, `src/Miller.Core/Setup/ModelLayout.cs`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, `tests/Miller.Tests/Core/Setup/MachineZeroTests.cs`
+- Input: user request (the G-code coordinates were held on the stock corner and moved with it; the reference must be selectable: the model, the stock as before, or an independent global point against which the model and the stock both move)
+- Output: the origin modes of section 6.1 (`AxisSetup.MachineZero`, `ModelLayout.MachineZero`, `StockBoundsMachine(project, modelBounds)` as the one stock box of the pipeline, the viewport and the axes panel, `ModelBoundsInStock` for the validator)
+- Acceptance: the stock modes give the matrices and the stock corner of the formula before bit for bit; each model mode puts its point of the placed models' box at 0 and follows an offset; Global keeps the STL origin at minus the point while an offset moves only the model and the explicit stock corner only the stock; the pipeline cuts the layout's stock box; Global at the stock corner gives the stock corner's toolpath segment for segment and a shifted point shifts it; the containment warning is the same in all nine modes; the new modes round-trip by name
+- Status: done
+
+#### T-180 Axes panel and viewport for the machine zero
+- Depends on: T-179
+- Files: `src/Miller.App/ViewModels/AxisSettingsViewModel.cs`, `src/Miller.App/Views/AxisSettingsView.axaml`, `src/Miller.App/ViewModels/StockSettingsViewModel.cs`, `src/Miller.App/ViewModels/SettingsViewModelBase.cs`, `src/Miller.App/ViewModels/MainWindowViewModel.cs`, `tests/Miller.Tests/App/MachineZeroViewTests.cs`
+- Input: user request (as T-179)
+- Output: the machine zero list with nine modes, the offset label naming the reference (`OffsetLabel`), the stock box in machine space (`StockBoundsText`), the viewport stock outline from the layout
+- Acceptance: on the stock a corner edit moves the model and the outline stays; at a global point it moves the outline and an offset moves only the model; the panel shows the outlined box
 - Status: done
 
 #### T-165 Head bottom down to half the cutter diameter

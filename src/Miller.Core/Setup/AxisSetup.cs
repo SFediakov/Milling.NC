@@ -10,16 +10,26 @@ public enum ModelAxis
     Z,
 }
 
+// Machine zero, the origin of the G-code coordinates: a point of the stock box (it moves with the
+// stock), a point of the box around the placed models (it moves with the models), or a fixed point of
+// the global frame, the model coordinates after the axis mapping (stock and models move against it).
+// Custom, ModelCustom and Global take CustomOffset from the stock corner, the models' corner and the
+// global origin. The first four keep their names and meaning from before the model and global modes.
 public enum OriginMode
 {
     StockCornerMinXYMinZ,
     StockCornerMinXYTopZ,
     StockCenterTopZ,
     Custom,
+    ModelCornerMinXYMinZ,
+    ModelCornerMinXYTopZ,
+    ModelCenterTopZ,
+    ModelCustom,
+    Global,
 }
 
 // One transform from model to machine coordinates: axis permutation with signs, then rotation
-// about X, Y, Z, then the translation that puts the origin-mode point of the stock at (0, 0, 0).
+// about X, Y, Z, then the translation that puts machine zero (OriginMode) at (0, 0, 0).
 // The stock position relative to the model is the same rule StockModel applies later to the
 // machine-space bounds, so both agree by construction.
 public sealed class AxisSetup
@@ -46,7 +56,8 @@ public sealed class AxisSetup
 
     public OriginMode OriginMode { get; set; } = OriginMode.StockCornerMinXYMinZ;
 
-    // Machine zero relative to the stock's minimum corner; used only with OriginMode.Custom.
+    // Machine zero relative to the stock's minimum corner (Custom), the placed models' minimum corner
+    // (ModelCustom) or the global origin (Global); the other modes ignore it.
     public Vector3 CustomOffset { get; set; } = Vector3.Zero;
 
     public static AxisSetup Default() => new();
@@ -78,8 +89,29 @@ public sealed class AxisSetup
         ArgumentNullException.ThrowIfNull(stock);
         var orientation = ToOrientationMatrix();
         var oriented = TransformBounds(modelBounds, orientation);
-        var machineZero = StockCorner(oriented, stock) + OriginOffset(stock);
-        return orientation * Matrix4x4.CreateTranslation(-machineZero);
+        return orientation * Matrix4x4.CreateTranslation(-MachineZero(oriented, oriented, stock));
+    }
+
+    public bool IsOnStock => OriginMode is OriginMode.StockCornerMinXYMinZ or OriginMode.StockCornerMinXYTopZ or OriginMode.StockCenterTopZ or OriginMode.Custom;
+
+    public bool IsOnModels => OriginMode is OriginMode.ModelCornerMinXYMinZ or OriginMode.ModelCornerMinXYTopZ or OriginMode.ModelCenterTopZ or OriginMode.ModelCustom;
+
+    // Machine zero in the global frame: the stock corner around the anchor (the models before their
+    // offsets) plus the origin offset, the named point of the placed models' box, or CustomOffset.
+    public Vector3 MachineZero(BoundingBox anchorBounds, BoundingBox placedBounds, StockDefinition stock)
+    {
+        ArgumentNullException.ThrowIfNull(stock);
+        if (IsOnStock)
+        {
+            return StockCorner(anchorBounds, stock) + OriginOffset(stock);
+        }
+
+        if (IsOnModels)
+        {
+            return placedBounds.Min + BoxPoint(placedBounds.Size);
+        }
+
+        return OriginMode == OriginMode.Global ? CustomOffset : throw new ArgumentException($"Unknown origin mode {OriginMode}.");
     }
 
     // Size of the stock's axis-aligned bounding box.
@@ -109,19 +141,19 @@ public sealed class AxisSetup
         _ => throw new ArgumentException($"Unknown stock alignment {alignment}.", nameof(alignment)),
     };
 
-    // Machine zero relative to the stock's minimum corner.
+    // Machine zero relative to the stock's minimum corner, for the modes on the stock.
     public Vector3 OriginOffset(StockDefinition stock)
+        => IsOnStock ? BoxPoint(StockBoundingSize(stock)) : throw new InvalidOperationException($"Origin mode {OriginMode} is not on the stock.");
+
+    // The mode's point of a box of the given size, relative to the box's minimum corner.
+    private Vector3 BoxPoint(Vector3 size) => OriginMode switch
     {
-        var size = StockBoundingSize(stock);
-        return OriginMode switch
-        {
-            OriginMode.StockCornerMinXYMinZ => Vector3.Zero,
-            OriginMode.StockCornerMinXYTopZ => new Vector3(0, 0, size.Z),
-            OriginMode.StockCenterTopZ => new Vector3(size.X / 2, size.Y / 2, size.Z),
-            OriginMode.Custom => CustomOffset,
-            _ => throw new ArgumentException($"Unknown origin mode {OriginMode}."),
-        };
-    }
+        OriginMode.StockCornerMinXYMinZ or OriginMode.ModelCornerMinXYMinZ => Vector3.Zero,
+        OriginMode.StockCornerMinXYTopZ or OriginMode.ModelCornerMinXYTopZ => new Vector3(0, 0, size.Z),
+        OriginMode.StockCenterTopZ or OriginMode.ModelCenterTopZ => new Vector3(size.X / 2, size.Y / 2, size.Z),
+        OriginMode.Custom or OriginMode.ModelCustom => CustomOffset,
+        _ => throw new ArgumentException($"Origin mode {OriginMode} is not a point of a box."),
+    };
 
     public static BoundingBox TransformBounds(BoundingBox bounds, Matrix4x4 matrix)
     {

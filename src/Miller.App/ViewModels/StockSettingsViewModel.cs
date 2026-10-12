@@ -117,14 +117,14 @@ public sealed partial class StockSettingsViewModel : SettingsViewModelBase
         OnReload();
     }
 
-    protected override BoundingBox? ModelBoundsForValidation()
+    protected override BoundingBox? ModelBoundsInStockForValidation()
     {
         if (!_meshImport.Matches(Current) || !Current.Axes.IsPermutation)
         {
             return null;
         }
 
-        return ModelLayout.MachineBounds(Current, _meshImport.Bounds);
+        return ModelLayout.ModelBoundsInStock(Current, _meshImport.Bounds);
     }
 
     protected override void OnReload()
