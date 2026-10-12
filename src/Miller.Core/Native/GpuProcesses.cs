@@ -3,8 +3,8 @@ using Miller.Core.HeightMaps;
 namespace Miller.Core.Native;
 
 // The processes Backwards_GPU runs on the GPU (T-177), callable on their own so that each can be held
-// against its CPU counterpart: the closing (HeightMapDilation.ComputeRemaining on the CPU), the route
-// floor of one route (RouteFloor on the CPU) and the start tours of the route solver.
+// against its CPU counterpart: the closing (HeightMapDilation.ComputeRemaining on the CPU) and the start
+// tours of the route solver.
 public static class GpuProcesses
 {
     public static unsafe HeightMap Remaining(HeightMap tip, ToolProfile profile)
@@ -21,32 +21,6 @@ public static class GpuProcesses
         }
 
         return remaining;
-    }
-
-    // Over uncut stock (the floor not below the stock) the route floor rises to `safe` and the touch floor
-    // stays above what the tip map keeps; the result holds the route floor, then the touch floor.
-    public static unsafe float[] RouteFloor(float[] stock, float[] tip, float[] floor, float safe)
-    {
-        Check(stock, tip, floor);
-        var lifted = new float[2 * floor.Length];
-        fixed (float* s = stock, t = tip, f = floor, l = lifted)
-        {
-            CoreNative.Check(CoreNative.mn_route_floor(s, t, f, floor.Length, safe, l));
-        }
-
-        return lifted;
-    }
-
-    public static unsafe float[] GpuRouteFloor(float[] stock, float[] tip, float[] floor, float safe)
-    {
-        Check(stock, tip, floor);
-        var lifted = new float[2 * floor.Length];
-        fixed (float* s = stock, t = tip, f = floor, l = lifted)
-        {
-            CoreNative.Check(CoreNative.mn_gpu_route_floor(s, t, f, floor.Length, safe, l));
-        }
-
-        return lifted;
     }
 
     // The `keep` shortest of `tours` nearest-neighbour tours from `start` (the fixed `end` last, -1 for
@@ -70,16 +44,5 @@ public static class GpuProcesses
         }
 
         return Enumerable.Range(0, kept).Select(t => orders.AsSpan(t * n, n).ToArray()).ToArray();
-    }
-
-    private static void Check(float[] stock, float[] tip, float[] floor)
-    {
-        ArgumentNullException.ThrowIfNull(stock);
-        ArgumentNullException.ThrowIfNull(tip);
-        ArgumentNullException.ThrowIfNull(floor);
-        if (stock.Length != floor.Length || tip.Length != floor.Length)
-        {
-            throw new ArgumentException($"Stock {stock.Length}, tip {tip.Length} and floor {floor.Length} cells must match.", nameof(floor));
-        }
     }
 }

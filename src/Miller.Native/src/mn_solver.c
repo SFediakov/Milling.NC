@@ -1247,9 +1247,16 @@ static int local_search(const mn_problem* problem, const mn_candidates* candidat
 #define MN_START_WALKS 4
 
 /* Backwards_GPU (T-177): the tours one route builds on the GPU and the shortest of them the solver
- * prices exactly beside its own start walks. */
+ * prices exactly beside its own start walks. The routes they serve (T-186, measured on the user's heart
+ * at 0.025 mm cells): below MN_GPU_TOURS_MIN_NODES nodes no tour was ever shorter than the walks (5,546 of
+ * 6,354 routes, none better); from MN_GPU_TOURS_MAX_NODES on a tour costs n steps over n nodes, the 54
+ * routes there took 78 percent of the GPU's tour work and 4 s of the generation for 1.3 of the 6.4
+ * minutes of machining the tours save. Between them the tours run while the processor builds its own
+ * walks and cost about 0.2 s for 5.1 minutes. */
 #define MN_GPU_TOURS 64
 #define MN_GPU_TOURS_KEPT 4
+#define MN_GPU_TOURS_MIN_NODES 16
+#define MN_GPU_TOURS_MAX_NODES 5000
 
 typedef struct walk_job {
     const mn_problem* problem;
@@ -1330,6 +1337,7 @@ int mn_solve(const mn_problem* problem, int start, int end, int64_t allowance, c
     mn_candidates candidates = { 0 };
     mn_order ordering;
     int ordering_ready = 0;
+    mn_gpu_tours_job* tour_job = NULL;
     int* smooth = (int*)mn_alloc((size_t)n, sizeof(int));
     if (smooth == NULL) {
         return mn_fail(MN_ERR_MEMORY, "Out of memory for a route of %d nodes.", n);
@@ -1375,6 +1383,16 @@ int mn_solve(const mn_problem* problem, int start, int end, int64_t allowance, c
         free(queue);
         if (tail < n) {
             status = mn_fail(MN_ERR_ARGUMENT, "The precedence pairs are cyclic.");
+            goto done;
+        }
+    }
+    if (problem->gpu_tours && n >= MN_GPU_TOURS_MIN_NODES && n < MN_GPU_TOURS_MAX_NODES) {
+        if (problem->pair_count > 0) {
+            status = mn_fail(MN_ERR_ARGUMENT, "GPU start tours take no precedence pairs.");
+            goto done;
+        }
+        status = mn_gpu_tours_begin(problem->x, problem->y, n, start, end, MN_GPU_TOURS, &tour_job);
+        if (status != MN_OK) {
             goto done;
         }
     }
@@ -1450,14 +1468,15 @@ int mn_solve(const mn_problem* problem, int start, int end, int64_t allowance, c
         }
     }
     mn_time_add(MN_TIME_WALKS, mn_seconds() - started);
-    if (problem->gpu_tours) {
-        if (problem->pair_count > 0) {
-            status = mn_fail(MN_ERR_ARGUMENT, "GPU start tours take no precedence pairs.");
-            goto done;
-        }
+    if (tour_job != NULL) {
         int* tours = (int*)mn_alloc((size_t)MN_GPU_TOURS_KEPT * (size_t)n, sizeof(int));
         int kept = 0;
-        status = tours == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the GPU tours.") : mn_gpu_tours(problem->x, problem->y, n, start, end, MN_GPU_TOURS, MN_GPU_TOURS_KEPT, tours, &kept);
+        if (tours == NULL) {
+            status = mn_fail(MN_ERR_MEMORY, "Out of memory for the GPU tours.");
+        } else {
+            status = mn_gpu_tours_end(tour_job, MN_GPU_TOURS_KEPT, tours, &kept);
+            tour_job = NULL;
+        }
         if (status == MN_OK && kept > 0) {
             float best = mn_path_cost(problem, order, n);
             for (int t = 0; t < kept; t++) {
@@ -1483,6 +1502,7 @@ int mn_solve(const mn_problem* problem, int start, int end, int64_t allowance, c
     }
 
 done:
+    mn_gpu_tours_cancel(tour_job);
     if (ordering_ready) {
         order_free(&ordering);
     }

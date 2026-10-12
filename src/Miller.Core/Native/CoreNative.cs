@@ -119,6 +119,7 @@ internal static unsafe class CoreNative
         public float* Raised;
         public byte* FarAllowed;
         public byte* FarArea;
+        public IntPtr Gpu;
     }
 
     // mn_collision: one collision per segment and kind of the native check.
@@ -189,8 +190,6 @@ internal static unsafe class CoreNative
     [DllImport(Library)] public static extern int mn_workers();
     [DllImport(Library)] public static extern int mn_gpu_device(byte* name, int capacity);
     [DllImport(Library)] public static extern int mn_gpu_remaining(Grid* grid, float* tip, Offset* offsets, int count, float* remaining);
-    [DllImport(Library)] public static extern int mn_route_floor(float* stock, float* tip, float* floor, int cells, float safe, float* lifted);
-    [DllImport(Library)] public static extern int mn_gpu_route_floor(float* stock, float* tip, float* floor, int cells, float safe, float* lifted);
     [DllImport(Library)] public static extern int mn_gpu_start_tours(float* x, float* y, int count, int start, int end, int tours, int keep, int* orders, int* kept);
 
     [DllImport(Library)] public static extern int mn_sweep(float* stock, Grid* grid, Offset* offsets, int count, float* from, float* to, Dirty* dirty);

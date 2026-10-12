@@ -11,9 +11,9 @@
  * Rows of a block run in parallel; a row writes its own cells and only stores true into the marks of
  * the running round, so the split does not change the result. */
 
-#define MN_ROUNDS 3
+#define MN_ROUNDS MN_REACH_ROUNDS
 #define MN_ROWS_PER_BLOCK 16
-#define MN_MAX_PERCENT 100.0f
+#define MN_MAX_PERCENT MN_REACH_MAX_PERCENT
 #define MN_RANK_SLACK 1e-9
 
 MN_API double mn_reach_round_percent(float percent, int32_t round)
@@ -29,6 +29,19 @@ MN_API double mn_reach_round_percent(float percent, int32_t round)
 }
 
 static int needed(int n, double percent) { return mn_d2i(ceil((double)n * percent / 100.0 - MN_RANK_SLACK)); }
+
+int mn_reach_needed(int n, double percent) { return needed(n, percent); }
+
+int mn_reach_check(float percent, float tolerance)
+{
+    if (!(percent > 0.0f && percent <= MN_MAX_PERCENT)) {
+        return mn_fail(MN_ERR_OUT_OF_RANGE, "Reach percent must lie in (0, 100].");
+    }
+    if (!(tolerance >= 0.0f)) {
+        return mn_fail(MN_ERR_OUT_OF_RANGE, "Tolerance must be zero or positive.");
+    }
+    return MN_OK;
+}
 
 MN_API int32_t mn_reach_rank(int32_t n, float percent) { return mn_clampi(needed(n, (double)percent) - 1, 0, n - 1); }
 
@@ -231,12 +244,7 @@ static void reach_row(void* context, int j, void* scratch_pointer)
 
 int mn_reach_compute(const mn_grid* g, const float* model, const float* stock, const mn_offset* offsets, int count, float floor, float percent, float tolerance, const mn_monitor* monitor, float* reach)
 {
-    if (!(percent > 0.0f && percent <= MN_MAX_PERCENT)) {
-        return mn_fail(MN_ERR_OUT_OF_RANGE, "Reach percent must lie in (0, 100].");
-    }
-    if (!(tolerance >= 0.0f)) {
-        return mn_fail(MN_ERR_OUT_OF_RANGE, "Tolerance must be zero or positive.");
-    }
+    MN_CHECK(mn_reach_check(percent, tolerance));
 
     int cells = mn_cells(g);
     int width = g->width;

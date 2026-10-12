@@ -1,3 +1,4 @@
+#include "mn_gpu.h"
 #include "mn_internal.h"
 #include "mn_thread.h"
 
@@ -168,8 +169,10 @@ static void transform_triangle(void* context, int t, void* scratch)
     memcpy(target + 6, third, sizeof(a));
 }
 
-/* Transform, stock, model map and reach map: the part of the generation every pass shares. */
-static int prepare(const mn_job* job, stage_monitor* stage, const volatile int32_t* cancel, mn_result* r)
+/* Transform, stock, model map and reach map: the part of the generation every pass shares. In
+ * Backwards_GPU the generation's GPU session opens with the reach map (T-183): the profile and the stock
+ * go up once and stay. */
+static int prepare(const mn_job* job, stage_monitor* stage, const volatile int32_t* cancel, mn_result* r, mn_gpu_session** gpu)
 {
     const mn_parameters* p = &job->parameters;
     mn_monitor monitor;
@@ -225,7 +228,12 @@ static int prepare(const mn_job* job, stage_monitor* stage, const volatile int32
     begin(stage, MN_STAGE_REACH);
     MN_CHECK(mn_profile_build(&job->tool, p->cell_size, &r->profile));
     MN_CHECK(mn_map_create(&r->tip, g, NAN));
-    MN_CHECK(mn_reach_compute(g, r->model.z, r->stock.z, r->profile.offsets, r->profile.offset_count, r->floor, job->reach_percent, p->tolerance, &monitor, r->tip.z));
+    if (job->collision_mode == MN_COLLISION_BACKWARDS_GPU) {
+        MN_CHECK(mn_gpu_session_open(g, &r->profile, gpu));
+        MN_CHECK(mn_gpu_reach(*gpu, r->model.z, r->stock.z, r->floor, job->reach_percent, p->tolerance, &monitor, r->tip.z));
+    } else {
+        MN_CHECK(mn_reach_compute(g, r->model.z, r->stock.z, r->profile.offsets, r->profile.offset_count, r->floor, job->reach_percent, p->tolerance, &monitor, r->tip.z));
+    }
     MN_STOP_IF_CANCELLED();
     return MN_OK;
 }
@@ -240,7 +248,7 @@ static int far_withdrawal_on(const mn_job* job) { return job->strategy == MN_STR
  * `intended` (T-173) is filled from the first pass's plan, before any collision handling lifts a
  * position, and every pass's final stock is compared with it. */
 static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int32_t* cancel, const mn_result* r, const float* raised, const uint8_t* far_allowed, uint8_t* status, mn_hits* hits,
-    float* intended, int* intended_ready, mn_pass* pass)
+    float* intended, int* intended_ready, mn_gpu_session* gpu, mn_pass* pass)
 {
     const mn_parameters* p = &job->parameters;
     const mn_grid* g = &r->grid;
@@ -284,8 +292,25 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
         int island_count = 0;
         /* The region and its obstacles follow the raised tip, as they followed the head-limited tip
          * before: the trench lies beyond the collar the head keeps beside a tall part. */
-        status_code = mn_separation_build(pass->plan, pass->effective.z, r->stock.z, &job->tool, p->tolerance, r->stock_top, r->floor, job->min_island_volume, pass->standing.z,
-            &island_cells, &island_offsets, &island_volumes, &island_count);
+        if (gpu != NULL) {
+            /* The levels on the GPU, the finish (islands) here: the separation's masks come down once. */
+            uint8_t* masks = (uint8_t*)mn_alloc((size_t)pass->plan->count * (size_t)cells, 1);
+            uint8_t* model_region = (uint8_t*)mn_alloc((size_t)cells, 1);
+            float* deepest = (float*)mn_alloc((size_t)cells, sizeof(float));
+            status_code = masks == NULL || model_region == NULL || deepest == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the separation region.")
+                                                                                   : mn_gpu_separation_levels(gpu, pass->plan, pass->effective.z, &job->tool, p->tolerance, r->stock_top, r->floor,
+                                                                                         masks, model_region, deepest);
+            if (status_code == MN_OK) {
+                status_code = mn_separation_finish(pass->plan, masks, pass->effective.z, r->stock.z, model_region, deepest, p->tolerance, job->min_island_volume, pass->standing.z,
+                    &island_cells, &island_offsets, &island_volumes, &island_count);
+            }
+            free(masks);
+            free(model_region);
+            free(deepest);
+        } else {
+            status_code = mn_separation_build(pass->plan, pass->effective.z, r->stock.z, &job->tool, p->tolerance, r->stock_top, r->floor, job->min_island_volume, pass->standing.z,
+                &island_cells, &island_offsets, &island_volumes, &island_count);
+        }
         mn_ints_free(&island_cells);
         mn_ints_free(&island_offsets);
         free(island_volumes);
@@ -314,11 +339,19 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
         free(should_cut);
         return mn_fail(MN_ERR_CANCELLED, "Cancelled.");
     }
+    /* The masks as the route stage reads them, for the intended surface and the backward check. */
+    if (gpu != NULL) {
+        status_code = mn_gpu_masks(gpu, pass->plan);
+        if (status_code != MN_OK) {
+            free(should_cut);
+            return status_code;
+        }
+    }
     if (!*intended_ready) {
         double started = mn_seconds();
         float* deepest = (float*)mn_alloc((size_t)cells, sizeof(float));
         status_code = deepest == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the intended surface.")
-                                      : mn_intended_compute(pass->plan, &r->profile, job->collision_mode == MN_COLLISION_BACKWARDS_GPU, deepest, intended);
+                                      : mn_intended_compute(pass->plan, &r->profile, gpu, deepest, intended);
         free(deepest);
         if (status_code != MN_OK) {
             free(should_cut);
@@ -348,6 +381,7 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
     context.raised = job->collision_mode == MN_COLLISION_ONE_RUN ? pass->limit.z : NULL;
     context.far_allowed = far_allowed;
     context.far_area = NULL;
+    context.gpu = gpu;
     if (far_withdrawal_on(job)) {
         pass->far_area = (uint8_t*)mn_alloc((size_t)cells, 1);
         pass->far_allowed = far_allowed != NULL ? (uint8_t*)mn_alloc((size_t)cells, 1) : NULL;
@@ -404,7 +438,8 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
     mn_map closing = { 0 };
     if (hits != NULL) {
         MN_CHECK(mn_map_create(&closing, g, NAN));
-        status_code = mn_remaining_compute(g, pass->strategy_tip.z, r->profile.offsets, r->profile.offset_count, closing.z);
+        status_code = gpu != NULL ? mn_gpu_closing_of(gpu, pass->strategy_tip.z, closing.z)
+                                  : mn_remaining_compute(g, pass->strategy_tip.z, r->profile.offsets, r->profile.offset_count, closing.z);
         if (status_code != MN_OK) {
             mn_map_free(&closing);
             return status_code;
@@ -465,7 +500,12 @@ static int generate(const mn_job* job, stage_monitor* stage, const volatile int3
         return mn_fail(MN_ERR_ARGUMENT, "The bridge width and height must be finite and greater than 0.");
     }
     stage->pass = 1;
-    MN_CHECK(prepare(job, stage, cancel, r));
+    mn_gpu_session* gpu = NULL;
+    int prepared = prepare(job, stage, cancel, r, &gpu);
+    if (prepared != MN_OK) {
+        mn_gpu_session_close(gpu);
+        return prepared;
+    }
 
     const mn_grid* g = &r->grid;
     int cells = mn_cells(g);
@@ -511,7 +551,7 @@ static int generate(const mn_job* job, stage_monitor* stage, const volatile int3
         }
         hits.entered = 0;
         hits.unremovable = 0;
-        result = run_pass(job, stage, cancel, r, raised, far_allowed, status, &hits, intended, &intended_ready, &pass);
+        result = run_pass(job, stage, cancel, r, raised, far_allowed, status, &hits, intended, &intended_ready, gpu, &pass);
         if (result != MN_OK) {
             pass_free(&pass);
             goto done;
@@ -575,6 +615,7 @@ static int generate(const mn_job* job, stage_monitor* stage, const volatile int3
     }
 
 done:
+    mn_gpu_session_close(gpu);
     if (hits_ready) {
         mn_hits_free(&hits);
     }

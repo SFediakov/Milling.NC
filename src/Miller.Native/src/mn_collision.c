@@ -7,7 +7,13 @@
  * at every segment end and every max(CellSize, cutter radius) along it, the footprint of a rapid at
  * the same spacing. A cell already cut below the tool surface is no collision; the same cell uncut
  * is one. Every entered cell gets COLLISION; the resolution turns entered stock into SHOULD_REMOVE
- * and forbids positions whose head met the model or stock that cannot be removed. */
+ * and forbids positions whose head met the model or stock that cannot be removed.
+ *
+ * The walk runs in batches of segments on the workers (T-187), with the same result as one walk: every
+ * worker walks the whole batch in order over its own grid rows (every `bands`-th row), so each cell
+ * meets the same removals and tests in the same order as in one walk. A batch in which no worker finds
+ * a hit has recorded nothing and is done; a batch with a hit gets its stock back and runs as one walk,
+ * which records the hits in their order. */
 
 int mn_collisions_push(mn_collisions* list, mn_collision item)
 {
@@ -73,12 +79,48 @@ void mn_model_bits(const float* model, int cells, float floor, uint8_t* status)
 
 /* ---- the walk ---- */
 
+/* The offsets of a profile list grouped by row: the profile lists them row by row (dy ascending), so
+ * the offsets of row dy are first[dy - min_dy] .. first[dy - min_dy + 1] - 1. */
+typedef struct mn_offset_rows {
+    int min_dy;
+    int max_dy;
+    int* first;
+} mn_offset_rows;
+
+static int offset_rows_build(const mn_offset* offsets, int count, mn_offset_rows* rows)
+{
+    rows->min_dy = count > 0 ? offsets[0].dy : 0;
+    rows->max_dy = count > 0 ? offsets[count - 1].dy : -1;
+    int span = rows->max_dy - rows->min_dy + 1;
+    rows->first = (int*)mn_alloc((size_t)(span > 0 ? span : 0) + 1, sizeof(int));
+    if (rows->first == NULL) {
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for the collision check.");
+    }
+    int o = 0;
+    for (int r = 0; r <= span; r++) {
+        while (o < count && offsets[o].dy < rows->min_dy + r) {
+            o++;
+        }
+        rows->first[r] = o;
+    }
+    for (int k = 1; k < count; k++) {
+        if (offsets[k].dy < offsets[k - 1].dy) {
+            free(rows->first);
+            rows->first = NULL;
+            return mn_fail(MN_ERR_STATE, "The tool profile is not listed row by row.");
+        }
+    }
+    return MN_OK;
+}
+
 typedef struct mn_walk_state {
     const mn_grid* g;
     float* stock;
     const float* model;
     float floor;
     const mn_profile* profile;
+    const mn_offset_rows* offset_rows;
+    const mn_offset_rows* annulus_rows;
     float cutter_length;
     float tolerance;
     uint8_t* status;
@@ -87,6 +129,11 @@ typedef struct mn_walk_state {
     int segment;
     int event_of_kind[2]; /* index into events for the current segment, -1 for none */
     int status_code;
+    /* A band (T-187): the walk stamps and tests the grid rows j with j % bands == band only, and only
+     * finds whether a cell is hit, recording nothing; one band of one is the whole walk. */
+    int band;
+    int bands;
+    int probed;
 } mn_walk_state;
 
 static void record_hit(mn_walk_state* w, int kind, mn_v3 tip, int position, int c, float standing, float surface)
@@ -140,6 +187,17 @@ static void record_hit(mn_walk_state* w, int kind, mn_v3 tip, int position, int 
     }
 }
 
+/* The first offset row of the walker's band for a tool axis in grid row cj; the rows follow every
+ * `bands`-th. */
+static int band_first_row(const mn_walk_state* w, const mn_offset_rows* rows, int cj)
+{
+    if (w->bands <= 1) {
+        return rows->min_dy;
+    }
+    int residue = ((cj + rows->min_dy) % w->bands + w->bands) % w->bands;
+    return rows->min_dy + (w->band - residue + w->bands) % w->bands;
+}
+
 /* One tool position: a rapid's footprint against the stock, then the head ring; the position is
  * the cell of the tool axis, -1 outside the grid. */
 static void check_position(mn_walk_state* w, mn_v3 tip, int rapid)
@@ -149,33 +207,48 @@ static void check_position(mn_walk_state* w, mn_v3 tip, int rapid)
     int cj = mn_cell_j(g, tip.y);
     int position = mn_in_bounds(g, ci, cj) ? cj * g->width + ci : -1;
     const mn_profile* p = w->profile;
+    int step = w->bands > 1 ? w->bands : 1;
     if (rapid) {
-        for (int o = 0; o < p->offset_count; o++) {
-            int i = ci + p->offsets[o].dx;
-            int j = cj + p->offsets[o].dy;
+        const mn_offset_rows* rows = w->offset_rows;
+        for (int dy = band_first_row(w, rows, cj); dy <= rows->max_dy; dy += step) {
+            for (int o = rows->first[dy - rows->min_dy]; o < rows->first[dy - rows->min_dy + 1]; o++) {
+                int i = ci + p->offsets[o].dx;
+                int j = cj + p->offsets[o].dy;
+                if (!mn_in_bounds(g, i, j)) {
+                    continue;
+                }
+                int c = j * g->width + i;
+                float z = w->stock[c];
+                float surface = tip.z + p->offsets[o].dz;
+                if (z > surface + w->tolerance) {
+                    if (w->bands > 1) {
+                        w->probed = 1;
+                        return;
+                    }
+                    record_hit(w, MN_EVENT_RAPID, tip, position, c, z, surface);
+                }
+            }
+        }
+    }
+    float head_bottom = tip.z + w->cutter_length;
+    const mn_offset_rows* rows = w->annulus_rows;
+    for (int dy = band_first_row(w, rows, cj); dy <= rows->max_dy; dy += step) {
+        for (int o = rows->first[dy - rows->min_dy]; o < rows->first[dy - rows->min_dy + 1]; o++) {
+            int i = ci + p->annulus[o].dx;
+            int j = cj + p->annulus[o].dy;
             if (!mn_in_bounds(g, i, j)) {
                 continue;
             }
             int c = j * g->width + i;
             float z = w->stock[c];
-            float surface = tip.z + p->offsets[o].dz;
-            if (z > surface + w->tolerance) {
-                record_hit(w, MN_EVENT_RAPID, tip, position, c, z, surface);
+            float underside = head_bottom + p->annulus[o].dz;
+            if (z > underside + w->tolerance) {
+                if (w->bands > 1) {
+                    w->probed = 1;
+                    return;
+                }
+                record_hit(w, MN_EVENT_HEAD, tip, position, c, z, underside);
             }
-        }
-    }
-    float head_bottom = tip.z + w->cutter_length;
-    for (int o = 0; o < p->annulus_count; o++) {
-        int i = ci + p->annulus[o].dx;
-        int j = cj + p->annulus[o].dy;
-        if (!mn_in_bounds(g, i, j)) {
-            continue;
-        }
-        int c = j * g->width + i;
-        float z = w->stock[c];
-        float underside = head_bottom + p->annulus[o].dz;
-        if (z > underside + w->tolerance) {
-            record_hit(w, MN_EVENT_HEAD, tip, position, c, z, underside);
         }
     }
 }
@@ -186,17 +259,21 @@ static void stamp(mn_walk_state* w, mn_v3 tip)
     int ci = mn_cell_i(g, tip.x);
     int cj = mn_cell_j(g, tip.y);
     const mn_profile* p = w->profile;
-    for (int o = 0; o < p->offset_count; o++) {
-        int i = ci + p->offsets[o].dx;
-        int j = cj + p->offsets[o].dy;
-        if (!mn_in_bounds(g, i, j)) {
-            continue;
-        }
-        int c = j * g->width + i;
-        float current = w->stock[c];
-        float cut = tip.z + p->offsets[o].dz;
-        if (!mn_isnan(current) && cut < current) {
-            w->stock[c] = cut;
+    const mn_offset_rows* rows = w->offset_rows;
+    int step = w->bands > 1 ? w->bands : 1;
+    for (int dy = band_first_row(w, rows, cj); dy <= rows->max_dy; dy += step) {
+        for (int o = rows->first[dy - rows->min_dy]; o < rows->first[dy - rows->min_dy + 1]; o++) {
+            int i = ci + p->offsets[o].dx;
+            int j = cj + p->offsets[o].dy;
+            if (!mn_in_bounds(g, i, j)) {
+                continue;
+            }
+            int c = j * g->width + i;
+            float current = w->stock[c];
+            float cut = tip.z + p->offsets[o].dz;
+            if (!mn_isnan(current) && cut < current) {
+                w->stock[c] = cut;
+            }
         }
     }
 }
@@ -207,6 +284,102 @@ static mn_v3 point_at(mn_v3 start, mn_v3 end, float length, float distance)
         return start;
     }
     return mn_v3_lerp(start, end, mn_clamp(distance / length, 0.0f, 1.0f));
+}
+
+/* One segment: a rapid's footprint and head at its ends and every head spacing between, a feed's
+ * removal at every half cell with the head at its end and every head spacing. */
+static void walk_segment(mn_walk_state* w, const mn_segment* s, int k, float sweep, float head_spacing)
+{
+    mn_v3 start = mn_v3_make(s->start_x, s->start_y, s->start_z);
+    mn_v3 end = mn_v3_make(s->end_x, s->end_y, s->end_z);
+    float length = mn_v3_distance(start, end);
+    w->segment = k;
+    w->event_of_kind[0] = -1;
+    w->event_of_kind[1] = -1;
+    if (s->kind == MN_MOVE_RAPID) {
+        check_position(w, start, 1);
+        for (float d = head_spacing; d < length && !w->probed; d += head_spacing) {
+            check_position(w, point_at(start, end, length, d), 1);
+        }
+        check_position(w, end, 1);
+        return;
+    }
+    int steps = length > 0 ? mn_f2i(ceilf(length / sweep)) : 0;
+    float since_head = 0.0f;
+    for (int n = 0; n <= steps && !w->probed; n++) {
+        float t = steps == 0 ? 0.0f : (float)n / (float)steps;
+        mn_v3 tip = mn_v3_lerp(start, end, t);
+        stamp(w, tip);
+        since_head += steps == 0 ? 0.0f : length / (float)steps;
+        if (n == steps || since_head >= head_spacing) {
+            check_position(w, tip, 0);
+            since_head = 0.0f;
+        }
+    }
+}
+
+/* The samples a segment takes, for the batch size. */
+static int64_t segment_work(const mn_segment* s, float sweep, float head_spacing)
+{
+    float length = mn_v3_distance(mn_v3_make(s->start_x, s->start_y, s->start_z), mn_v3_make(s->end_x, s->end_y, s->end_z));
+    float spacing = s->kind == MN_MOVE_RAPID ? head_spacing : sweep;
+    return 2 + (length > 0 ? (int64_t)(length / spacing) : 0);
+}
+
+/* The samples of one batch: many joins cost little, and a batch with a hit runs as one walk. */
+#define MN_CHECK_BATCH_SAMPLES 65536
+
+typedef struct check_job {
+    const mn_walk_state* walk;
+    const mn_segment* segments;
+    int first;
+    int last;
+    float sweep;
+    float head_spacing;
+    int bands;
+    float* backup;
+    int saving;
+    /* The rows the batch's removals can reach: only those are saved. */
+    int row_first;
+    int row_last;
+    uint8_t* flags;
+} check_job;
+
+/* Saves (or puts back) one share of the stock rows the batch can reach. */
+static void backup_row(void* context, int row, void* scratch)
+{
+    (void)scratch;
+    const check_job* job = (const check_job*)context;
+    const mn_grid* g = job->walk->g;
+    int span = job->row_last - job->row_first + 1;
+    int rows = (span + job->bands - 1) / job->bands;
+    int j0 = job->row_first + row * rows;
+    int j1 = mn_mini(j0 + rows, job->row_last + 1);
+    if (j1 <= j0) {
+        return;
+    }
+    size_t at = (size_t)j0 * (size_t)g->width;
+    size_t bytes = (size_t)(j1 - j0) * (size_t)g->width * sizeof(float);
+    if (job->saving) {
+        memcpy(job->backup + at, job->walk->stock + at, bytes);
+    } else {
+        memcpy(job->walk->stock + at, job->backup + at, bytes);
+    }
+}
+
+/* The walk of one band over the batch. */
+static void band_row(void* context, int row, void* scratch)
+{
+    (void)scratch;
+    const check_job* job = (const check_job*)context;
+    mn_walk_state w = *job->walk;
+    w.band = row;
+    w.bands = job->bands;
+    w.probed = 0;
+    for (int k = job->first; k < job->last && !w.probed; k++) {
+        walk_segment(&w, &job->segments[k], k, job->sweep, job->head_spacing);
+    }
+    job->flags[row] = (uint8_t)w.probed;
 }
 
 int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const float* stock, const float* model, float floor, const mn_profile* profile, float cutter_radius,
@@ -221,6 +394,12 @@ int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const
     for (int k = 0; k < cells; k++) {
         status[k] &= (uint8_t)~MN_CELL_COLLISION;
     }
+    mn_offset_rows offset_rows = { 0, -1, NULL };
+    mn_offset_rows annulus_rows = { 0, -1, NULL };
+    int code = offset_rows_build(profile->offsets, profile->offset_count, &offset_rows);
+    if (code == MN_OK) {
+        code = offset_rows_build(profile->annulus, profile->annulus_count, &annulus_rows);
+    }
     mn_walk_state w;
     memset(&w, 0, sizeof(w));
     w.g = g;
@@ -228,56 +407,94 @@ int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const
     w.model = model;
     w.floor = floor;
     w.profile = profile;
+    w.offset_rows = &offset_rows;
+    w.annulus_rows = &annulus_rows;
     w.cutter_length = cutter_length;
     w.tolerance = tolerance;
     w.status = status;
     w.hits = hits;
     w.events = events;
     w.status_code = MN_OK;
+    w.bands = 1;
 
     float sweep = g->cell_size / 2.0f;
     /* RapidSampleSpacing: at least once per cutter radius, never coarser than a cell. */
     float head_spacing = mn_max(g->cell_size, cutter_radius);
-
-    for (int k = 0; k < count && w.status_code == MN_OK; k++) {
-        if ((k & 255) == 0 && mn_cancelled(monitor)) {
-            free(clone);
-            return mn_fail(MN_ERR_CANCELLED, "Cancelled.");
-        }
-        const mn_segment* s = &segments[k];
-        mn_v3 start = mn_v3_make(s->start_x, s->start_y, s->start_z);
-        mn_v3 end = mn_v3_make(s->end_x, s->end_y, s->end_z);
-        float length = mn_v3_distance(start, end);
-        w.segment = k;
-        w.event_of_kind[0] = -1;
-        w.event_of_kind[1] = -1;
-        if (s->kind == MN_MOVE_RAPID) {
-            check_position(&w, start, 1);
-            for (float d = head_spacing; d < length; d += head_spacing) {
-                check_position(&w, point_at(start, end, length, d), 1);
-            }
-            check_position(&w, end, 1);
-            continue;
-        }
-        int steps = length > 0 ? mn_f2i(ceilf(length / sweep)) : 0;
-        float since_head = 0.0f;
-        for (int n = 0; n <= steps; n++) {
-            float t = steps == 0 ? 0.0f : (float)n / (float)steps;
-            mn_v3 tip = mn_v3_lerp(start, end, t);
-            stamp(&w, tip);
-            since_head += steps == 0 ? 0.0f : length / (float)steps;
-            if (n == steps || since_head >= head_spacing) {
-                check_position(&w, tip, 0);
-                since_head = 0.0f;
-            }
-        }
-        mn_report(monitor, k + 1, count, (float)(k + 1) / (float)count);
+    int workers = mn_mini(mn_worker_count(), g->height);
+    mn_pool* pool = NULL;
+    uint8_t flags[MN_MAX_WORKERS];
+    float* backup = workers > 1 ? (float*)mn_alloc((size_t)(cells > 0 ? cells : 1), sizeof(float)) : NULL;
+    if (code == MN_OK && workers > 1) {
+        code = backup == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the collision check.") : mn_pool_create(workers, NULL, &pool);
     }
-    if (final_stock != NULL) {
+    check_job job;
+    job.walk = &w;
+    job.segments = segments;
+    job.sweep = sweep;
+    job.head_spacing = head_spacing;
+    job.bands = workers;
+    job.backup = backup;
+    job.flags = flags;
+
+    double probing = 0.0;
+    double walking = 0.0;
+    for (int first = 0; first < count && code == MN_OK && w.status_code == MN_OK;) {
+        if (mn_cancelled(monitor)) {
+            code = mn_fail(MN_ERR_CANCELLED, "Cancelled.");
+            break;
+        }
+        int last = first;
+        int64_t work = 0;
+        while (last < count && (last == first || work < MN_CHECK_BATCH_SAMPLES)) {
+            work += segment_work(&segments[last], sweep, head_spacing);
+            last++;
+        }
+        int hit = 1;
+        if (pool != NULL) {
+            double started = mn_seconds();
+            job.first = first;
+            job.last = last;
+            job.saving = 1;
+            /* The rows of the batch's points, grown by the footprint's rows. */
+            float low = INFINITY;
+            float high = -INFINITY;
+            for (int k = first; k < last; k++) {
+                low = mn_min(low, mn_min(segments[k].start_y, segments[k].end_y));
+                high = mn_max(high, mn_max(segments[k].start_y, segments[k].end_y));
+            }
+            job.row_first = mn_clampi(mn_cell_j(g, low) - mn_maxi(-offset_rows.min_dy, offset_rows.max_dy) - 1, 0, g->height - 1);
+            job.row_last = mn_clampi(mn_cell_j(g, high) + mn_maxi(-offset_rows.min_dy, offset_rows.max_dy) + 1, 0, g->height - 1);
+            mn_pool_run(pool, 0, workers, backup_row, &job);
+            mn_pool_run(pool, 0, workers, band_row, &job);
+            hit = 0;
+            for (int b = 0; b < workers; b++) {
+                hit |= flags[b];
+            }
+            if (hit) {
+                job.saving = 0;
+                mn_pool_run(pool, 0, workers, backup_row, &job);
+            }
+            probing += mn_seconds() - started;
+        }
+        double started = mn_seconds();
+        for (int k = first; hit && k < last && w.status_code == MN_OK; k++) {
+            walk_segment(&w, &segments[k], k, sweep, head_spacing);
+        }
+        walking += mn_seconds() - started;
+        mn_report(monitor, last, count, (float)last / (float)count);
+        first = last;
+    }
+    mn_time_add(MN_TIME_CHECK_BANDS, probing);
+    mn_time_add(MN_TIME_CHECK_WALK, walking);
+    mn_pool_destroy(pool);
+    free(backup);
+    free(offset_rows.first);
+    free(annulus_rows.first);
+    if (code == MN_OK && final_stock != NULL) {
         memcpy(final_stock, clone, (size_t)cells * sizeof(float));
     }
     free(clone);
-    return w.status_code;
+    return code != MN_OK ? code : w.status_code;
 }
 
 typedef struct intended_job {
@@ -304,11 +521,14 @@ static void deepest_level_row(void* context, int j, void* scratch)
     }
 }
 
-int mn_intended_compute(const mn_plan* plan, const mn_profile* profile, int gpu, float* deepest, float* intended)
+int mn_intended_compute(const mn_plan* plan, const mn_profile* profile, struct mn_gpu_session* gpu, float* deepest, float* intended)
 {
+    if (gpu != NULL) {
+        return mn_gpu_intended(gpu, plan, intended);
+    }
     intended_job job = { plan, deepest };
     MN_CHECK(mn_rows_parallel(plan->grid.height, deepest_level_row, &job, NULL, mn_worker_count()));
-    return gpu ? mn_gpu_closing(&plan->grid, deepest, profile, intended) : mn_remaining_compute(&plan->grid, deepest, profile->offsets, profile->offset_count, intended);
+    return mn_remaining_compute(&plan->grid, deepest, profile->offsets, profile->offset_count, intended);
 }
 
 void mn_uncut_of(const mn_grid* g, const float* final_stock, const float* intended, float tolerance, mn_uncut* uncut)

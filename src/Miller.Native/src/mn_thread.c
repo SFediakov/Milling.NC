@@ -149,6 +149,86 @@ int mn_rows_parallel(int rows, mn_row_fn fn, void* context, void** scratch, int 
     return MN_OK;
 }
 
+struct mn_gate {
+    mn_mutex mutex;
+};
+
+int mn_gate_create(mn_gate** result)
+{
+    mn_gate* gate = (mn_gate*)mn_alloc(1, sizeof(mn_gate));
+    if (gate == NULL) {
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for a lock.");
+    }
+    mn_mutex_init(&gate->mutex);
+    *result = gate;
+    return MN_OK;
+}
+
+void mn_gate_enter(mn_gate* gate) { mn_lock(&gate->mutex); }
+
+void mn_gate_leave(mn_gate* gate) { mn_unlock(&gate->mutex); }
+
+void mn_gate_destroy(mn_gate* gate)
+{
+    if (gate == NULL) {
+        return;
+    }
+    mn_mutex_destroy(&gate->mutex);
+    free(gate);
+}
+
+typedef struct dynamic_job {
+    mn_row_fn fn;
+    void* context;
+    int rows;
+    int next;
+    mn_mutex mutex;
+} dynamic_job;
+
+/* One worker of mn_rows_dynamic: rows from the shared counter until none is left. */
+static void dynamic_worker(void* context, int worker, void* scratch)
+{
+    (void)worker;
+    dynamic_job* job = (dynamic_job*)context;
+    for (;;) {
+        mn_lock(&job->mutex);
+        int row = job->next++;
+        mn_unlock(&job->mutex);
+        if (row >= job->rows) {
+            return;
+        }
+        job->fn(job->context, row, scratch);
+    }
+}
+
+int mn_rows_dynamic(int rows, mn_row_fn fn, void* context, void** scratch, int workers)
+{
+    if (rows <= 0) {
+        return MN_OK;
+    }
+    workers = workers < rows ? workers : rows;
+    if (workers <= 1) {
+        for (int row = 0; row < rows; row++) {
+            fn(context, row, scratch != NULL ? scratch[0] : NULL);
+        }
+        return MN_OK;
+    }
+    dynamic_job job;
+    job.fn = fn;
+    job.context = context;
+    job.rows = rows;
+    job.next = 0;
+    mn_mutex_init(&job.mutex);
+    mn_pool* pool;
+    int status = mn_pool_create(workers, scratch, &pool);
+    if (status == MN_OK) {
+        mn_pool_run(pool, 0, workers, dynamic_worker, &job);
+        mn_pool_destroy(pool);
+    }
+    mn_mutex_destroy(&job.mutex);
+    return status;
+}
+
 static void run_rows(mn_pool* pool, int index)
 {
     for (int row = pool->first + index; row < pool->last; row += pool->workers) {

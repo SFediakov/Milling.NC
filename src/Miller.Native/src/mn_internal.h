@@ -45,6 +45,12 @@ int mn_make_stock(float corner_x, float corner_y, float size_x, float size_y, fl
 
 int mn_tip_map_compute(const mn_grid* g, const float* model, const mn_offset* offsets, int count, float* tip);
 int mn_remaining_compute(const mn_grid* g, const float* tip, const mn_offset* offsets, int count, float* remaining);
+/* The reach map's vote (mn_reach.c), shared with its GPU port: the rounds, the percent at which a
+ * round takes the highest top, the arguments' check and the tops a vote of n needs. */
+#define MN_REACH_ROUNDS 3
+#define MN_REACH_MAX_PERCENT 100.0f
+int mn_reach_check(float percent, float tolerance);
+int mn_reach_needed(int n, double percent);
 int mn_reach_compute(const mn_grid* g, const float* model, const float* stock, const mn_offset* offsets, int count, float floor, float percent, float tolerance, const mn_monitor* monitor, float* reach);
 int mn_head_limit_compute(const mn_grid* g, const float* remaining, const mn_offset* annulus, int count, float cutter_length, float* limit);
 void mn_apply_limit(const float* tip, const float* limit, int cells, float* effective);
@@ -72,6 +78,14 @@ int mn_levels_list(float stock_top, float lowest, float stepdown, float** levels
 int mn_slice_build(const mn_grid* g, const float* effective_tip, const float* stock, float stepdown, mn_plan** plan);
 static inline int mn_reachable_at_level(float reach_floor, float level) { return !mn_isnan(reach_floor) && reach_floor <= level + MN_LEVEL_TOLERANCE; }
 int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* stock, const mn_tool* tool, float tolerance, float stock_top, float floor, float min_island_volume, float* standing, mn_ints* island_cells, mn_ints* island_offsets, float** island_volumes, int* island_count);
+/* The two halves of mn_separation_build (T-184, so the GPU can take the first): the levels from the
+ * bottom up write the separation's masks into `masks` (count * cells), the model region and the
+ * deepest region level of every cell; the finish turns them into the standing map, the coverage and
+ * the islands, puts the plan's own masks back over islands below the volume to keep, and moves `masks`
+ * into the plan. */
+int mn_separation_levels(const mn_plan* plan, const float* effective_tip, const mn_tool* tool, float tolerance, float stock_top, float floor, uint8_t* masks, uint8_t* model_region, float* deepest);
+int mn_separation_finish(mn_plan* plan, uint8_t* masks, const float* effective_tip, const float* stock, const uint8_t* model_region, const float* deepest, float tolerance, float min_island_volume,
+    float* standing, mn_ints* island_cells, mn_ints* island_offsets, float** island_volumes, int* island_count);
 int mn_islands(const mn_grid* g, const float* standing, const float* effective_tip, const float* stock, float tolerance, mn_ints* cells, mn_ints* offsets, float** volumes, int* count);
 int mn_components(const uint8_t* mask, int width, int height, int* labels, mn_ints* cells, mn_ints* offsets);
 /* Whether a cell of the list borders the grid edge or a cell without stock (8-neighbourhood). */
@@ -81,7 +95,45 @@ int mn_within_radius(const uint8_t* marked, int width, int height, float cell_si
 /* ---- routing ---- */
 
 int mn_lattice_step(float spacing, float cell_size);
+
+/* A rectangle of cells, columns i0..i1 and rows j0..j1 inclusive; empty when i0 > i1 or j0 > j1
+ * (T-185: the cells one cave or one route touches, so its work does not scan the whole grid). */
+typedef struct mn_box {
+    int i0;
+    int j0;
+    int i1;
+    int j1;
+} mn_box;
+
+static inline mn_box mn_box_grid(const mn_grid* g) { mn_box box = { 0, 0, g->width - 1, g->height - 1 }; return box; }
+static inline mn_box mn_box_empty(void) { mn_box box = { 0, 0, -1, -1 }; return box; }
+static inline void mn_box_include(mn_box* box, int i, int j)
+{
+    if (box->i0 > box->i1 || box->j0 > box->j1) {
+        box->i0 = box->i1 = i;
+        box->j0 = box->j1 = j;
+        return;
+    }
+    box->i0 = mn_mini(box->i0, i);
+    box->i1 = mn_maxi(box->i1, i);
+    box->j0 = mn_mini(box->j0, j);
+    box->j1 = mn_maxi(box->j1, j);
+}
+/* The box grown by `margin` cells on every side and cut to the grid. */
+static inline mn_box mn_box_grow(mn_box box, int margin, const mn_grid* g)
+{
+    if (box.i0 > box.i1 || box.j0 > box.j1) {
+        return box;
+    }
+    mn_box grown = { mn_maxi(0, box.i0 - margin), mn_maxi(0, box.j0 - margin), mn_mini(g->width - 1, box.i1 + margin), mn_mini(g->height - 1, box.j1 + margin) };
+    return grown;
+}
+mn_box mn_box_of_cells(const mn_grid* g, const int* cells, int count);
+
 int mn_lattice(const uint8_t* inside, int width, int height, int step, mn_ints* nodes);
+/* mn_lattice over the cells of `box` only: the same nodes in the same order when every cell of the
+ * region lies in the box and `inside` is zero around it. */
+int mn_lattice_in(const uint8_t* inside, int width, int height, int step, mn_box box, mn_ints* nodes);
 int mn_outline(const uint8_t* inside, int width, int height, int i, int j);
 
 /* `floor` is what a move through a cell stays above, `touch` what a point on a cell's edge or corner
@@ -261,8 +313,8 @@ typedef struct mn_uncut {
 } mn_uncut;
 
 /* What the plan intends to leave: the closing of the deepest level of every position in its masks
- * (NaN where no position covers a cell). */
-int mn_intended_compute(const mn_plan* plan, const mn_profile* profile, int gpu, float* deepest, float* intended);
+ * (NaN where no position covers a cell); with a GPU session from the masks it holds. */
+int mn_intended_compute(const mn_plan* plan, const mn_profile* profile, struct mn_gpu_session* gpu, float* deepest, float* intended);
 void mn_uncut_of(const mn_grid* g, const float* final_stock, const float* intended, float tolerance, mn_uncut* uncut);
 
 /* Resolution of one check (recursion mode): entered removable stock becomes SHOULD_REMOVE without
@@ -321,8 +373,8 @@ typedef struct mn_backwards_batch {
 typedef struct mn_backwards mn_backwards;
 
 /* Starts the check on a thread of its own with `workers` workers; the batches come from the lowest.
- * With `gpu` the sweeps run on the GPU (mn_gpu_backward_settle). */
-int mn_backwards_start(const mn_context* context, int group_size, int workers, int gpu, const volatile int32_t* cancel, mn_backwards** check);
+ * With the context's GPU session the sweeps run on the GPU (mn_gpu_backward_settle). */
+int mn_backwards_start(const mn_context* context, int group_size, int workers, const volatile int32_t* cancel, mn_backwards** check);
 int mn_backwards_batch_count(const mn_backwards* check);
 /* Per position the deepest level index the check settled on (-1 for none); valid once a batch is taken. */
 const int* mn_backwards_deepest(const mn_backwards* check);

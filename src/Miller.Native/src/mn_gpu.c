@@ -45,6 +45,9 @@ typedef struct _cl_event* cl_event;
 #define CL_FP_CORRECTLY_ROUNDED_DIVIDE_SQRT ((cl_bitfield)1 << 7)
 #define CL_PROGRAM_BUILD_LOG 0x1183
 #define CL_MEM_READ_WRITE ((cl_bitfield)1 << 0)
+#define CL_MEM_READ_ONLY ((cl_bitfield)1 << 2)
+#define CL_MEM_COPY_HOST_PTR ((cl_bitfield)1 << 5)
+#define CL_FALSE 0
 
 typedef cl_int(CL_CALL* pfn_get_platforms)(cl_uint, cl_platform_id*, cl_uint*);
 typedef cl_int(CL_CALL* pfn_get_devices)(cl_platform_id, cl_device_type, cl_uint, cl_device_id*, cl_uint*);
@@ -61,14 +64,24 @@ typedef cl_int(CL_CALL* pfn_enqueue_kernel)(cl_command_queue, cl_kernel, cl_uint
 typedef cl_int(CL_CALL* pfn_enqueue_write)(cl_command_queue, cl_mem, cl_bool, size_t, size_t, const void*, cl_uint, const cl_event*, cl_event*);
 typedef cl_int(CL_CALL* pfn_enqueue_read)(cl_command_queue, cl_mem, cl_bool, size_t, size_t, void*, cl_uint, const cl_event*, cl_event*);
 typedef cl_int(CL_CALL* pfn_enqueue_fill)(cl_command_queue, cl_mem, const void*, size_t, size_t, size_t, cl_uint, const cl_event*, cl_event*);
+typedef cl_int(CL_CALL* pfn_enqueue_copy)(cl_command_queue, cl_mem, cl_mem, size_t, size_t, size_t, cl_uint, const cl_event*, cl_event*);
 typedef cl_int(CL_CALL* pfn_finish)(cl_command_queue);
+typedef cl_int(CL_CALL* pfn_flush)(cl_command_queue);
 typedef cl_int(CL_CALL* pfn_release_mem)(cl_mem);
+typedef cl_int(CL_CALL* pfn_wait_events)(cl_uint, const cl_event*);
+typedef cl_int(CL_CALL* pfn_release_event)(cl_event);
 
 /* ---- kernels ---- */
 
 /* The CPU loops they port: remaining_row (mn_maps.c), start_row, height_row, source_row and verdict_row
- * (mn_backwards.c), lift_uncut (mn_strategies.c), mn_head_radius_at and mn_meet_radius_at (mn_profile.c),
- * mn_min and mn_max (mn_core.h); the same float operations in the same order. The power-distance
+ * (mn_backwards.c), reach_row (mn_reach.c), the level loop of mn_separation_levels and mn_obstacles,
+ * mn_model_region (mn_slicing.c), deepest_level_row (mn_collision.c), mn_head_radius_at and
+ * mn_meet_radius_at (mn_profile.c), mn_min and mn_max (mn_core.h); the same float operations in the same
+ * order. The reach map's vote picks the lowest top at which it passes by bisection over the ordered bits
+ * of the tops (the vote only grows with the value, so the first passing top is the one the CPU's
+ * selection returns); the distance tests of the separation take the squared distance to the nearest
+ * marked cell within the radius by two windowed minima of whole squares, exact in floats, which is what
+ * the CPU's distance transform gives there. The power-distance
  * envelope of the check (mn_lower_envelope on the CPU, a sequential scan per line) is two windowed minima
  * here, one per cell: a verdict only asks whether the envelope reaches 0, a value at or below 0 comes from
  * a disk within the widest radius of the level, and within that window both take the same terms
@@ -195,78 +208,233 @@ static const char* kernel_source =
     "    if (!masks[(size_t)k * (size_t)cells + (size_t)c]) { return; }\n"
     "    if (sources[l] == 0 || field[gid] > 0.0f) { atomic_max(&next[c], k); }\n"
     "}\n"
-    "kernel void lift(global const float* route, global const float* stock, global const float* tip, int cells, float safe, global float* lifted)\n"
+    "uint ordered(float f) { uint k = as_uint(f); return (k & 0x80000000u) != 0u ? ~k : (k | 0x80000000u); }\n"
+    "float unordered(uint k) { return as_float((k & 0x80000000u) != 0u ? (k & 0x7fffffffu) : ~k); }\n"
+    "kernel void reach_values(global const float* model, global const float* stock, int cells, float floor, global float* value)\n"
     "{\n"
     "    int c = get_global_id(0);\n"
     "    if (c >= cells) { return; }\n"
-    "    float f = route[c];\n"
-    "    float s = stock[c];\n"
-    "    if (isnan(s) || isnan(f) || f < s - 1e-4f) { lifted[c] = f; lifted[cells + c] = f; return; }\n"
-    "    float remains = tip[c];\n"
-    "    lifted[c] = net_max(f, safe);\n"
-    "    lifted[cells + c] = !isnan(remains) && remains >= s - 1e-4f ? net_max(remains, safe) : remains;\n"
+    "    float top = model[c];\n"
+    "    value[c] = isnan(stock[c]) ? NAN : isnan(top) ? floor : top;\n"
+    "}\n"
+    "kernel void reach_round(global const float* value, global const uchar* reached, global uchar* reached_next, global float* reach, int width, int height,\n"
+    "    global const int* odx, global const int* ody, global const float* odz, int count, global const int* needed, int full, int last, float floor, float tolerance)\n"
+    "{\n"
+    "    int c = get_global_id(0);\n"
+    "    if (c >= width * height) { return; }\n"
+    "    int i = c % width;\n"
+    "    int j = c / width;\n"
+    "    int n = 0;\n"
+    "    int excluded = 0;\n"
+    "    float top_max = 0.0f;\n"
+    "    uint lo = 0xffffffffu;\n"
+    "    uint hi = 0u;\n"
+    "    for (int o = 0; o < count; o++) {\n"
+    "        int ii = i + odx[o];\n"
+    "        int jj = j + ody[o];\n"
+    "        if (ii < 0 || ii >= width || jj < 0 || jj >= height) { continue; }\n"
+    "        int k = jj * width + ii;\n"
+    "        float top = value[k];\n"
+    "        if (isnan(top)) { continue; }\n"
+    "        float t = top - odz[o];\n"
+    "        top_max = n == 0 ? t : net_max(top_max, t);\n"
+    "        excluded += reached[k] ? 1 : 0;\n"
+    "        uint key = ordered(t);\n"
+    "        lo = min(lo, key);\n"
+    "        hi = max(hi, key);\n"
+    "        n++;\n"
+    "    }\n"
+    "    if (n == 0 || excluded == n) { return; }\n"
+    "    float threshold = top_max;\n"
+    "    if (!full) {\n"
+    "        int rank = clamp(needed[n] - 1, 0, n - 1) + 1;\n"
+    "        while (lo < hi) {\n"
+    "            uint mid = lo + (hi - lo) / 2u;\n"
+    "            int below = 0;\n"
+    "            int below_excluded = 0;\n"
+    "            for (int o = 0; o < count; o++) {\n"
+    "                int ii = i + odx[o];\n"
+    "                int jj = j + ody[o];\n"
+    "                if (ii < 0 || ii >= width || jj < 0 || jj >= height) { continue; }\n"
+    "                int k = jj * width + ii;\n"
+    "                float top = value[k];\n"
+    "                if (isnan(top) || ordered(top - odz[o]) > mid) { continue; }\n"
+    "                below++;\n"
+    "                below_excluded += reached[k] ? 1 : 0;\n"
+    "            }\n"
+    "            int pass = excluded == 0 ? below >= rank : below - below_excluded >= needed[n - below_excluded];\n"
+    "            if (pass) { hi = mid; } else { lo = mid + 1u; }\n"
+    "        }\n"
+    "        threshold = unordered(lo);\n"
+    "    }\n"
+    "    float z = net_max(threshold, floor);\n"
+    "    float previous = reach[c];\n"
+    "    if (!(isnan(previous) || z < previous)) { return; }\n"
+    "    reach[c] = z;\n"
+    "    if (last) { return; }\n"
+    "    float touched = z - tolerance;\n"
+    "    for (int o = 0; o < count; o++) {\n"
+    "        int ii = i + odx[o];\n"
+    "        int jj = j + ody[o];\n"
+    "        if (ii < 0 || ii >= width || jj < 0 || jj >= height) { continue; }\n"
+    "        int k = jj * width + ii;\n"
+    "        float top = value[k];\n"
+    "        if (!isnan(top) && top - odz[o] >= touched) { reached_next[k] = 1; }\n"
+    "    }\n"
+    "}\n"
+    "kernel void mark_above(global const float* tip, float level, int cells, global uchar* out)\n"
+    "{\n"
+    "    int c = get_global_id(0);\n"
+    "    if (c >= cells) { return; }\n"
+    "    float z = tip[c];\n"
+    "    out[c] = (uchar)(!isnan(z) && z > level);\n"
+    "}\n"
+    "kernel void distance_columns(global const uchar* mask, int level, int width, int height, int w, global float* out)\n"
+    "{\n"
+    "    int c = get_global_id(0);\n"
+    "    if (c >= width * height) { return; }\n"
+    "    int i = c % width;\n"
+    "    int j = c / width;\n"
+    "    global const uchar* m = mask + (size_t)level * (size_t)width * (size_t)height;\n"
+    "    float best = INFINITY;\n"
+    "    for (int dj = -w; dj <= w; dj++) {\n"
+    "        int jj = j + dj;\n"
+    "        if (jj < 0 || jj >= height || !m[(size_t)jj * (size_t)width + (size_t)i]) { continue; }\n"
+    "        float candidate = (float)dj * (float)dj;\n"
+    "        if (candidate < best) { best = candidate; }\n"
+    "    }\n"
+    "    out[c] = best;\n"
+    "}\n"
+    "kernel void distance_rows_within(global const float* in, int width, int height, int w, float cell_size, float radius, global uchar* out)\n"
+    "{\n"
+    "    int c = get_global_id(0);\n"
+    "    if (c >= width * height) { return; }\n"
+    "    int i = c % width;\n"
+    "    int j = c / width;\n"
+    "    global const float* f = in + (size_t)j * (size_t)width;\n"
+    "    float best = INFINITY;\n"
+    "    for (int di = -w; di <= w; di++) {\n"
+    "        int ii = i + di;\n"
+    "        if (ii < 0 || ii >= width) { continue; }\n"
+    "        float v = f[ii];\n"
+    "        if (v == INFINITY) { continue; }\n"
+    "        float candidate = v + (float)di * (float)di;\n"
+    "        if (candidate < best) { best = candidate; }\n"
+    "    }\n"
+    "    out[c] = (uchar)(best != INFINITY && sqrt(best) * cell_size <= radius);\n"
+    "}\n"
+    "kernel void slope_sources(global const float* deepest_position, int cells, float slab_top, float tolerance, float cutter_length, float bottom, float top, float widening,\n"
+    "    float head_radius, float cutter_radius, float margin, float cell_size, global float* field, global int* sources, global int* widest)\n"
+    "{\n"
+    "    int c = get_global_id(0);\n"
+    "    if (c >= cells) { return; }\n"
+    "    float h = slab_top + tolerance - deepest_position[c] - cutter_length;\n"
+    "    float radius = meet_radius(h, bottom, top, widening, head_radius, cutter_radius) - cutter_radius + margin;\n"
+    "    int widens = h > 1e-4f && !(h > widening + 1e-4f);\n"
+    "    if (!widens) { field[c] = INFINITY; return; }\n"
+    "    float r = radius / cell_size;\n"
+    "    field[c] = -r * r;\n"
+    "    atomic_inc(sources);\n"
+    "    atomic_max(widest, as_int(r));\n"
+    "}\n"
+    "kernel void separation_update(global const uchar* allowed, global const uchar* hug, global uchar* masks, int level_index, int has_below, global const uchar* cleared,\n"
+    "    int any_cleared, global const float* slope, global const int* sources, global const uchar* model_region, float level, int cells, global float* deepest,\n"
+    "    global float* deepest_position)\n"
+    "{\n"
+    "    int c = get_global_id(0);\n"
+    "    if (c >= cells) { return; }\n"
+    "    size_t at = (size_t)level_index * (size_t)cells + (size_t)c;\n"
+    "    int clear = any_cleared && cleared[c];\n"
+    "    if (sources[0] > 0) { clear = clear || slope[c] <= 0.0f; }\n"
+    "    int region = allowed[at] && (hug[c] || (has_below && masks[at + (size_t)cells]) || clear);\n"
+    "    if (region && isnan(deepest[c])) { deepest[c] = level; }\n"
+    "    int m = region || (model_region[c] && allowed[at]);\n"
+    "    masks[at] = (uchar)m;\n"
+    "    if (m && isnan(deepest_position[c])) { deepest_position[c] = level; }\n"
+    "}\n"
+    "kernel void model_region(global const float* tip, int cells, float floor, global uchar* region)\n"
+    "{\n"
+    "    int c = get_global_id(0);\n"
+    "    if (c >= cells) { return; }\n"
+    "    float z = tip[c];\n"
+    "    region[c] = (uchar)(!isnan(z) && z > floor + 1e-4f);\n"
+    "}\n"
+    "kernel void deepest_heights(global const uchar* masks, global const float* levels, int count, int cells, global float* out)\n"
+    "{\n"
+    "    int c = get_global_id(0);\n"
+    "    if (c >= cells) { return; }\n"
+    "    float d = NAN;\n"
+    "    for (int k = count - 1; k >= 0 && isnan(d); k--) { if (masks[(size_t)k * (size_t)cells + (size_t)c]) { d = levels[k]; } }\n"
+    "    out[c] = d;\n"
     "}\n"
     "uint hash32(uint a)\n"
     "{\n"
     "    a ^= a >> 16; a *= 0x7feb352dU; a ^= a >> 15; a *= 0x846ca68bU; a ^= a >> 16;\n"
     "    return a;\n"
     "}\n"
-    "kernel void tours(global const float* x, global const float* y, int n, int start, int end, global uchar* visited, global int* orders, global float* lengths,\n"
-    "    local float* best_d, local int* best_k)\n"
+    "kernel void tours(global const float* x, global const float* y, int n, int start, int end, global int* remaining, global int* orders, global float* lengths,\n"
+    "    local float* best_d, local int* best_k, local int* best_p)\n"
     "{\n"
     "    int t = get_group_id(0);\n"
     "    int lid = get_local_id(0);\n"
     "    int size = get_local_size(0);\n"
-    "    global uchar* seen = visited + (size_t)t * (size_t)n;\n"
+    "    global int* left = remaining + (size_t)t * (size_t)n;\n"
     "    global int* order = orders + (size_t)t * (size_t)n;\n"
-    "    for (int k = lid; k < n; k += size) { seen[k] = 0; }\n"
+    "    for (int k = lid; k < n; k += size) { left[k] = k; }\n"
     "    barrier(CLK_GLOBAL_MEM_FENCE);\n"
+    "    if (lid == 0) { left[start] = n - 1; order[0] = start; }\n"
+    "    barrier(CLK_GLOBAL_MEM_FENCE);\n"
+    "    int m = n - 1;\n"
     "    int current = start;\n"
     "    float length = 0.0f;\n"
-    "    if (lid == 0) { seen[start] = 1; order[0] = start; }\n"
-    "    barrier(CLK_GLOBAL_MEM_FENCE);\n"
     "    for (int step = 1; step < n; step++) {\n"
     "        float cx = x[current];\n"
     "        float cy = y[current];\n"
     "        float mine = INFINITY;\n"
     "        int pick = -1;\n"
+    "        int at = -1;\n"
     "        int last = step == n - 1;\n"
-    "        for (int k = lid; k < n; k += size) {\n"
-    "            if (seen[k] || (k == end && !last)) { continue; }\n"
+    "        for (int q = lid; q < m; q += size) {\n"
+    "            int k = left[q];\n"
+    "            if (k == end && !last) { continue; }\n"
     "            float dx = x[k] - cx;\n"
     "            float dy = y[k] - cy;\n"
     "            float d = sqrt(dx * dx + dy * dy);\n"
     "            if (t > 0) { d = d * (1.0f + 0.25f * (float)(hash32((uint)t * 0x9e3779b9U ^ (uint)k) & 0xffffU) / 65535.0f); }\n"
-    "            if (d < mine || (d == mine && k < pick)) { mine = d; pick = k; }\n"
+    "            if (d < mine || (d == mine && k < pick)) { mine = d; pick = k; at = q; }\n"
     "        }\n"
     "        best_d[lid] = mine;\n"
     "        best_k[lid] = pick;\n"
+    "        best_p[lid] = at;\n"
     "        barrier(CLK_LOCAL_MEM_FENCE);\n"
     "        for (int span = size / 2; span > 0; span /= 2) {\n"
     "            if (lid < span) {\n"
     "                float od = best_d[lid + span];\n"
     "                int ok = best_k[lid + span];\n"
-    "                if (ok >= 0 && (best_k[lid] < 0 || od < best_d[lid] || (od == best_d[lid] && ok < best_k[lid]))) { best_d[lid] = od; best_k[lid] = ok; }\n"
+    "                if (ok >= 0 && (best_k[lid] < 0 || od < best_d[lid] || (od == best_d[lid] && ok < best_k[lid]))) { best_d[lid] = od; best_k[lid] = ok; best_p[lid] = best_p[lid + span]; }\n"
     "            }\n"
     "            barrier(CLK_LOCAL_MEM_FENCE);\n"
     "        }\n"
     "        int next = best_k[0];\n"
     "        if (lid == 0) {\n"
-    "            seen[next] = 1;\n"
+    "            left[best_p[0]] = left[m - 1];\n"
     "            order[step] = next;\n"
     "            float dx = x[next] - cx;\n"
     "            float dy = y[next] - cy;\n"
     "            length += sqrt(dx * dx + dy * dy);\n"
     "        }\n"
+    "        m--;\n"
     "        current = next;\n"
     "        barrier(CLK_GLOBAL_MEM_FENCE | CLK_LOCAL_MEM_FENCE);\n"
     "    }\n"
     "    if (lid == 0) { lengths[t] = length; }\n"
     "}\n";
 
-#define MN_GPU_KERNELS 9
-static const char* kernel_names[MN_GPU_KERNELS] = { "closing", "mask_deepest", "settle", "backward_sources", "window_columns", "window_rows", "backward_verdict", "tours", "lift" };
-enum { K_CLOSING, K_MASK_DEEPEST, K_SETTLE, K_SOURCES, K_COLUMNS, K_ROWS, K_VERDICT, K_TOURS, K_LIFT };
+#define MN_GPU_KERNELS 17
+static const char* kernel_names[MN_GPU_KERNELS] = { "closing", "mask_deepest", "settle", "backward_sources", "window_columns", "window_rows", "backward_verdict", "tours",
+    "reach_values", "reach_round", "mark_above", "distance_columns", "distance_rows_within", "slope_sources", "separation_update", "model_region", "deepest_heights" };
+enum { K_CLOSING, K_MASK_DEEPEST, K_SETTLE, K_SOURCES, K_COLUMNS, K_ROWS, K_VERDICT, K_TOURS, K_REACH_VALUES, K_REACH_ROUND, K_MARK_ABOVE, K_DISTANCE_COLUMNS, K_DISTANCE_ROWS,
+    K_SLOPE_SOURCES, K_SEPARATION_UPDATE, K_MODEL_REGION, K_DEEPEST_HEIGHTS };
 
 /* The tour work-group: a power of two for the reduction. */
 #define MN_GPU_TOUR_GROUP 256
@@ -301,8 +469,12 @@ typedef struct mn_gpu {
     pfn_enqueue_write enqueue_write;
     pfn_enqueue_read enqueue_read;
     pfn_enqueue_fill enqueue_fill;
+    pfn_enqueue_copy enqueue_copy;
     pfn_finish finish;
+    pfn_flush flush;
     pfn_release_mem release_mem;
+    pfn_wait_events wait_events;
+    pfn_release_event release_event;
 } mn_gpu;
 
 static mn_gpu gpu;
@@ -414,8 +586,12 @@ static int open_gpu(void)
     MN_GPU_SYMBOL(enqueue_write, pfn_enqueue_write, "clEnqueueWriteBuffer");
     MN_GPU_SYMBOL(enqueue_read, pfn_enqueue_read, "clEnqueueReadBuffer");
     MN_GPU_SYMBOL(enqueue_fill, pfn_enqueue_fill, "clEnqueueFillBuffer");
+    MN_GPU_SYMBOL(enqueue_copy, pfn_enqueue_copy, "clEnqueueCopyBuffer");
     MN_GPU_SYMBOL(finish, pfn_finish, "clFinish");
+    MN_GPU_SYMBOL(flush, pfn_flush, "clFlush");
     MN_GPU_SYMBOL(release_mem, pfn_release_mem, "clReleaseMemObject");
+    MN_GPU_SYMBOL(wait_events, pfn_wait_events, "clWaitForEvents");
+    MN_GPU_SYMBOL(release_event, pfn_release_event, "clReleaseEvent");
     MN_CHECK(choose_device());
     cl_int code = CL_SUCCESS;
     gpu.context = gpu.create_context(NULL, 1, &gpu.device, NULL, NULL, &code);
@@ -638,11 +814,403 @@ int mn_gpu_closing(const mn_grid* g, const float* in, const mn_profile* profile,
     return status == MN_OK ? MN_OK : mn_fail(status, "%s", gpu.error);
 }
 
-/* ---- the backward check's sweeps ---- */
+/* ---- the session of one generation (T-183) ---- */
 
-int mn_gpu_backward_settle(const mn_context* context, const mn_profile* profile, int* deepest, int* sweeps)
+/* What a Backwards_GPU generation keeps on the GPU from the stage that makes it to the stage that last
+ * reads it: the tool profile (from the reach map on), the stock (uploaded once for the reach map), the
+ * plan's masks and levels (made by the separation, uploaded again as the route stage reads them after
+ * the islands and the bridges). Every other buffer lives for one call. */
+struct mn_gpu_session {
+    mn_grid grid;
+    int cells;
+    gpu_profile profile;
+    cl_mem stock;
+    cl_mem masks;
+    size_t mask_bytes;
+    cl_mem levels;
+    int level_count;
+};
+
+static void release(cl_mem* mem)
+{
+    if (*mem != NULL) {
+        gpu.release_mem(*mem);
+        *mem = NULL;
+    }
+}
+
+static int create_mem(size_t bytes, cl_mem* result)
+{
+    cl_int code = CL_SUCCESS;
+    *result = gpu.create_buffer(gpu.context, CL_MEM_READ_WRITE, bytes > 0 ? bytes : 4, NULL, &code);
+    return *result != NULL && code == CL_SUCCESS ? MN_OK : gpu_fail("clCreateBuffer", code);
+}
+
+static int write_mem(cl_mem mem, size_t bytes, const void* data)
+{
+    double started = mn_seconds();
+    cl_int code = gpu.enqueue_write(gpu.queue, mem, CL_TRUE, 0, bytes, data, 0, NULL, NULL);
+    mn_time_add(MN_TIME_GPU_TRANSFER, mn_seconds() - started);
+    return code == CL_SUCCESS ? MN_OK : gpu_fail("clEnqueueWriteBuffer", code);
+}
+
+static int fill_float(cl_mem mem, size_t count, float value)
+{
+    cl_int code = gpu.enqueue_fill(gpu.queue, mem, &value, sizeof(value), 0, count * sizeof(float), 0, NULL, NULL);
+    return code == CL_SUCCESS ? MN_OK : gpu_fail("clEnqueueFillBuffer", code);
+}
+
+int mn_gpu_session_open(const mn_grid* g, const mn_profile* profile, mn_gpu_session** result)
+{
+    *result = NULL;
+    MN_CHECK(gpu_enter());
+    mn_gpu_session* session = (mn_gpu_session*)mn_alloc(1, sizeof(mn_gpu_session));
+    if (session == NULL) {
+        gpu_leave();
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for the GPU session.");
+    }
+    session->grid = *g;
+    session->cells = mn_cells(g);
+    gpu_buffers b = { { 0 }, 0 };
+    int status = upload_profile(&b, profile, &session->profile);
+    if (status != MN_OK) {
+        buffers_release(&b);
+        free(session);
+        gpu_leave();
+        return mn_fail(status, "%s", gpu.error);
+    }
+    gpu_leave();
+    *result = session;
+    return MN_OK;
+}
+
+void mn_gpu_session_close(mn_gpu_session* session)
+{
+    if (session == NULL) {
+        return;
+    }
+    mn_shared_lock();
+    release(&session->profile.dx);
+    release(&session->profile.dy);
+    release(&session->profile.dz);
+    release(&session->stock);
+    release(&session->masks);
+    release(&session->levels);
+    mn_shared_unlock();
+    free(session);
+}
+
+int mn_gpu_reach(mn_gpu_session* session, const float* model, const float* stock, float floor, float percent, float tolerance, const mn_monitor* monitor, float* reach)
+{
+    MN_CHECK(mn_reach_check(percent, tolerance));
+    MN_CHECK(gpu_enter());
+    const mn_grid* g = &session->grid;
+    int cells = session->cells;
+    int width = g->width;
+    int height = g->height;
+    int count = session->profile.count;
+    size_t floats = (size_t)cells * sizeof(float);
+    int* needed = (int*)mn_alloc((size_t)count + 1, sizeof(int));
+    gpu_buffers b = { { 0 }, 0 };
+    cl_mem model_mem = NULL, value = NULL, reached = NULL, next = NULL, out = NULL, needed_mem = NULL;
+    int status = needed == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the reach map.") : MN_OK;
+    if (status == MN_OK && session->stock == NULL) {
+        status = create_mem(floats, &session->stock);
+        if (status == MN_OK) {
+            status = write_mem(session->stock, floats, stock);
+        }
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, floats, model, &model_mem);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, floats, NULL, &value);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, (size_t)cells, NULL, &reached);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, (size_t)cells, NULL, &next);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, floats, NULL, &out);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, ((size_t)count + 1) * sizeof(int), NULL, &needed_mem);
+    }
+    if (status == MN_OK) {
+        kernel_arg args[] = { ARG(model_mem), ARG(session->stock), ARG(cells), ARG(floor), ARG(value) };
+        status = launch(K_REACH_VALUES, args, 5, (size_t)cells, 0);
+    }
+    if (status == MN_OK) {
+        status = zero(reached, (size_t)cells);
+    }
+    if (status == MN_OK) {
+        status = zero(next, (size_t)cells);
+    }
+    if (status == MN_OK) {
+        status = fill_float(out, (size_t)cells, NAN);
+    }
+    for (int round = 0; round < MN_REACH_ROUNDS && status == MN_OK; round++) {
+        double round_percent = mn_reach_round_percent(percent, round);
+        int last = round == MN_REACH_ROUNDS - 1;
+        if (round > 0 && round_percent == mn_reach_round_percent(percent, round - 1)) {
+            continue;
+        }
+        if (mn_cancelled(monitor)) {
+            status = mn_fail(MN_ERR_CANCELLED, "Cancelled.");
+            break;
+        }
+        int full = round_percent >= (double)MN_REACH_MAX_PERCENT;
+        for (int m = 0; m <= count; m++) {
+            needed[m] = mn_reach_needed(m, round_percent);
+        }
+        status = write_mem(needed_mem, ((size_t)count + 1) * sizeof(int), needed);
+        if (status == MN_OK) {
+            kernel_arg args[] = { ARG(value), ARG(reached), ARG(next), ARG(out), ARG(width), ARG(height), ARG(session->profile.dx), ARG(session->profile.dy), ARG(session->profile.dz),
+                ARG(count), ARG(needed_mem), ARG(full), ARG(last), ARG(floor), ARG(tolerance) };
+            status = launch(K_REACH_ROUND, args, 15, (size_t)cells, 0);
+        }
+        if (status == MN_OK && !last) {
+            cl_int code = gpu.enqueue_copy(gpu.queue, next, reached, 0, 0, (size_t)cells, 0, NULL, NULL);
+            status = code == CL_SUCCESS ? MN_OK : gpu_fail("clEnqueueCopyBuffer", code);
+        }
+    }
+    if (status == MN_OK) {
+        status = read_back(out, floats, reach);
+    }
+    buffers_release(&b);
+    gpu_leave();
+    free(needed);
+    return status == MN_OK || status == MN_ERR_CANCELLED ? status : mn_fail(status, "%s", gpu.error);
+}
+
+int mn_gpu_separation_levels(mn_gpu_session* session, const mn_plan* plan, const float* effective_tip, const mn_tool* tool, float tolerance, float stock_top, float floor, uint8_t* masks,
+    uint8_t* model_region, float* deepest)
 {
     MN_CHECK(gpu_enter());
+    const mn_grid* g = &session->grid;
+    int cells = session->cells;
+    int width = g->width;
+    int height = g->height;
+    int count = plan->count;
+    float cell_size = g->cell_size;
+    size_t floats = (size_t)cells * sizeof(float);
+    size_t all = (size_t)count * (size_t)cells;
+    gpu_buffers b = { { 0 }, 0 };
+    cl_mem tip = NULL, allowed = NULL, obstacles = NULL, hug = NULL, cleared = NULL, squares = NULL, field = NULL, scratch = NULL, deep = NULL, position = NULL, region = NULL,
+           sources = NULL, widest = NULL;
+    release(&session->masks);
+    session->mask_bytes = all > 0 ? all : 1;
+    int status = create_mem(session->mask_bytes, &session->masks);
+    session->level_count = 0;
+    if (status == MN_OK) {
+        status = buffer(&b, floats, effective_tip, &tip);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, all, plan->masks, &allowed);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, (size_t)cells, NULL, &obstacles);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, (size_t)cells, NULL, &hug);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, (size_t)cells, NULL, &cleared);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, floats, NULL, &squares);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, floats, NULL, &field);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, floats, NULL, &scratch);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, floats, NULL, &deep);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, floats, NULL, &position);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, (size_t)cells, NULL, &region);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, sizeof(int), NULL, &sources);
+    }
+    if (status == MN_OK) {
+        status = buffer(&b, sizeof(int), NULL, &widest);
+    }
+    if (status == MN_OK) {
+        status = fill_float(deep, (size_t)cells, NAN);
+    }
+    if (status == MN_OK) {
+        status = fill_float(position, (size_t)cells, NAN);
+    }
+    if (status == MN_OK) {
+        kernel_arg args[] = { ARG(tip), ARG(cells), ARG(floor), ARG(region) };
+        status = launch(K_MODEL_REGION, args, 4, (size_t)cells, 0);
+    }
+    float hug_radius = mn_adjacency_margin(cell_size) + MN_RADIUS_TOLERANCE;
+    float margin = mn_head_margin(cell_size, tolerance);
+    float overhang = mn_head_overhang(tool) + margin;
+    float cutter_radius = tool->cutter_diameter / 2.0f;
+    float cutter_length = tool->cutter_length;
+    float widening = mn_head_widening(tool);
+    float bottom = tool->head_diameter / 2.0f;
+    float top = tool->head_top_diameter / 2.0f;
+    float head_radius = mn_head_radius(tool);
+    /* Every cell within a radius r of a marked cell lies at most r / cell_size cells away on each axis. */
+    int hug_window = mn_f2i(ceilf(hug_radius / cell_size)) + 1;
+    int overhang_window = mn_f2i(ceilf(overhang / cell_size)) + 1;
+    int none = 0;
+    for (int k = count - 1; k >= 0 && status == MN_OK; k--) {
+        float level = plan->levels[k];
+        {
+            kernel_arg args[] = { ARG(tip), ARG(level), ARG(cells), ARG(obstacles) };
+            status = launch(K_MARK_ABOVE, args, 4, (size_t)cells, 0);
+        }
+        if (status == MN_OK) {
+            kernel_arg args[] = { ARG(obstacles), ARG(none), ARG(width), ARG(height), ARG(hug_window), ARG(squares) };
+            status = launch(K_DISTANCE_COLUMNS, args, 6, (size_t)cells, 0);
+        }
+        if (status == MN_OK) {
+            kernel_arg args[] = { ARG(squares), ARG(width), ARG(height), ARG(hug_window), ARG(cell_size), ARG(hug_radius), ARG(hug) };
+            status = launch(K_DISTANCE_ROWS, args, 7, (size_t)cells, 0);
+        }
+        int reach = mn_head_reach(plan->levels, count, k, stock_top, cutter_length + widening - tolerance);
+        if (status == MN_OK && reach >= 0) {
+            kernel_arg args[] = { ARG(session->masks), ARG(reach), ARG(width), ARG(height), ARG(overhang_window), ARG(squares) };
+            status = launch(K_DISTANCE_COLUMNS, args, 6, (size_t)cells, 0);
+        }
+        if (status == MN_OK && reach >= 0) {
+            kernel_arg args[] = { ARG(squares), ARG(width), ARG(height), ARG(overhang_window), ARG(cell_size), ARG(overhang), ARG(cleared) };
+            status = launch(K_DISTANCE_ROWS, args, 7, (size_t)cells, 0);
+        }
+        float slab_top = k == 0 ? stock_top : plan->levels[k - 1];
+        if (status == MN_OK) {
+            status = zero(sources, sizeof(int));
+        }
+        if (status == MN_OK) {
+            status = zero(widest, sizeof(int));
+        }
+        if (status == MN_OK) {
+            kernel_arg args[] = { ARG(position), ARG(cells), ARG(slab_top), ARG(tolerance), ARG(cutter_length), ARG(bottom), ARG(top), ARG(widening), ARG(head_radius), ARG(cutter_radius),
+                ARG(margin), ARG(cell_size), ARG(field), ARG(sources), ARG(widest) };
+            status = launch(K_SLOPE_SOURCES, args, 15, (size_t)cells, 0);
+        }
+        if (status == MN_OK) {
+            kernel_arg args[] = { ARG(field), ARG(scratch), ARG(width), ARG(height), ARG(widest) };
+            status = launch(K_COLUMNS, args, 5, (size_t)cells, 0);
+        }
+        if (status == MN_OK) {
+            kernel_arg args[] = { ARG(scratch), ARG(field), ARG(width), ARG(height), ARG(widest) };
+            status = launch(K_ROWS, args, 5, (size_t)cells, 0);
+        }
+        if (status == MN_OK) {
+            int has_below = k + 1 < count;
+            int any_cleared = reach >= 0;
+            kernel_arg args[] = { ARG(allowed), ARG(hug), ARG(session->masks), ARG(k), ARG(has_below), ARG(cleared), ARG(any_cleared), ARG(field), ARG(sources), ARG(region),
+                ARG(level), ARG(cells), ARG(deep), ARG(position) };
+            status = launch(K_SEPARATION_UPDATE, args, 14, (size_t)cells, 0);
+        }
+    }
+    if (status == MN_OK && all > 0) {
+        status = read_back(session->masks, all, masks);
+    }
+    if (status == MN_OK) {
+        status = read_back(region, (size_t)cells, model_region);
+    }
+    if (status == MN_OK) {
+        status = read_back(deep, floats, deepest);
+    }
+    buffers_release(&b);
+    gpu_leave();
+    return status == MN_OK ? MN_OK : mn_fail(status, "%s", gpu.error);
+}
+
+int mn_gpu_masks(mn_gpu_session* session, const mn_plan* plan)
+{
+    MN_CHECK(gpu_enter());
+    size_t all = (size_t)plan->count * (size_t)session->cells;
+    int status = MN_OK;
+    if (session->masks == NULL || session->mask_bytes != (all > 0 ? all : 1)) {
+        release(&session->masks);
+        session->mask_bytes = all > 0 ? all : 1;
+        status = create_mem(session->mask_bytes, &session->masks);
+    }
+    if (status == MN_OK && all > 0) {
+        status = write_mem(session->masks, all, plan->masks);
+    }
+    release(&session->levels);
+    if (status == MN_OK) {
+        status = create_mem((size_t)(plan->count > 0 ? plan->count : 1) * sizeof(float), &session->levels);
+    }
+    if (status == MN_OK && plan->count > 0) {
+        status = write_mem(session->levels, (size_t)plan->count * sizeof(float), plan->levels);
+    }
+    session->level_count = status == MN_OK ? plan->count : 0;
+    gpu_leave();
+    return status == MN_OK ? MN_OK : mn_fail(status, "%s", gpu.error);
+}
+
+int mn_gpu_intended(mn_gpu_session* session, const mn_plan* plan, float* intended)
+{
+    if (session->level_count != plan->count) {
+        return mn_fail(MN_ERR_STATE, "The GPU holds %d levels, the plan %d.", session->level_count, plan->count);
+    }
+    MN_CHECK(gpu_enter());
+    int cells = session->cells;
+    int count = plan->count;
+    size_t floats = (size_t)cells * sizeof(float);
+    gpu_buffers b = { { 0 }, 0 };
+    cl_mem deep = NULL, out = NULL;
+    int status = buffer(&b, floats, NULL, &deep);
+    if (status == MN_OK) {
+        status = buffer(&b, floats, NULL, &out);
+    }
+    if (status == MN_OK) {
+        kernel_arg args[] = { ARG(session->masks), ARG(session->levels), ARG(count), ARG(cells), ARG(deep) };
+        status = launch(K_DEEPEST_HEIGHTS, args, 5, (size_t)cells, 0);
+    }
+    if (status == MN_OK) {
+        status = closing_on(&session->grid, deep, &session->profile, out);
+    }
+    if (status == MN_OK) {
+        status = read_back(out, floats, intended);
+    }
+    buffers_release(&b);
+    gpu_leave();
+    return status == MN_OK ? MN_OK : mn_fail(status, "%s", gpu.error);
+}
+
+int mn_gpu_closing_of(mn_gpu_session* session, const float* map, float* closing)
+{
+    MN_CHECK(gpu_enter());
+    size_t floats = (size_t)session->cells * sizeof(float);
+    gpu_buffers b = { { 0 }, 0 };
+    cl_mem in = NULL, out = NULL;
+    int status = buffer(&b, floats, map, &in);
+    if (status == MN_OK) {
+        status = buffer(&b, floats, NULL, &out);
+    }
+    if (status == MN_OK) {
+        status = closing_on(&session->grid, in, &session->profile, out);
+    }
+    if (status == MN_OK) {
+        status = read_back(out, floats, closing);
+    }
+    buffers_release(&b);
+    gpu_leave();
+    return status == MN_OK ? MN_OK : mn_fail(status, "%s", gpu.error);
+}
+
+/* ---- the backward check's sweeps ---- */
+
+int mn_gpu_backward_settle(mn_gpu_session* session, const mn_context* context, int* deepest, float* closing_out, int* sweeps)
+{
     const mn_grid* g = &context->grid;
     const mn_plan* plan = context->plan;
     const mn_tool* tool = &context->tool;
@@ -650,35 +1218,26 @@ int mn_gpu_backward_settle(const mn_context* context, const mn_profile* profile,
     int width = g->width;
     int height = g->height;
     int levels = plan->count;
+    *sweeps = 0;
+    if (levels == 0) {
+        for (int c = 0; c < cells; c++) {
+            deepest[c] = -1;
+            closing_out[c] = NAN;
+        }
+        return MN_OK;
+    }
+    if (session->level_count != levels || session->stock == NULL) {
+        return mn_fail(MN_ERR_STATE, "The GPU holds %d levels, the plan %d.", session->level_count, levels);
+    }
+    MN_CHECK(gpu_enter());
     /* Per level of a chunk: two fields of floats. */
     size_t per_level = (size_t)cells * 2 * sizeof(float);
     size_t budget = MN_GPU_CHUNK_BUDGET < (size_t)gpu.max_alloc ? MN_GPU_CHUNK_BUDGET : (size_t)gpu.max_alloc;
     int chunk = mn_clampi((int)(budget / per_level), 1, mn_maxi(1, levels));
     gpu_buffers b = { { 0 }, 0 };
-    gpu_profile p;
-    cl_mem stock = NULL, masks = NULL, level_buffer = NULL, deep = NULL, next = NULL, heights = NULL, closing = NULL, field = NULL, scratch = NULL, sources = NULL, widest = NULL,
-           changed = NULL;
-    *sweeps = 0;
-    int status = levels == 0 ? MN_OK : upload_profile(&b, profile, &p);
-    if (levels == 0) {
-        gpu_leave();
-        for (int c = 0; c < cells; c++) {
-            deepest[c] = -1;
-        }
-        return MN_OK;
-    }
-    if (status == MN_OK) {
-        status = buffer(&b, (size_t)cells * sizeof(float), context->stock, &stock);
-    }
-    if (status == MN_OK) {
-        status = buffer(&b, (size_t)levels * (size_t)cells, plan->masks, &masks);
-    }
-    if (status == MN_OK) {
-        status = buffer(&b, (size_t)levels * sizeof(float), plan->levels, &level_buffer);
-    }
-    if (status == MN_OK) {
-        status = buffer(&b, (size_t)cells * sizeof(int), NULL, &deep);
-    }
+    cl_mem stock = session->stock, masks = session->masks, level_buffer = session->levels;
+    cl_mem deep = NULL, next = NULL, heights = NULL, closing = NULL, field = NULL, scratch = NULL, sources = NULL, widest = NULL, changed = NULL;
+    int status = buffer(&b, (size_t)cells * sizeof(int), NULL, &deep);
     if (status == MN_OK) {
         status = buffer(&b, (size_t)cells * sizeof(int), NULL, &next);
     }
@@ -726,7 +1285,7 @@ int mn_gpu_backward_settle(const mn_context* context, const mn_profile* profile,
             status = launch(K_SETTLE, args, 6, (size_t)cells, 0);
         }
         if (status == MN_OK) {
-            status = closing_on(g, heights, &p, closing);
+            status = closing_on(g, heights, &session->profile, closing);
         }
         if (status == MN_OK) {
             status = read_back(changed, sizeof(int), &moved);
@@ -770,6 +1329,9 @@ int mn_gpu_backward_settle(const mn_context* context, const mn_profile* profile,
     if (status == MN_OK) {
         status = read_back(deep, (size_t)cells * sizeof(int), deepest);
     }
+    if (status == MN_OK) {
+        status = read_back(closing, (size_t)cells * sizeof(float), closing_out);
+    }
     buffers_release(&b);
     gpu_leave();
     return status == MN_OK ? MN_OK : mn_fail(status, "%s", gpu.error);
@@ -784,113 +1346,6 @@ MN_API int32_t mn_gpu_remaining(const mn_grid* grid, const float* tip, const mn_
     return mn_gpu_closing(grid, tip, &profile, remaining);
 }
 
-/* ---- route floors ---- */
-
-static cl_mem create(size_t bytes, cl_int* code) { return gpu.create_buffer(gpu.context, CL_MEM_READ_WRITE, bytes > 0 ? bytes : 4, NULL, code); }
-
-struct mn_gpu_floors {
-    cl_mem stock;
-    cl_mem tip;
-    cl_mem floor;
-    cl_mem out;
-    int cells;
-    float safe;
-};
-
-static void floors_release(mn_gpu_floors* floors)
-{
-    cl_mem items[] = { floors->stock, floors->tip, floors->floor, floors->out };
-    for (int k = 0; k < 4; k++) {
-        if (items[k] != NULL) {
-            gpu.release_mem(items[k]);
-        }
-    }
-    free(floors);
-}
-
-int mn_gpu_floors_open(const float* stock, const float* tip, int cells, float safe, mn_gpu_floors** result)
-{
-    MN_CHECK(gpu_enter());
-    mn_gpu_floors* floors = (mn_gpu_floors*)mn_alloc(1, sizeof(mn_gpu_floors));
-    if (floors == NULL) {
-        gpu_leave();
-        return mn_fail(MN_ERR_MEMORY, "Out of memory for the GPU route floors.");
-    }
-    size_t bytes = (size_t)cells * sizeof(float);
-    cl_int code = CL_SUCCESS;
-    floors->stock = create(bytes, &code);
-    if (code == CL_SUCCESS) {
-        floors->tip = create(bytes, &code);
-    }
-    if (code == CL_SUCCESS) {
-        floors->floor = create(bytes, &code);
-    }
-    if (code == CL_SUCCESS) {
-        floors->out = create(2 * bytes, &code);
-    }
-    double started = mn_seconds();
-    if (code == CL_SUCCESS) {
-        code = gpu.enqueue_write(gpu.queue, floors->stock, CL_TRUE, 0, bytes, stock, 0, NULL, NULL);
-    }
-    if (code == CL_SUCCESS) {
-        code = gpu.enqueue_write(gpu.queue, floors->tip, CL_TRUE, 0, bytes, tip, 0, NULL, NULL);
-    }
-    mn_time_add(MN_TIME_GPU_TRANSFER, mn_seconds() - started);
-    int status = MN_OK;
-    if (code != CL_SUCCESS) {
-        floors_release(floors);
-        status = gpu_fail("route floor buffers", code);
-    } else {
-        floors->cells = cells;
-        floors->safe = safe;
-        *result = floors;
-    }
-    gpu_leave();
-    return status == MN_OK ? MN_OK : mn_fail(status, "%s", gpu.error);
-}
-
-int mn_gpu_floors_lift(mn_gpu_floors* floors, const float* floor, int cells, float* lifted)
-{
-    if (floors == NULL || floors->cells != cells) {
-        return mn_fail(MN_ERR_STATE, "The GPU route floors hold %d cells, the route %d.", floors != NULL ? floors->cells : 0, cells);
-    }
-    MN_CHECK(gpu_enter());
-    size_t bytes = (size_t)cells * sizeof(float);
-    double started = mn_seconds();
-    cl_int code = gpu.enqueue_write(gpu.queue, floors->floor, CL_TRUE, 0, bytes, floor, 0, NULL, NULL);
-    mn_time_add(MN_TIME_GPU_TRANSFER, mn_seconds() - started);
-    int status = code == CL_SUCCESS ? MN_OK : gpu_fail("clEnqueueWriteBuffer", code);
-    if (status == MN_OK) {
-        float safe = floors->safe;
-        kernel_arg args[] = { ARG(floors->floor), ARG(floors->stock), ARG(floors->tip), ARG(cells), ARG(safe), ARG(floors->out) };
-        status = launch(K_LIFT, args, 6, (size_t)cells, 0);
-    }
-    if (status == MN_OK) {
-        status = read_back(floors->out, 2 * bytes, lifted);
-    }
-    gpu_leave();
-    return status == MN_OK ? MN_OK : mn_fail(status, "%s", gpu.error);
-}
-
-void mn_gpu_floors_close(mn_gpu_floors* floors)
-{
-    if (floors == NULL) {
-        return;
-    }
-    mn_shared_lock();
-    floors_release(floors);
-    mn_shared_unlock();
-}
-
-MN_API int32_t mn_gpu_route_floor(const float* stock, const float* tip, const float* floor, int32_t cells, float safe, float* lifted)
-{
-    mn_gpu_floors* floors = NULL;
-    MN_CHECK(mn_gpu_floors_open(stock, tip, cells, safe, &floors));
-    int status = mn_gpu_floors_lift(floors, floor, cells, lifted);
-    mn_gpu_floors_close(floors);
-    return status;
-}
-
 MN_API int32_t mn_gpu_start_tours(const float* x, const float* y, int32_t count, int32_t start, int32_t end, int32_t tours, int32_t keep, int32_t* orders, int32_t* kept)
 {
     if (count < 1 || start < 0 || start >= count || end < -1 || end >= count || (end == start && count > 1)) {
@@ -901,62 +1356,175 @@ MN_API int32_t mn_gpu_start_tours(const float* x, const float* y, int32_t count,
 
 /* ---- start tours ---- */
 
-int mn_gpu_tours(const float* x, const float* y, int n, int start, int end, int tours, int keep, int* orders, int* kept)
+/* Tours of the route solver (T-177, T-186): one work-group per tour; every step the work items scan the
+ * nodes not yet visited (kept packed: the visited one's place takes the last) and reduce to the nearest,
+ * ties to the lower index. A job is launched at once and collected after the solver's own start walks,
+ * so the GPU builds its tours while the processor builds its walks; the shared lock is held for the
+ * launch and the reads, never while waiting. A tour per work item over a bucket grid (T-186, tried
+ * first) gave the same tours and took 2,557 s of waiting on the heart: one GPU thread walking a tour of
+ * thousands of steps is slower than the processor by far. */
+struct mn_gpu_tours_job {
+    cl_mem items[5];
+    int count;
+    int n;
+    int tours;
+    float* lengths;
+    cl_event done;
+};
+
+enum { TOUR_ORDERS = 3 };
+
+static void tours_release(mn_gpu_tours_job* job)
 {
-    *kept = 0;
-    if (n < 2 || tours < 1 || keep < 1) {
+    for (int k = 0; k < job->count; k++) {
+        if (job->items[k] != NULL) {
+            gpu.release_mem(job->items[k]);
+        }
+    }
+    free(job->lengths);
+    free(job);
+}
+
+static int tour_buffer(mn_gpu_tours_job* job, size_t bytes, const void* data, cl_mem* result)
+{
+    cl_int code = CL_SUCCESS;
+    cl_mem mem = gpu.create_buffer(gpu.context, data != NULL ? CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR : CL_MEM_READ_WRITE, bytes > 0 ? bytes : 4, (void*)data, &code);
+    if (mem == NULL || code != CL_SUCCESS) {
+        return gpu_fail("clCreateBuffer", code);
+    }
+    job->items[job->count++] = mem;
+    *result = mem;
+    return MN_OK;
+}
+
+int mn_gpu_tours_begin(const float* x, const float* y, int n, int start, int end, int tours, mn_gpu_tours_job** result)
+{
+    *result = NULL;
+    if (n < 2 || tours < 1) {
         return MN_OK;
     }
-    MN_CHECK(gpu_enter());
     double started = mn_seconds();
-    gpu_buffers b = { { 0 }, 0 };
-    cl_mem xs = NULL, ys = NULL, visited = NULL, all = NULL, lengths = NULL;
-    float* length = (float*)mn_alloc((size_t)tours, sizeof(float));
-    int status = length == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the GPU tours.") : MN_OK;
+    mn_gpu_tours_job* job = (mn_gpu_tours_job*)mn_alloc(1, sizeof(mn_gpu_tours_job));
+    float* lengths = (float*)mn_alloc((size_t)tours, sizeof(float));
+    if (job == NULL || lengths == NULL) {
+        free(job);
+        free(lengths);
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for the GPU tours.");
+    }
+    job->n = n;
+    job->tours = tours;
+    job->lengths = lengths;
+    int status = gpu_enter();
+    if (status != MN_OK) {
+        free(job->lengths);
+        free(job);
+        return status;
+    }
+    cl_mem xs = NULL, ys = NULL, left = NULL, orders = NULL, out = NULL;
+    status = tour_buffer(job, (size_t)n * sizeof(float), x, &xs);
     if (status == MN_OK) {
-        status = buffer(&b, (size_t)n * sizeof(float), x, &xs);
+        status = tour_buffer(job, (size_t)n * sizeof(float), y, &ys);
     }
     if (status == MN_OK) {
-        status = buffer(&b, (size_t)n * sizeof(float), y, &ys);
+        status = tour_buffer(job, (size_t)tours * (size_t)n * sizeof(int), NULL, &left);
     }
     if (status == MN_OK) {
-        status = buffer(&b, (size_t)tours * (size_t)n, NULL, &visited);
+        status = tour_buffer(job, (size_t)tours * (size_t)n * sizeof(int), NULL, &orders);
     }
     if (status == MN_OK) {
-        status = buffer(&b, (size_t)tours * (size_t)n * sizeof(int), NULL, &all);
+        status = tour_buffer(job, (size_t)tours * sizeof(float), NULL, &out);
     }
     if (status == MN_OK) {
-        status = buffer(&b, (size_t)tours * sizeof(float), NULL, &lengths);
+        kernel_arg args[] = { ARG(xs), ARG(ys), ARG(n), ARG(start), ARG(end), ARG(left), ARG(orders), ARG(out), { MN_GPU_TOUR_GROUP * sizeof(float), NULL },
+            { MN_GPU_TOUR_GROUP * sizeof(int), NULL }, { MN_GPU_TOUR_GROUP * sizeof(int), NULL } };
+        status = launch(K_TOURS, args, 11, (size_t)tours * MN_GPU_TOUR_GROUP, MN_GPU_TOUR_GROUP);
     }
     if (status == MN_OK) {
-        kernel_arg args[] = { ARG(xs), ARG(ys), ARG(n), ARG(start), ARG(end), ARG(visited), ARG(all), ARG(lengths), { MN_GPU_TOUR_GROUP * sizeof(float), NULL },
-            { MN_GPU_TOUR_GROUP * sizeof(int), NULL } };
-        status = launch(K_TOURS, args, 10, (size_t)tours * MN_GPU_TOUR_GROUP, MN_GPU_TOUR_GROUP);
+        cl_int code = gpu.enqueue_read(gpu.queue, out, CL_FALSE, 0, (size_t)tours * sizeof(float), job->lengths, 0, NULL, &job->done);
+        status = code == CL_SUCCESS ? MN_OK : gpu_fail("clEnqueueReadBuffer", code);
     }
     if (status == MN_OK) {
-        status = read_back(lengths, (size_t)tours * sizeof(float), length);
+        gpu.flush(gpu.queue);
+    } else {
+        tours_release(job);
+        job = NULL;
+        status = mn_fail(status, "%s", gpu.error);
     }
+    gpu_leave();
+    mn_time_add(MN_TIME_GPU_TOURS, mn_seconds() - started);
+    *result = job;
+    return status;
+}
+
+int mn_gpu_tours_end(mn_gpu_tours_job* job, int keep, int* orders, int* kept)
+{
+    *kept = 0;
+    if (job == NULL) {
+        return MN_OK;
+    }
+    double started = mn_seconds();
+    cl_int code = gpu.wait_events(1, &job->done);
+    gpu.release_event(job->done);
+    int status = code == CL_SUCCESS ? MN_OK : gpu_fail("clWaitForEvents", code);
+    int n = job->n;
     /* The `keep` shortest, ties to the lower tour. */
-    for (int k = 0; k < keep && k < tours && status == MN_OK; k++) {
+    int picks[MN_GPU_MAX_KEPT];
+    int count = 0;
+    for (int k = 0; k < keep && k < MN_GPU_MAX_KEPT && status == MN_OK; k++) {
         int best = -1;
-        for (int t = 0; t < tours; t++) {
-            if (length[t] == length[t] && (best < 0 || length[t] < length[best])) {
+        for (int t = 0; t < job->tours; t++) {
+            if (job->lengths[t] == job->lengths[t] && (best < 0 || job->lengths[t] < job->lengths[best])) {
                 best = t;
             }
         }
         if (best < 0) {
             break;
         }
-        double read_started = mn_seconds();
-        cl_int code = gpu.enqueue_read(gpu.queue, all, CL_TRUE, (size_t)best * (size_t)n * sizeof(int), (size_t)n * sizeof(int), orders + (size_t)k * (size_t)n, 0, NULL, NULL);
-        mn_time_add(MN_TIME_GPU_TRANSFER, mn_seconds() - read_started);
-        status = code == CL_SUCCESS ? MN_OK : gpu_fail("clEnqueueReadBuffer", code);
-        length[best] = NAN;
-        (*kept)++;
+        picks[count++] = best;
+        job->lengths[best] = NAN;
     }
-    free(length);
-    buffers_release(&b);
+    cl_event read = NULL;
+    mn_shared_lock();
+    for (int k = 0; k < count && status == MN_OK; k++) {
+        code = gpu.enqueue_read(gpu.queue, job->items[TOUR_ORDERS], CL_FALSE, (size_t)picks[k] * (size_t)n * sizeof(int), (size_t)n * sizeof(int), orders + (size_t)k * (size_t)n, 0,
+            NULL, k == count - 1 ? &read : NULL);
+        status = code == CL_SUCCESS ? MN_OK : gpu_fail("clEnqueueReadBuffer", code);
+    }
+    if (read != NULL) {
+        gpu.flush(gpu.queue);
+    }
+    mn_shared_unlock();
+    if (read != NULL) {
+        code = gpu.wait_events(1, &read);
+        gpu.release_event(read);
+        if (status == MN_OK && code != CL_SUCCESS) {
+            status = gpu_fail("clWaitForEvents", code);
+        }
+    }
+    *kept = status == MN_OK ? count : 0;
+    mn_shared_lock();
+    tours_release(job);
+    mn_shared_unlock();
     mn_time_add(MN_TIME_GPU_TOURS, mn_seconds() - started);
-    gpu_leave();
     return status == MN_OK ? MN_OK : mn_fail(status, "%s", gpu.error);
+}
+
+void mn_gpu_tours_cancel(mn_gpu_tours_job* job)
+{
+    if (job == NULL) {
+        return;
+    }
+    gpu.wait_events(1, &job->done);
+    gpu.release_event(job->done);
+    mn_shared_lock();
+    tours_release(job);
+    mn_shared_unlock();
+}
+
+int mn_gpu_tours(const float* x, const float* y, int n, int start, int end, int tours, int keep, int* orders, int* kept)
+{
+    *kept = 0;
+    mn_gpu_tours_job* job = NULL;
+    MN_CHECK(mn_gpu_tours_begin(x, y, n, start, end, tours, &job));
+    return mn_gpu_tours_end(job, keep, orders, kept);
 }

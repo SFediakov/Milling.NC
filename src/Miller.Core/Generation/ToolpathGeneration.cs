@@ -56,7 +56,7 @@ public sealed record ProcessTimes(IReadOnlyList<double> Seconds)
         "transform", "stock", "model map", "reach map", "head clearance", "slice", "route", "simplify", "statistics", "collision check",
         "intended surface", "backward closings", "backward level tests", "backward batches", "solver waiting for the check", "slab groups",
         "route units", "solver candidate lists", "solver start walks", "solver local search", "route floors", "route writing",
-        "GPU setup", "GPU transfers", "GPU start tours",
+        "GPU setup", "GPU transfers", "GPU start tours", "check bands", "check walk",
     };
 }
 
