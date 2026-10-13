@@ -11,10 +11,11 @@ public enum ModelAxis
 }
 
 // Machine zero, the origin of the G-code coordinates: a point of the stock box (it moves with the
-// stock), a point of the box around the placed models (it moves with the models), or a fixed point of
-// the global frame, the model coordinates after the axis mapping (stock and models move against it).
-// Custom, ModelCustom and Global take CustomOffset from the stock corner, the models' corner and the
-// global origin. The first four keep their names and meaning from before the model and global modes.
+// stock), a point of the box around the placed models (it moves with the models), or the origin of the
+// global frame, the model coordinates after the axis mapping and the rotations (Global: the one 0 the
+// axes turn about, the models' offsets and an explicit stock corner are measured from). Custom and
+// ModelCustom take CustomOffset from the stock corner and the models' corner. The first four keep their
+// names and meaning from before the model and global modes.
 public enum OriginMode
 {
     StockCornerMinXYMinZ,
@@ -56,8 +57,8 @@ public sealed class AxisSetup
 
     public OriginMode OriginMode { get; set; } = OriginMode.StockCornerMinXYMinZ;
 
-    // Machine zero relative to the stock's minimum corner (Custom), the placed models' minimum corner
-    // (ModelCustom) or the global origin (Global); the other modes ignore it.
+    // Machine zero relative to the stock's minimum corner (Custom) or the placed models' minimum corner
+    // (ModelCustom); the other modes ignore it.
     public Vector3 CustomOffset { get; set; } = Vector3.Zero;
 
     public static AxisSetup Default() => new();
@@ -96,8 +97,10 @@ public sealed class AxisSetup
 
     public bool IsOnModels => OriginMode is OriginMode.ModelCornerMinXYMinZ or OriginMode.ModelCornerMinXYTopZ or OriginMode.ModelCenterTopZ or OriginMode.ModelCustom;
 
+    public bool IsGlobal => OriginMode == OriginMode.Global;
+
     // Machine zero in the global frame: the stock corner around the anchor (the models before their
-    // offsets) plus the origin offset, the named point of the placed models' box, or CustomOffset.
+    // offsets) plus the origin offset, the named point of the placed models' box, or the global origin.
     public Vector3 MachineZero(BoundingBox anchorBounds, BoundingBox placedBounds, StockDefinition stock)
     {
         ArgumentNullException.ThrowIfNull(stock);
@@ -111,7 +114,7 @@ public sealed class AxisSetup
             return placedBounds.Min + BoxPoint(placedBounds.Size);
         }
 
-        return OriginMode == OriginMode.Global ? CustomOffset : throw new ArgumentException($"Unknown origin mode {OriginMode}.");
+        return IsGlobal ? Vector3.Zero : throw new ArgumentException($"Unknown origin mode {OriginMode}.");
     }
 
     // Size of the stock's axis-aligned bounding box.

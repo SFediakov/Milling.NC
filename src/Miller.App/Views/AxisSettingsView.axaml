@@ -41,6 +41,7 @@
           <c:NumericBox Name="OffsetZBox" Classes="numeric" Value="{Binding OffsetZ}" />
         </StackPanel>
       </StackPanel>
+      <TextBlock Name="GlobalZeroText" Text="{x:Static vm:AxisSettingsViewModel.GlobalZeroText}" IsVisible="{Binding IsGlobal}" TextWrapping="Wrap" />
 
       <TextBlock Classes="header" Text="Model in machine space" />
       <TextBlock Name="MachineBoundsText" Text="{Binding MachineBoundsText}" TextWrapping="Wrap" />

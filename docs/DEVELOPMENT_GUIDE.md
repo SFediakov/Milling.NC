@@ -223,10 +223,14 @@ below the tip map by more than `Tolerance`.
   - on the box around the placed models (offsets included), moving with them
     (T-179): `ModelCornerMinXYMinZ`, `ModelCornerMinXYTopZ`, `ModelCenterTopZ`,
     `ModelCustom` (offset vector from the models' corner);
-  - `Global` (T-179): a fixed point, the offset vector in the global frame (the
-    model coordinates after the axis mapping, the STL origin at 0). Model
-    offsets move the models and the explicit stock corner moves the stock
-    against it.
+  - `Global` (T-179, T-189): the origin of the global frame (the model
+    coordinates after the axis mapping and the rotations, the STL origin at 0),
+    the one 0 of the axes, the model offsets and the explicit stock corner
+    (T-190, measured from it instead of the models' minimum); it takes no
+    offset. Model offsets move the models and the explicit stock corner moves
+    the stock against it; an auto-fit stock stays around the models.
+  Changing the mode into or out of `Global` rewrites the explicit stock
+  corner so the stock keeps its place against the models (T-191).
   The viewport draws machine space, its axes at zero: the reference of the
   mode stays in place and the rest moves.
 
@@ -2437,6 +2441,30 @@ check that decides done.
 - Input: user request (the summed time of the whole process, not only the parts)
 - Output: the heart at 0.025 mm cells, one build, one after the other: Backwards 298.8 s to 27.3 s, Backwards_GPU 296.1 s to 15.2 s; 0 events in both; machining 154.12 min (Backwards, as the original) and 149.00 min (Backwards_GPU, original 147.72 with tours on every route)
 - Acceptance: every process with its time, its place (GPU or CPU) and the data it moves in the report
+- Status: done
+
+#### T-189 Global machine zero at the global origin
+- Depends on: T-179
+- Files: `src/Miller.Core/Setup/AxisSetup.cs`, `src/Miller.App/ViewModels/AxisSettingsViewModel.cs`, `src/Miller.App/Views/AxisSettingsView.axaml`, `tests/Miller.Tests/Core/Setup/MachineZeroTests.cs`, `tests/Miller.Tests/App/MachineZeroViewTests.cs`
+- Input: user request (the global machine zero must be the 0 of the other parts, the axes and the stock)
+- Output: `Global` puts machine zero at the global origin (`AxisSetup.IsGlobal`); `CustomOffset` belongs to `Custom` and `ModelCustom` only; the axes panel hides the offset in `Global` and names the zero (`GlobalZeroText`)
+- Acceptance: machine zero is (0, 0, 0) whatever `CustomOffset` holds and the mapped origin lands at it; the stock and model modes keep their matrices and stock box; with the stock at zero and the model where the stock corner mode has it, `Global` gives the stock corner's toolpath segment for segment, and moving both shifts it
+- Status: done
+
+#### T-190 Explicit stock measured from the global zero
+- Depends on: T-189
+- Files: `src/Miller.Core/Setup/ModelLayout.cs`, `src/Miller.Core/Setup/StockDefinition.cs`, `src/Miller.App/ViewModels/StockSettingsViewModel.cs`, `src/Miller.App/Views/StockSettingsView.axaml`
+- Input: user request (as T-189)
+- Output: `ModelLayout.StockCorner(project, anchor)`, the one corner of `StockBoundsMachine`, `ModelBoundsInStock` and `AlignedOffset`: in `Global` with an explicit placement the corner is `ExplicitOrigin` from the global origin; the stock panel names the reference (`OriginLabel`)
+- Acceptance: the explicit stock stands at its corner whatever the axes, the scale, the turn and the offsets do; an auto-fit stock stays around the models; the align commands put the model at that stock
+- Status: done
+
+#### T-191 Changing machine zero keeps the stock against the models
+- Depends on: T-190
+- Files: `src/Miller.Core/Setup/ModelLayout.cs`, `src/Miller.App/ViewModels/AxisSettingsViewModel.cs`
+- Input: user request (as T-189; a reference change must not move a part)
+- Output: `ModelLayout.SetOriginMode(project, modelBounds, mode)` rewrites an explicit stock corner when the mode goes into or out of `Global`; without models (none loaded, mapping not a permutation) only the mode changes
+- Acceptance: the models' box in the stock is the same before and after a change into `Global` and back (1e-3 mm) for every stock and model mode; a change between two other modes and an auto-fit stock keep the values exactly
 - Status: done
 
 #### T-165 Head bottom down to half the cutter diameter

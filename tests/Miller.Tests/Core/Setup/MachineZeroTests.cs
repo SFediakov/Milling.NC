@@ -100,8 +100,10 @@ public sealed class MachineZeroTests
         Assert.Throws<InvalidOperationException>(() => ModelLayout.StockBoundsMachine(project));
     }
 
+    // T-189, T-190: Global zero is the global origin whatever CustomOffset holds; the explicit stock corner
+    // is measured from it, so the model and the stock move on their own against the one 0.
     [Fact]
-    public void Global_ZeroStays_WhileTheModelAndTheStockMoveOnTheirOwn()
+    public void Global_ZeroIsTheGlobalOrigin_WhileTheModelAndTheStockMoveOnTheirOwn()
     {
         var bounds = new[] { TestMeshes.Box(10, 10, 5).Bounds };
         var project = Project(OriginMode.Global, new ModelPlacement { StlPath = "a.stl" });
@@ -109,18 +111,101 @@ public sealed class MachineZeroTests
         project.Stock.Placement = StockPlacement.Explicit;
         project.Stock.ExplicitOrigin = new Vector3(-10, -10, -20);
         var model = ModelLayout.MachineBounds(project, bounds);
-        var stock = ModelLayout.StockBoundsMachine(project, bounds);
 
-        // The global origin, the STL's own origin, lands at minus the point.
-        AssertClose(new Vector3(-5, 4, -2), Vector3.Transform(Vector3.Zero, ModelLayout.MachineMatrices(project, bounds)[0]));
+        Assert.Equal(Vector3.Zero, ModelLayout.MachineZero(project, bounds));
+        Assert.Equal(Vector3.Zero, Vector3.Transform(Vector3.Zero, ModelLayout.MachineMatrices(project, bounds)[0]));
+        Assert.Equal(new Vector3(-10, -10, -20), ModelLayout.StockBoundsMachine(project, bounds).Min);
 
         project.Models[0].Offset = new Vector3(3, 1, -1);
         AssertClose(model.Min + new Vector3(3, 1, -1), ModelLayout.MachineBounds(project, bounds).Min);
-        AssertClose(stock.Min, ModelLayout.StockBoundsMachine(project, bounds).Min);
+        Assert.Equal(new Vector3(-10, -10, -20), ModelLayout.StockBoundsMachine(project, bounds).Min);
 
         project.Stock.ExplicitOrigin += new Vector3(2, -6, 4);
         AssertClose(model.Min + new Vector3(3, 1, -1), ModelLayout.MachineBounds(project, bounds).Min);
-        AssertClose(stock.Min + new Vector3(2, -6, 4), ModelLayout.StockBoundsMachine(project, bounds).Min);
+        Assert.Equal(new Vector3(-8, -16, -16), ModelLayout.StockBoundsMachine(project, bounds).Min);
+    }
+
+    // The user's turned, scaled and offset setup: the explicit stock stands at its corner from zero while
+    // the axes turn the model about zero.
+    [Fact]
+    public void Global_ExplicitStockStandsAtItsCorner_WhateverTheAxesAndThePlacementDo()
+    {
+        var bounds = new[] { TestMeshes.Box(20, 4, 12).Bounds };
+        var project = Turned(OriginMode.Global);
+        Assert.Equal(project.Stock.ExplicitOrigin, ModelLayout.StockBoundsMachine(project, bounds).Min);
+        var model = ModelLayout.MachineBounds(project, bounds);
+
+        project.Axes.RotationZ = 0;
+        project.Models[0].Scale = Vector3.One;
+        Assert.Equal(project.Stock.ExplicitOrigin, ModelLayout.StockBoundsMachine(project, bounds).Min);
+        Assert.NotEqual(model.Min, ModelLayout.MachineBounds(project, bounds).Min);
+    }
+
+    // T-190: an auto-fit stock stays around the models in Global (zero at the global origin).
+    [Fact]
+    public void Global_AutoFitStock_StaysAroundTheModels()
+    {
+        var bounds = new[] { TestMeshes.Box(10, 10, 5).Bounds };
+        var project = Project(OriginMode.Global, new ModelPlacement { StlPath = "a.stl", Offset = new Vector3(4, -2, 1) });
+        project.Stock.ExplicitOrigin = new Vector3(7, 7, 7);
+        var corner = AxisSetup.StockCorner(ModelLayout.AnchorBounds(project, bounds), project.Stock);
+        Assert.Equal(corner, ModelLayout.StockBoundsMachine(project, bounds).Min);
+        AssertClose(new Vector3(-45, -45, -25), corner);
+    }
+
+    // T-190: the align commands put the model at the explicit stock that stands at its corner from zero.
+    [Fact]
+    public void Global_AlignmentPutsTheModelAtTheExplicitStock()
+    {
+        var bounds = new[] { TestMeshes.Box(10, 10, 5).Bounds };
+        var project = Project(OriginMode.Global, new ModelPlacement { StlPath = "a.stl" });
+        project.Stock.Placement = StockPlacement.Explicit;
+        project.Stock.ExplicitOrigin = new Vector3(-30, 20, -12);
+        for (var axis = 0; axis < 3; axis++)
+        {
+            project.Models[0].Offset = ModelLayout.CenteredOffset(project, bounds, 0, axis);
+        }
+
+        AssertClose(ModelLayout.StockBoundsMachine(project, bounds).Center, ModelLayout.MachineBounds(project, bounds).Center);
+        project.Models[0].Offset = ModelLayout.AlignedOffset(project, bounds, 0, 2, StockAlignment.Max);
+        AssertClose(new Vector3(0, 0, -12 + 30), new Vector3(0, 0, ModelLayout.MachineBounds(project, bounds).Max.Z));
+    }
+
+    // T-191: changing machine zero changes the reference, not the setup: an explicit stock keeps its place
+    // against the models into and out of Global; other changes and an auto-fit stock keep their values.
+    [Fact]
+    public void ChangingTheOriginMode_KeepsTheStockAgainstTheModels()
+    {
+        var bounds = new[] { TestMeshes.Box(20, 4, 12).Bounds };
+        foreach (var from in StockModes.Concat(ModelModes))
+        {
+            var project = Turned(from);
+            var inStock = ModelLayout.ModelBoundsInStock(project, bounds);
+            var origin = project.Stock.ExplicitOrigin;
+
+            ModelLayout.SetOriginMode(project, bounds, OriginMode.Global);
+            Assert.Equal(OriginMode.Global, project.Axes.OriginMode);
+            AssertClose(inStock.Min, ModelLayout.ModelBoundsInStock(project, bounds).Min);
+            Assert.Equal(project.Stock.ExplicitOrigin, ModelLayout.StockBoundsMachine(project, bounds).Min);
+
+            ModelLayout.SetOriginMode(project, bounds, from);
+            AssertClose(inStock.Min, ModelLayout.ModelBoundsInStock(project, bounds).Min);
+            AssertClose(origin, project.Stock.ExplicitOrigin);
+        }
+
+        var other = Turned(OriginMode.StockCenterTopZ);
+        ModelLayout.SetOriginMode(other, bounds, OriginMode.ModelCustom);
+        Assert.Equal(new Vector3(0, 0, -5.25f), other.Stock.ExplicitOrigin);
+
+        var fitted = Turned(OriginMode.StockCornerMinXYMinZ);
+        fitted.Stock.Placement = StockPlacement.AutoFitWithMargin;
+        ModelLayout.SetOriginMode(fitted, bounds, OriginMode.Global);
+        Assert.Equal(new Vector3(0, 0, -5.25f), fitted.Stock.ExplicitOrigin);
+
+        var empty = Turned(OriginMode.StockCornerMinXYMinZ);
+        ModelLayout.SetOriginMode(empty, null, OriginMode.Global);
+        Assert.Equal(OriginMode.Global, empty.Axes.OriginMode);
+        Assert.Equal(new Vector3(0, 0, -5.25f), empty.Stock.ExplicitOrigin);
     }
 
     [Fact]
@@ -177,8 +262,10 @@ public sealed class MachineZeroTests
         }
     }
 
+    // T-189: with the stock corner at the global origin and the model where the stock corner mode has it,
+    // Global gives that toolpath; moving the model and the stock together shifts it by the same vector.
     [Fact]
-    public void Global_AtTheStockCorner_GivesTheToolpathOfTheStockCorner_AndAShiftedPointShiftsIt()
+    public void Global_WithTheStockAtZero_GivesTheToolpathOfTheStockCorner_AndMovingBothShiftsIt()
     {
         var meshes = new[] { TestMeshes.Box(8, 8, 4) };
         var bounds = meshes.Select(m => m.Bounds).ToList();
@@ -187,18 +274,22 @@ public sealed class MachineZeroTests
         Assert.Contains(expected, s => s.Kind == Miller.Core.Toolpaths.MoveKind.Feed);
 
         var global = Small(OriginMode.Global);
-        global.Axes.CustomOffset = ModelLayout.MachineZero(corner, bounds);
+        global.Axes.CustomOffset = new Vector3(4, -2, 6);
+        global.Stock.Placement = StockPlacement.Explicit;
+        global.Stock.ExplicitOrigin = Vector3.Zero;
+        global.Models[0].Offset = -ModelLayout.MachineZero(corner, bounds);
         Assert.Equal(expected, new PipelineService().Run(global, meshes, null, CancellationToken.None).Toolpath.Segments);
 
         var shift = new Vector3(3, -2, 1);
-        global.Axes.CustomOffset += shift;
+        global.Models[0].Offset += shift;
+        global.Stock.ExplicitOrigin += shift;
         var shifted = new PipelineService().Run(global, meshes, null, CancellationToken.None).Toolpath.Segments;
         Assert.Equal(expected.Count, shifted.Count);
         for (var k = 0; k < expected.Count; k++)
         {
             Assert.Equal(expected[k].Kind, shifted[k].Kind);
-            AssertClose(expected[k].Start - shift, shifted[k].Start);
-            AssertClose(expected[k].End - shift, shifted[k].End);
+            AssertClose(expected[k].Start + shift, shifted[k].Start);
+            AssertClose(expected[k].End + shift, shifted[k].End);
         }
     }
 

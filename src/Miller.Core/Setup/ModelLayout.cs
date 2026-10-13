@@ -6,9 +6,10 @@ namespace Miller.Core.Setup;
 // Where every model of a project ends up in machine space. Placement (orientation, scale and
 // rotation about Z around the oriented center, offset) is per model. The stock is anchored to the union of the
 // models before their offsets (AnchorBounds), so an offset moves a model inside the stock and never
-// drags the stock along. Machine zero (AxisSetup.MachineZero) is shared: on the stock it comes from the
+// drags the stock along; with machine zero Global an explicit stock stands at its corner from the global
+// origin instead. Machine zero (AxisSetup.MachineZero) is shared: on the stock it comes from the
 // stock corner around that anchor, so one model with a zero placement lands exactly where
-// AxisSetup.ToMatrix puts it; on the models it follows their placed box; Global keeps it fixed.
+// AxisSetup.ToMatrix puts it; on the models it follows their placed box; Global is the global origin.
 public static class ModelLayout
 {
     private const float DegToRad = MathF.PI / 180f;
@@ -70,8 +71,32 @@ public static class ModelLayout
     // panel use: the stock corner around the anchor in machine space.
     public static BoundingBox StockBoundsMachine(MillingProject project, IReadOnlyList<BoundingBox> modelBounds)
     {
-        var corner = AxisSetup.StockCorner(AnchorBoundsMachine(project, modelBounds), project.Stock);
+        var corner = StockCorner(project, AnchorBoundsMachine(project, modelBounds));
         return new BoundingBox(corner, corner + AxisSetup.StockBoundingSize(project.Stock));
+    }
+
+    // The stock's minimum corner in the frame of the given anchor: aligned to the anchor (auto fit, or
+    // the explicit offset from its minimum), or with machine zero Global the explicit corner itself,
+    // measured from the global origin, which is machine zero, so it holds in both frames.
+    private static Vector3 StockCorner(MillingProject project, BoundingBox anchor)
+        => project.Axes.IsGlobal && project.Stock.Placement == StockPlacement.Explicit
+            ? project.Stock.ExplicitOrigin
+            : AxisSetup.StockCorner(anchor, project.Stock);
+
+    // Changes machine zero without moving the stock against the models: an explicit stock corner is
+    // measured from the models' minimum outside Global and from the global origin in Global, so a change
+    // into or out of Global rewrites it. Without models (null) the stock has no place to keep.
+    public static void SetOriginMode(MillingProject project, IReadOnlyList<BoundingBox>? modelBounds, OriginMode mode)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (modelBounds is not null && project.Stock.Placement == StockPlacement.Explicit && project.Axes.IsGlobal != (mode == OriginMode.Global))
+        {
+            var anchor = AnchorBounds(project, modelBounds);
+            var corner = StockCorner(project, anchor);
+            project.Stock.ExplicitOrigin = mode == OriginMode.Global ? corner : corner - anchor.Min;
+        }
+
+        project.Axes.OriginMode = mode;
     }
 
     // With machine zero on the stock the box does not depend on the models: its corner sits at minus
@@ -88,7 +113,7 @@ public static class ModelLayout
     public static BoundingBox ModelBoundsInStock(MillingProject project, IReadOnlyList<BoundingBox> modelBounds)
     {
         var placed = PlacedBounds(project, modelBounds);
-        var corner = AxisSetup.StockCorner(AnchorBounds(project, modelBounds), project.Stock);
+        var corner = StockCorner(project, AnchorBounds(project, modelBounds));
         return new BoundingBox(placed.Min - corner, placed.Max - corner);
     }
 
@@ -148,7 +173,7 @@ public static class ModelLayout
             throw new ArgumentOutOfRangeException(nameof(axis));
         }
 
-        var corner = AxisSetup.StockCorner(AnchorBounds(project, modelBounds), project.Stock);
+        var corner = StockCorner(project, AnchorBounds(project, modelBounds));
         var size = AxisSetup.StockBoundingSize(project.Stock);
         var model = AxisSetup.TransformBounds(modelBounds[index], PlacementMatrix(project.Axes, project.Models[index], modelBounds[index]));
         var (stockPoint, modelPoint) = alignment switch

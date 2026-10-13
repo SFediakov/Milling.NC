@@ -41,7 +41,7 @@
       <TextBlock Classes="validation" Text="{Binding MarginError}" IsVisible="{Binding MarginError, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
       <StackPanel Name="ExplicitFields" IsVisible="{Binding IsExplicit}" Spacing="4">
-        <TextBlock Classes="label" Text="Stock corner offset from the model minimum (mm)" />
+        <TextBlock Name="OriginLabel" Classes="label" Text="{Binding OriginLabel}" TextWrapping="Wrap" />
         <StackPanel Orientation="Horizontal" Spacing="4">
           <c:NumericBox Name="OriginXBox" Classes="numeric" Value="{Binding OriginX}" />
           <c:NumericBox Name="OriginYBox" Classes="numeric" Value="{Binding OriginY}" />

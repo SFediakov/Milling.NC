@@ -280,6 +280,8 @@
   zero can sit on the models or at a global point, so the stock box in machine space needs the models:
   `StockBoundsMachine(project, modelBounds)`; the overload without models holds for the stock modes only
   and throws otherwise, and the validator takes the models from the stock corner (`ModelBoundsInStock`).
+  Since T-190 an explicit stock in `Global` stands at its corner from the global origin, not around the
+  anchor: every consumer takes the corner from `ModelLayout.StockCorner`, never `AxisSetup.StockCorner`.
 - Legacy project files: a nullable StlPath is read for migration and ignored when null on write, so
   the serializer's unknown-member rule still holds; the schema version is rewritten to 2 on load.
 - The end-to-end golden is read from the test output folder, which is refreshed by a build of the
