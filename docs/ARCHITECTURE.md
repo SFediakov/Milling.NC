@@ -18,12 +18,15 @@ list that implements it is in `docs/DEVELOPMENT_GUIDE.md`.
 | G7 | Clearance of passes | `src/Miller.Core/Setup/CuttingParameters.cs` (stepover, finishing stepover, stepdown, far stepdown, safe height) |
 | G8 | Stock material: cubic, rectangular, circular 3D forms with dimensions | `src/Miller.Core/Setup/StockDefinition.cs`, `src/Miller.Core/Simulation/StockModel.cs`, `src/Miller.App/Views/StockSettingsView.axaml` |
 | G9 | Axis positioning, direction and rotation | `src/Miller.Core/Setup/AxisSetup.cs`, `src/Miller.App/Views/AxisSettingsView.axaml` |
-| G10 | Simulation preview of head movement and material removal, speed 0.1x to 1000x | `src/Miller.Core/Simulation/SimulationEngine.cs`, `src/Miller.Core/Simulation/MaterialRemover.cs`, `src/Miller.Core/Simulation/SimulationClock.cs`, `src/Miller.App/Rendering/HeightMapRenderer.cs`, `src/Miller.App/Rendering/ToolRenderer.cs`, `src/Miller.App/Views/SimulationControlsView.axaml` |
+| G10 | Simulation preview of head movement and material removal, speed 0.1x to 1000x | `src/Miller.Core/Simulation/SimulationEngine.cs`, `src/Miller.Core/Simulation/MaterialRemover.cs`, `src/Miller.Native/src/mn_simulate.c`, `src/Miller.Core/Simulation/SimulationClock.cs`, `src/Miller.App/Rendering/HeightMapRenderer.cs`, `src/Miller.App/Rendering/ToolRenderer.cs`, `src/Miller.App/Views/SimulationControlsView.axaml` |
 | G11 | Preview of the final cut model including inaccuracy and uncuttable areas | `src/Miller.Core/Analysis/FinalModelAnalyzer.cs`, `src/Miller.Core/Analysis/UncuttableRegions.cs`, `src/Miller.App/Views/AnalysisView.axaml` |
 | G12 | Modular, exchangeable routing algorithms | `src/Miller.Core/Toolpath/IToolpathStrategy.cs`, `src/Miller.Core/Toolpath/StrategyRegistry.cs`, `src/Miller.Core/Toolpath/Strategies/ZLayerByLayerStrategy.cs`, `src/Miller.Core/Toolpath/Strategies/ThreeAxisFreedomStrategy.cs` |
 | G13 | Connect to the CNC and run the prepared program, each command only after the previous one is confirmed | `src/Miller.Machine/MachineController.cs`, `src/Miller.Application/Services/MachineService.cs`, `src/Miller.App/Views/MachineView.axaml` |
 | G14 | Collision summary window at the end of the generation; head and rapid collisions marked on the analysis in their own colors | `src/Miller.Native/src/mn_collision.c`, `src/Miller.Application/Services/CollisionService.cs`, `src/Miller.App/ViewModels/AnalysisViewModel.cs`, `src/Miller.App/Services/ConfirmDialogService.cs` |
 | G15 | Collision handling of the generation: dynamic check, recursion with the X ratio, one run with the Y ratio, chosen on the Strategy tab | `src/Miller.Native/src/mn_collision.c`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_solver.c`, `src/Miller.App/ViewModels/StrategySelectionViewModel.cs` |
+| G19 | Collision mode Backwards_GPU: OpenCL loaded at run time, the backward check's sweeps, the intended surface, the route floors and start tours of the route solver on the discrete GPU; the not-cut report of every generation | `src/Miller.Native/src/mn_gpu.c`, `src/Miller.Native/src/mn_collision.c`, `src/Miller.Application/Services/UncutReport.cs` |
+| G18 | Collision mode Backwards: the backward check from the lowest level up on half the workers, settled sweeps, batches of far stepdown levels routed from the bottom on the other half and joined from the top, the unreached share against the model cells | `src/Miller.Native/src/mn_backwards.c`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_thread.c` |
+| G17 | Parallel route stage: the Z layer's route units (one cave of one far stepdown slab each) with fixed entries 1 mm from the model, solved in waves of up to 64 and merged in order | `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_solver.c`, `src/Miller.Native/src/mn_writer.c`, `src/Miller.Native/src/mn_thread.c` |
 | G16 | Holding bridges in the separation scope: every part the trench frees at the floor keeps `BridgeCount` bridges (default 4, one per direction sector, at the shortest crossing) of `BridgeWidth` (0.5 mm) and `BridgeHeight` (0.3 mm) to the standing stock; their cells carry the status `Bridge` and the strategy tip is lifted over them | `src/Miller.Native/src/mn_bridges.c`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.App/ViewModels/StrategySelectionViewModel.cs` |
 
 Project rules that constrain the design (root `CLAUDE.md`):
@@ -190,12 +193,12 @@ placeholder; the task that implements it is written in the placeholder header.
 | Io | `StlBinaryParser.cs` | 80-byte header, uint32 count, 50-byte records, little endian |
 | Io | `StlAsciiParser.cs` | `solid`/`facet normal`/`outer loop`/`vertex`/`endsolid` grammar, invariant culture |
 | Io | `StlImportReport.cs` | Triangle count, bounds, degenerate triangle count, format detected |
-| Setup | `ToolDefinition.cs` | `CutterDiameter`, `CutterLength` (usable length below the head), `HeadDiameter` (> cutter), `TipType` (Flat, Ball), `Name` |
+| Setup | `ToolDefinition.cs` | `CutterDiameter`, `CutterLength` (usable length below the head), `HeadDiameter` (at least half the cutter diameter, T-165), `TipType` (Flat, Ball), `Name` |
 | Setup | `StockDefinition.cs` | `Shape` (Box, Cylinder); Box: `SizeX`, `SizeY`, `SizeZ`; Cylinder: `Diameter`, `Height`; `Placement` (AutoFitWithMargin, Explicit) and `Margin`; auto-fit alignment of the model union per axis `AlignX`, `AlignY`, `AlignZ` (`StockAlignment` Min, Center, Max; defaults Center, Center, Max) |
-| Setup | `AxisSetup.cs` | Mapping of model axes to machine X, Y, Z; direction sign per axis; rotation angles (degrees) about X, Y, Z; `OriginMode` (StockCornerMinXYMinZ, StockCornerMinXYTopZ, StockCenterTopZ, Custom); `ToMatrix()` |
+| Setup | `AxisSetup.cs` | Mapping of model axes to machine X, Y, Z; direction sign per axis; rotation angles (degrees) about X, Y, Z; `OriginMode` (machine zero on the stock: StockCornerMinXYMinZ, StockCornerMinXYTopZ, StockCenterTopZ, Custom; on the placed models: ModelCornerMinXYMinZ, ModelCornerMinXYTopZ, ModelCenterTopZ, ModelCustom; Global, a fixed point of the model coordinates); `MachineZero()`, `ToMatrix()` |
 | Setup | `CuttingParameters.cs` | `FeedRate`, `PlungeRate`, `RapidRate` (mm/min), `SpindleRpm`, `Stepover`, `Stepdown`, `FarStepdown` (0 for none, otherwise a whole multiple of the stepdown: the far area of every group of levels cut in one step), `SafeHeight`, `CellSize`, `Tolerance`, `MillingDirection` (Zigzag, OneWay) |
 | Setup | `MillingProject.cs` | Aggregate of all setup objects + `Models` (list of `ModelPlacement`), `RoutingStrategyId`, `PostProcessorId`, `CutScope` (Everything, Separation), `MinIslandVolume` (mm3, separation only), `BridgeCount`, `BridgeWidth`, `BridgeHeight` (holding bridges, separation only, defaults 4, 0.5 mm, 0.3 mm), `ReachPercent` (reach rule, default 50); JSON serializable, schema 3 (the legacy strategy id `three-axis-precise` is mapped to `three-axis-freedom` on load (schema 1 `StlPath`, schema 2 `RoughingStrategyId`, `FinishingStrategyId` and `Parameters.Direction` are read and dropped on load) |
-| Setup | `ModelPlacement.cs`, `ModelLayout.cs` | One STL with offset, rotation about Z and a scale factor per axis (`LinkedScale`: one factor for all three, editing rule only); the layout places every model (orientation, scale and rotation around the oriented center, offset), takes machine zero from the stock corner around the anchor (`AnchorBounds`: the union of the models before their offsets, so an offset moves a model inside the stock) and merges the machine meshes; `StockBoundsMachine` is the stock box in machine space (corner at minus the origin offset), `AlignedOffset` puts one model at the stock minimum, middle or maximum per axis in one step |
+| Setup | `ModelPlacement.cs`, `ModelLayout.cs` | One STL with offset, rotation about Z and a scale factor per axis (`LinkedScale`: one factor for all three, editing rule only); the layout places every model (orientation, scale and rotation around the oriented center, offset), anchors the stock to `AnchorBounds` (the union of the models before their offsets, so an offset moves a model inside the stock), takes machine zero per origin mode (stock corner around the anchor, placed models' box, or a global point) and merges the machine meshes; `StockBoundsMachine(project, modelBounds)` is the one stock box in machine space, `ModelBoundsInStock` the models from the stock corner for the validator, `AlignedOffset` puts one model at the stock minimum, middle or maximum per axis in one step |
 | Setup | `MillingPreset.cs` | Named copy of Tool, Axes, Parameters, `RoutingStrategyId`, `PostProcessorId`, `CutScope`, `MinIslandVolume`, `ReachPercent`; `FromProject`, `ApplyTo` (deep copies through the project JSON options) |
 | Setup | `ProjectSerializer.cs` | `System.Text.Json` read/write with invariant culture and schema version |
 | HeightMap | `HeightMap.cs` | Uniform grid: `OriginX`, `OriginY`, `CellSize`, `Width`, `Height`, `float[] Z`; `float.NaN` = no material / outside stock; cell-world conversions; `Clone()`; `Min()`, `Max()` |
@@ -245,10 +248,10 @@ placeholder; the task that implements it is written in the placeholder header.
 | GCode | `PostProcessorRegistry.cs` | Explicit static list; `GetById`, `All` |
 | GCode | `GrblPostProcessor.cs` | Id `grbl`, extension `.nc`. Header comments, `G21 G90 G94 G17`, `S.. M3`, `G0`/`G1` with `F`, `M5`, `M30` |
 | Simulation | `StockModel.cs` | Stock `HeightMap` from `StockDefinition` (cylinder: NaN outside the circle), positioned relative to the model per `AxisSetup` |
-| Simulation | `MaterialRemover.cs` | Sweeps one segment: samples at most `CellSize / 2` apart; per sample `stock = min(stock, z + dz)` over the footprint; returns the dirty rectangle |
+| Simulation | `MaterialRemover.cs` | Facade of `mn_sweep`, `mn_sweep_samples`, `mn_segment_steps` and `mn_stamp` (T-159, T-161) over the C# stock `HeightMap`: the samples of a segment lie `CellSize / 2` apart from its start, both ends included, and a part stamps the samples that fall into it; per sample `stock = min(stock, z + dz)` over the footprint; returns the dirty rectangle |
 | Simulation | `SimulationClock.cs` | Speed factor clamped to [0.1, 1000]; `Advance(realSeconds) -> simSeconds`; pause; `Seek(simSeconds)` |
-| Simulation | `SimulationEngine.cs` | Position along the toolpath (segment index + distance), `Step(simSeconds)`, `SeekTo(length)` (forward, by path length), `SeekToSegment(index)` (forward, whole segments), `RunToEnd()`, `Reset()`, current tool position, progress, `ElapsedSeconds` |
-| Simulation | `CollisionDetector.cs` | Head annulus vs current stock, rapid move into material; emits `SimulationEvent` and reports every entered cell with the tool surface height there |
+| Simulation | `SimulationEngine.cs` | Position along the toolpath (segment index + distance), `Step(simSeconds)`, `SeekTo(length)` (forward, by path length), `SeekToSegment(index)` (forward, whole segments), `RunToEnd()`, `Reset()`, current tool position, progress, `ElapsedSeconds`; `Sampled` at the positions of the generation's collision check, whatever the parts (T-161) |
+| Simulation | `CollisionDetector.cs` | Facade of `mn_check_tip` (T-159): head annulus vs current stock, rapid move into material; emits `SimulationEvent` and reports every entered cell with the tool surface height there, in offset order |
 | Simulation | `CollisionRecorder.cs` | Collisions of one run: one event per segment and kind (shared by the simulation panel and the collision check), per stock cell `CollisionContact` (None, Stock, Model: the tool surface lay below the model surface), the segments that entered the model; `Report()` gives a `CollisionReport` |
 | Simulation | `SimulationEvent.cs` | Kind (HeadCollision, RapidIntoMaterial), segment index, position |
 | Analysis | `DeviationMap.cs` | `stock - model` per cell where model exists; category per cell (Ok, RestMaterial, Gouge, NoModel); the overlay categories Overhang, HeadLimited, CornerLimited, CollisionModel, CollisionStock |
@@ -282,7 +285,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | `Services/SettingsService.cs` | User preferences JSON in the per-user application data folder: last folders, window size, last speed factor |
 | `Services/PresetService.cs` | Named `MillingPreset`s in one `presets.json` next to the executable (`AppContext.BaseDirectory`); `Load`, `Save` (replace by name, case-insensitive), `Delete`; a corrupt file throws |
 | `Services/LogService.cs` | Append-only text log in `logs/miller.log` next to the executable; exception formatting |
-| `Validation/ProjectValidator.cs` | Rule list with messages: cutter length > 0, head diameter > cutter diameter, stepover in (0, cutter diameter], stepdown > 0, safe height > 0, cell size in [0.01, 5] mm, feed rates > 0, reach percent in (0, 100], model fits inside the stock box in machine space (`ModelLayout.StockBoundsMachine`) |
+| `Validation/ProjectValidator.cs` | Rule list with messages: cutter length > 0, head bottom diameter at least half the cutter diameter, stepover in (0, cutter diameter], stepdown > 0, safe height > 0, cell size in [0.01, 5] mm, feed rates > 0, reach percent in (0, 100], model fits inside the stock box (`ModelLayout.ModelBoundsInStock`, independent of the origin mode) |
 | `Validation/ValidationResult.cs` | Errors and warnings with the field name they refer to |
 | `Progress/ProgressReport.cs` | Stage name, fraction 0..1, message |
 
@@ -345,7 +348,7 @@ Mirrors the source tree: `Core/<Folder>/<Type>Tests.cs`,
 | Path | Purpose |
 |---|---|
 | `build.sh` | The only build script. Restore, build, test, publish the host runtime (`win-x64` on Windows, `linux-x64` on Linux), assemble `dist/`. Runs on Linux and on Git Bash for Windows |
-| `src/Miller.Native/` | The native C library of the toolpath generation: `CMakeLists.txt`, `include/miller_native.h` (the exported API), `src/*.c`; built into `src/Miller.Native/build/out` |
+| `src/Miller.Native/` | The native C library of the toolpath generation and the simulation: `CMakeLists.txt`, `include/miller_native.h` (the exported API), `src/*.c` (`mn_simulate.c` the sweep, stamp and check of the simulation, `mn_thread.c` the worker pool of the parallel stages, T-160); built into `src/Miller.Native/build/out` |
 | `launchers/Miller.sh` | Copied to `dist/linux-x64/Miller.sh`; `cd` to its own directory and `exec ./Miller "$@"` |
 | `scripts/vendor-packages.sh` | One-time, online: downloads every package in `Directory.Packages.props` with dependencies into `third_party/nuget/` |
 | `third_party/nuget/` | Vendored `.nupkg` files; the only NuGet source. Git-ignored, filled once per clone by `scripts/vendor-packages.sh` |
@@ -391,20 +394,31 @@ STL file
   -> PostProcessorRegistry.GetById(PostProcessorId).Write(...) -> .nc file
 ```
 
+The native generation runs its row-wise stages on a worker pool (T-160,
+`mn_rows_parallel`): the triangle transform, the rasterizer, the tip, remaining
+and head limit maps, the slicing masks, the lower envelopes of the distance
+transforms, the feed runs of the simplifier and the four start walks of the
+route solver. Rows are striped over the workers and depend on the input only,
+so the output is the same with any worker count (`NativeWorkers.Limit` sets
+one). The local search and the dynamic collision check are sequential by
+nature: each move and each segment depends on the state the previous one left.
+
 ### 5.2 Simulation (SimulationService, driven by UiTimer)
 
 ```
 real dt (seconds) -> SimulationClock (x speed factor) -> sim dt
 sim dt -> SimulationEngine.Step: distance = rate(kind) * simDt / 60
-       -> for each covered segment part: MaterialRemover.Sweep(stock, segment part)
-       -> CollisionDetector.Check(stock, tool position)
+       -> for each covered segment part: MaterialRemover.SweepSamples(stock, segment, samples in the part)
+       -> CollisionDetector.Check(stock, sample) at the generation check's positions (T-161)
        -> snapshot: tool position, dirty rectangle, events
 snapshot -> ViewportViewModel -> HeightMapRenderer (partial update), ToolRenderer
 ```
 
 Processing and rendering are decoupled: all segments covered by one tick are
 processed in that tick; the viewport redraws once per frame. At 1000x the work
-per tick grows; the code path does not change.
+per tick grows; the code path does not change. The sweep and the check run in
+the native library (`mn_sweep`, `mn_check_tip`, T-159) on the pinned cell array
+of the C# stock map; the engine, the clock and the recorder stay in C#.
 
 A press on the progress bar calls `SimulationService.SeekTo(fraction)` on a
 background task with the clock paused: forward from the current position the

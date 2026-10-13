@@ -264,6 +264,17 @@ public sealed class ProjectSerializerTests
         Assert.Equal(0.45f, copy.BridgeHeight);
     }
 
+    // T-169: the third collision mode is written by name and read back.
+    [Fact]
+    public void Backwards_RoundTripsByName()
+    {
+        var original = MillingProject.Default();
+        original.CollisionMode = CollisionMode.Backwards;
+        var json = ProjectSerializer.Serialize(original);
+        Assert.Contains("\"CollisionMode\": \"Backwards\"", json);
+        Assert.Equal(CollisionMode.Backwards, ProjectSerializer.Deserialize(json).CollisionMode);
+    }
+
     [Fact]
     public void RoundTrip_KeepsTheScaleAndTheLink()
     {

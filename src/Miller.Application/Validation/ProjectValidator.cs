@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.Numerics;
 using Miller.Core.Geometry;
+using Miller.Core.Native;
 using Miller.Core.HeightMaps;
 using Miller.Core.Setup;
 using Miller.Core.Slicing;
+using Miller.Core.Toolpaths.Strategies;
 
 namespace Miller.Application.Validation;
 
@@ -18,7 +20,12 @@ public static class ProjectValidator
     // the App layer reads it as HeightMapRenderer.MaxCellsForInteractiveFrame.
     public const long MaxInteractiveCells = 1_000_000;
 
-    public static ValidationResult Validate(MillingProject project, BoundingBox? modelBoundsMachine)
+    // The head bottom may be up to 50 percent narrower than the cutter (T-165, a necked tool).
+    public const float MinHeadBottomRatio = 0.5f;
+
+    // modelBoundsInStock: the placed models relative to the stock's minimum corner
+    // (ModelLayout.ModelBoundsInStock), or null to skip the containment test.
+    public static ValidationResult Validate(MillingProject project, BoundingBox? modelBoundsInStock)
     {
         ArgumentNullException.ThrowIfNull(project);
         var errors = new List<ValidationMessage>();
@@ -29,10 +36,10 @@ public static class ProjectValidator
 
         Positive(errors, "Tool.CutterDiameter", tool.CutterDiameter);
         Positive(errors, "Tool.CutterLength", tool.CutterLength);
-        if (!(tool.HeadDiameter > tool.CutterDiameter))
+        if (!(tool.HeadDiameter >= tool.CutterDiameter * MinHeadBottomRatio))
         {
             errors.Add(new ValidationMessage("Tool.HeadDiameter",
-                $"Head diameter {F(tool.HeadDiameter)} must be larger than the cutter diameter {F(tool.CutterDiameter)}."));
+                $"Head bottom diameter {F(tool.HeadDiameter)} must be at least {F(tool.CutterDiameter * MinHeadBottomRatio)}, half the cutter diameter {F(tool.CutterDiameter)}."));
         }
 
         if (!Enum.IsDefined(tool.HeadShape))
@@ -66,6 +73,11 @@ public static class ProjectValidator
         {
             errors.Add(new ValidationMessage("Parameters.FarStepdown",
                 $"Far stepdown {F(p.FarStepdown)} must be 0 (none) or a whole multiple of the stepdown {F(p.Stepdown)} of at least twice it."));
+        }
+        else if (p.Stepdown > 0 && project.CollisionMode is CollisionMode.Backwards or CollisionMode.Backwards_GPU && p.FarStepdown + p.Tolerance > tool.CutterLength + Slicer.LevelTolerance)
+        {
+            warnings.Add(new ValidationMessage("Parameters.FarStepdown",
+                $"Far stepdown {F(p.FarStepdown)} plus the tolerance {F(p.Tolerance)} exceeds the cutter length {F(tool.CutterLength)}: Backwards cuts the far go only where the head clears the material at the slab top, everything else level by level."));
         }
         else if (p.Stepdown > 0 && p.FarStepdown > tool.CutterLength + Slicer.LevelTolerance)
         {
@@ -128,6 +140,14 @@ public static class ProjectValidator
         {
             errors.Add(new ValidationMessage("Strategy.CollisionMode", $"Unknown collision mode {project.CollisionMode}."));
         }
+        else if (project.CollisionMode is CollisionMode.Backwards or CollisionMode.Backwards_GPU && project.RoutingStrategyId != ZLayerByLayerStrategy.StrategyId)
+        {
+            errors.Add(new ValidationMessage("Strategy.CollisionMode", $"{project.CollisionMode} collision handling works with the Z layer by layer strategy only."));
+        }
+        else if (project.CollisionMode == CollisionMode.Backwards_GPU && !GpuDevice.Available)
+        {
+            errors.Add(new ValidationMessage("Strategy.CollisionMode", $"Backwards_GPU needs an OpenCL GPU: {GpuDevice.Description}"));
+        }
 
         Finite(errors, "Strategy.RecursionRatio", project.RecursionRatio);
         Finite(errors, "Strategy.OneRunRatio", project.OneRunRatio);
@@ -164,20 +184,21 @@ public static class ProjectValidator
             }
         }
 
-        if (modelBoundsMachine is { IsEmpty: false } model && !StockContains(project, model))
+        if (modelBoundsInStock is { IsEmpty: false } model && !StockContains(project, model))
         {
             warnings.Add(new ValidationMessage("Stock.Placement",
-                $"Model bounds {model.Min} to {model.Max} are not inside the stock."));
+                $"Model bounds {model.Min} to {model.Max} from the stock corner are not inside the stock."));
         }
 
         return new ValidationResult(errors, warnings);
     }
 
-    // Model bounds in machine space against the stock box in machine space (ModelLayout.StockBoundsMachine).
+    // Model bounds relative to the stock's minimum corner (ModelLayout.ModelBoundsInStock) against the
+    // stock box from that corner, so the test holds wherever machine zero is.
     private static bool StockContains(MillingProject project, BoundingBox model)
     {
         var stock = project.Stock;
-        var box = ModelLayout.StockBoundsMachine(project);
+        var box = new BoundingBox(Vector3.Zero, AxisSetup.StockBoundingSize(stock));
         if (!box.Contains(model))
         {
             return false;

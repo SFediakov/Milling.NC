@@ -282,7 +282,7 @@ public sealed class MainWindowViewModelTests : IDisposable
         Assert.Equal(vm.Axes.MappingError, vm.Axes.MachineBoundsText);
         Assert.False(vm.Stock.FitToModelCommand.CanExecute(null));
 
-        vm.Tool.HeadDiameter = 5f;
+        vm.Tool.HeadDiameter = 2f;
         Assert.NotNull(vm.Tool.HeadDiameterError);
         vm.Tool.HeadDiameter = 10f;
         Assert.Null(vm.Tool.HeadDiameterError);

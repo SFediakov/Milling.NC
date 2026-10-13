@@ -15,7 +15,10 @@ namespace Miller.Core.Generation;
 // raised (the head, not the cutter, decides the depth there); ShouldCut the stock the dynamic check
 // found in the way of the head; Status the native status byte per cell; Collisions the check of the
 // kept pass with the rule of the simulation panel; Passes how many passes ran; Layers the layers of
-// the toolpath (ToolpathLayer).
+// the toolpath (ToolpathLayer); FarStepdown the far positions of the first and the kept pass and those
+// withdrawn around collisions (T-164); RouteUnitEntries where every route unit after the first begins and
+// the one before it ends (T-166); Unreached the counts of the backward check, null unless the collision
+// mode was Backwards (T-172); Uncut the cells the toolpath leaves above what the plan intended (T-173).
 public sealed record GenerationResult(
     Mesh MachineMesh,
     StockGeometry Stock,
@@ -36,10 +39,49 @@ public sealed record GenerationResult(
     int Passes,
     IReadOnlyList<PassCollisions> PassCollisions,
     BridgeReport Bridges,
-    IReadOnlyList<ToolpathLayer> Layers);
+    IReadOnlyList<ToolpathLayer> Layers,
+    FarStepdownAreas FarStepdown,
+    IReadOnlyList<Vector3> RouteUnitEntries,
+    UnreachedCells? Unreached,
+    UncutCells Uncut,
+    ProcessTimes Times);
 
-// What one generation pass's check found: the distinct entered cells and the events.
-public readonly record struct PassCollisions(int EnteredCells, int Events);
+// The process times of a generation in seconds (T-176, mn_result_timings): the wall time of every stage
+// over all passes, then the parts inside them; the solver parts are summed over route units that run on
+// several threads at once.
+public sealed record ProcessTimes(IReadOnlyList<double> Seconds)
+{
+    public static readonly IReadOnlyList<string> Names = new[]
+    {
+        "transform", "stock", "model map", "reach map", "head clearance", "slice", "route", "simplify", "statistics", "collision check",
+        "intended surface", "backward closings", "backward level tests", "backward batches", "solver waiting for the check", "slab groups",
+        "route units", "solver candidate lists", "solver start walks", "solver local search", "route floors", "route writing",
+        "GPU setup", "GPU transfers", "GPU start tours",
+    };
+}
+
+// Not cut (T-173): the cells whose material after the toolpath (the stock the collision check cuts)
+// stands more than the tolerance above what the first pass's plan intended (the closing of the deepest
+// level of every position in its masks), their area, the volume of material above that surface and the
+// highest of them.
+public readonly record struct UncutCells(int Cells, double AreaMm2, double VolumeMm3, float MaxHeight);
+
+// The backward check of the kept pass (T-172): the positions it left unreached and the model cells, both
+// summed over the levels (a cell counts on every level its model stands above), and the sweeps from the
+// lowest level up it took to settle; Percent is the first count as a share of the second.
+public readonly record struct UnreachedCells(long Unreached, long ModelCells, int Sweeps)
+{
+    public double Percent => ModelCells > 0 ? 100.0 * Unreached / ModelCells : 0.0;
+}
+
+// What one generation pass's check found: the distinct entered cells and the events; with a far
+// stepdown the positions the pass milled with it and those withdrawn around its collisions (T-164).
+public readonly record struct PassCollisions(int EnteredCells, int Events, int FarCells, int WithdrawnCells);
+
+// Far stepdown positions per cell (T-164): those the first pass milled with it, those the kept pass
+// milled with it, and those of the first pass the kept pass was no longer allowed because a collision
+// lay within 1 mm. All false without a far stepdown.
+public sealed record FarStepdownAreas(bool[,] FirstArea, bool[,] Milled, bool[,] Withdrawn);
 
 // Holding bridges of the kept pass (separation scope): the parts the trench frees at the floor, the
 // bridges wanted (parts times the bridge count) and the bridges placed.
@@ -78,7 +120,8 @@ public static class ToolpathGeneration
             throw new ArgumentException($"Stock size must be positive, got {size}.", nameof(project));
         }
 
-        var corner = AxisSetup.StockCorner(anchor, project.Stock);
+        var stockBounds = ModelLayout.StockBoundsMachine(project, bounds);
+        var corner = stockBounds.Min;
         var triangles = new float[Math.Max(meshes.Sum(m => m.TriangleCount) * 9, 1)];
         var n = 0;
         foreach (var mesh in meshes)
@@ -142,7 +185,7 @@ public static class ToolpathGeneration
         GC.KeepAlive(callback);
         try
         {
-            return Read(result, project, new BoundingBox(corner, corner + size));
+            return Read(result, project, stockBounds);
         }
         finally
         {
@@ -268,19 +311,58 @@ public static class ToolpathGeneration
         var passes = CoreNative.mn_result_passes(result);
         var entered = new int[Math.Max(passes, 1)];
         var passEvents = new int[Math.Max(passes, 1)];
-        fixed (int* e = entered, v = passEvents)
+        var farCells = new int[Math.Max(passes, 1)];
+        var withdrawnCells = new int[Math.Max(passes, 1)];
+        fixed (int* e = entered, v = passEvents, f = farCells, w = withdrawnCells)
         {
             CoreNative.mn_result_pass_counts(result, e, v);
+            CoreNative.mn_result_pass_far(result, f, w);
         }
 
         var passCollisions = new PassCollisions[passes];
         for (var k = 0; k < passes; k++)
         {
-            passCollisions[k] = new PassCollisions(entered[k], passEvents[k]);
+            passCollisions[k] = new PassCollisions(entered[k], passEvents[k], farCells[k], withdrawnCells[k]);
+        }
+
+        var farStepdown = new FarStepdownAreas(Mask(CoreNative.MaskFarFirst), Mask(CoreNative.MaskFarMilled), Mask(CoreNative.MaskFarWithdrawn));
+        var unitCount = CoreNative.mn_result_unit_count(result);
+        var unitPoints = new float[Math.Max(unitCount * 3, 1)];
+        fixed (float* u = unitPoints)
+        {
+            CoreNative.mn_result_units(result, u);
+        }
+
+        var entries = new Vector3[unitCount];
+        for (var k = 0; k < unitCount; k++)
+        {
+            entries[k] = new Vector3(unitPoints[3 * k], unitPoints[3 * k + 1], unitPoints[3 * k + 2]);
         }
 
         int parts, wanted, placed;
         CoreNative.mn_result_bridges(result, &parts, &wanted, &placed);
+        int uncutCells;
+        double uncutVolume;
+        float uncutHeight;
+        CoreNative.mn_result_uncut(result, &uncutCells, &uncutVolume, &uncutHeight);
+        var uncut = new UncutCells(uncutCells, uncutCells * (double)grid.CellSize * grid.CellSize, uncutVolume, uncutHeight);
+        var timings = new double[ProcessTimes.Names.Count + 1];
+        int written;
+        fixed (double* t = timings)
+        {
+            written = CoreNative.mn_result_timings(result, t, timings.Length);
+        }
+
+        if (written != ProcessTimes.Names.Count)
+        {
+            throw new InvalidOperationException($"The native library reports {written} process times, the names list {ProcessTimes.Names.Count}.");
+        }
+
+        Array.Resize(ref timings, written);
+
+        long unreachedCount, modelCells;
+        int sweeps;
+        UnreachedCells? unreached = CoreNative.mn_result_unreached(result, &unreachedCount, &modelCells, &sweeps) != 0 ? new UnreachedCells(unreachedCount, modelCells, sweeps) : null;
 
         var collisionCount = CoreNative.mn_result_collision_count(result);
         var collisions = new CoreNative.Collision[Math.Max(collisionCount, 1)];
@@ -311,6 +393,11 @@ public static class ToolpathGeneration
             passes,
             passCollisions,
             new BridgeReport(parts, wanted, placed),
-            layers);
+            layers,
+            farStepdown,
+            entries,
+            unreached,
+            uncut,
+            new ProcessTimes(timings));
     }
 }

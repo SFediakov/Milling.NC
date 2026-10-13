@@ -99,6 +99,14 @@ typedef struct mn_parameters {
     float far_stepdown;
 } mn_parameters;
 
+/* Inclusive cell rectangle a sweep lowered; empty when i1 < i0 (DirtyRect). */
+typedef struct mn_dirty {
+    int32_t i0;
+    int32_t j0;
+    int32_t i1;
+    int32_t j1;
+} mn_dirty;
+
 typedef struct mn_statistics {
     float rapid_length;
     float feed_length;
@@ -115,6 +123,29 @@ typedef void (*mn_progress_fn)(void* context, int32_t step, int32_t steps, float
 MN_API const char* mn_last_error(void);
 MN_API void mn_free(void* pointer);
 
+/* Worker threads of the parallel stages: the processor count, or the limit set here (0 for none);
+ * every stage gives the same result with any count. */
+MN_API void mn_set_worker_limit(int32_t limit);
+MN_API int32_t mn_workers(void);
+
+/* ---- simulation (T-159): the stock as a float map the caller owns ---- */
+/* Sweeps one segment part: the tip sampled at most cell / 2 apart from `from` to `to`, both ends
+ * included, every footprint cell taking min(stock, z + dz); `dirty` receives the cells that got lower.
+ * One tool position: mn_stamp. */
+MN_API int32_t mn_sweep(float* stock, const mn_grid* grid, const mn_offset* offsets, int32_t count, const float* from, const float* to, mn_dirty* dirty);
+/* The sample count of a segment (cell / 2 apart, both ends included) and its length. */
+MN_API int32_t mn_segment_steps(const float* start, const float* end, float cell_size, float* length);
+/* Samples first..last of the whole segment's samples (clamped); the tip of the last one in last_tip
+ * (may be NULL); returns the segment's sample count or a negative status. */
+MN_API int32_t mn_sweep_samples(float* stock, const mn_grid* grid, const mn_offset* offsets, int32_t count, const float* start, const float* end, int32_t first, int32_t last, mn_dirty* dirty, float* last_tip);
+MN_API int32_t mn_stamp(float* stock, const mn_grid* grid, const mn_offset* offsets, int32_t count, const float* tip, mn_dirty* dirty);
+/* The cells one tip enters, in offset order (the footprint of a rapid first, then the head annulus),
+ * with the tool surface height there; returns their number (at most `capacity`, else an error) and
+ * the kind (MN_EVENT_*) and heights of the first one, or -1 when none. */
+MN_API int32_t mn_check_tip(const float* stock, const mn_grid* grid, const mn_offset* offsets, int32_t offset_count, const mn_offset* annulus, int32_t annulus_count,
+    float cutter_length, float tolerance, const float* tip, int32_t rapid, int32_t* cells, float* surfaces, int32_t capacity, int32_t* first_kind, float* first_stock,
+    float* first_surface);
+
 /* ---- tool profile ---- */
 MN_API int32_t mn_profile_create(const mn_tool* tool, float cell_size, mn_offset** offsets, int32_t* offset_count, mn_offset** annulus, int32_t* annulus_count);
 MN_API float mn_bottom_height(int32_t tip_type, float radius, float distance);
@@ -122,18 +153,18 @@ MN_API float mn_bottom_height(int32_t tip_type, float radius, float distance);
 /* ---- mesh ---- */
 MN_API void mn_transform_points(const float* points, int32_t point_count, const float* matrix, float* result);
 MN_API int32_t mn_grid_for(float min_x, float min_y, float max_x, float max_y, float cell_size, mn_grid* grid);
-MN_API void mn_rasterize(const float* triangles, int32_t triangle_count, const mn_grid* grid, float* z);
+MN_API int32_t mn_rasterize(const float* triangles, int32_t triangle_count, const mn_grid* grid, float* z);
 MN_API int32_t mn_stock_map(float corner_x, float corner_y, float size_x, float size_y, float top, int32_t cylinder, float diameter, float cell_size, mn_grid* grid, float** z);
 
 /* ---- heightmap algorithms ---- */
-MN_API void mn_tip_map(const mn_grid* grid, const float* model, const mn_offset* offsets, int32_t count, float* tip);
-MN_API void mn_remaining(const mn_grid* grid, const float* tip, const mn_offset* offsets, int32_t count, float* remaining);
+MN_API int32_t mn_tip_map(const mn_grid* grid, const float* model, const mn_offset* offsets, int32_t count, float* tip);
+MN_API int32_t mn_remaining(const mn_grid* grid, const float* tip, const mn_offset* offsets, int32_t count, float* remaining);
 MN_API int32_t mn_reach_map(const mn_grid* grid, const float* model, const float* stock, const mn_offset* offsets, int32_t count, float floor, float percent, float tolerance, mn_progress_fn progress, void* context, float* reach);
 MN_API double mn_reach_round_percent(float percent, int32_t round);
 MN_API int32_t mn_reach_rank(int32_t n, float percent);
 MN_API float mn_reach_select(float* values, int32_t n, int32_t rank);
 MN_API float mn_reach_select_threshold(float* values, uint8_t* excluded, int32_t n, double percent);
-MN_API void mn_head_limit(const mn_grid* grid, const float* remaining, const mn_offset* annulus, int32_t count, float cutter_length, float* limit);
+MN_API int32_t mn_head_limit(const mn_grid* grid, const float* remaining, const mn_offset* annulus, int32_t count, float cutter_length, float* limit);
 MN_API void mn_apply_head_limit(const float* tip, const float* limit, int32_t cells, float* effective);
 MN_API void mn_head_limited_mask(const float* tip, const float* limit, int32_t cells, float tolerance, uint8_t* mask);
 MN_API int32_t mn_distances(const uint8_t* mask, int32_t width, int32_t height, float cell_size, float* distances);
@@ -190,8 +221,9 @@ MN_API float mn_turn_slow_speed_factor(void);
 MN_API float mn_turn_per_slow_millimetre(void);
 MN_API int64_t mn_budget_share(int64_t remaining, int32_t nodes, int64_t nodes_left);
 /* Precedence pairs (T-150): pair k orders node before[k] ahead of node after[k]; pair_count 0 means no
- * pairs. The start must have no predecessor and the pairs must be acyclic. */
-MN_API int32_t mn_route_solve(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, int32_t count, int32_t start, const int32_t* before, const int32_t* after, int32_t pair_count, int64_t allowance, const volatile int32_t* cancel, int32_t* order, int64_t* evaluations);
+ * pairs. The start must have no predecessor and the pairs must be acyclic. `end` (T-166) is -1 for a
+ * path that ends anywhere, or the node it must finish at (not the start, no successor). */
+MN_API int32_t mn_route_solve(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, int32_t count, int32_t start, int32_t end, const int32_t* before, const int32_t* after, int32_t pair_count, int64_t allowance, const volatile int32_t* cancel, int32_t* order, int64_t* evaluations);
 MN_API float mn_route_path_cost(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, const int32_t* order, int32_t count);
 
 /* ---- writer ---- */
@@ -221,9 +253,28 @@ MN_API void mn_writer_free(mn_writer* writer);
 #define MN_CELL_BRIDGE 16
 
 /* Recursion: generate, check, resolve and generate again while collisions decrease. One run: the
- * strategies evaluate every node against the standing material before its route (T-150). */
+ * strategies evaluate every node against the standing material before its route (T-150). Backwards
+ * (T-169 to T-172, Z layer only): a check from the lowest level up excludes the positions whose head
+ * would meet material only cutting the model frees, and the routes of every far stepdown slab are
+ * solved from the bottom while it runs. */
 #define MN_COLLISION_RECURSION 0
 #define MN_COLLISION_ONE_RUN 1
+#define MN_COLLISION_BACKWARDS 2
+/* Backwards_GPU (T-174, user request): Backwards with its data-parallel processes on the discrete GPU
+ * (the backward check's sweeps, the intended surface, the route floors, extra start tours of the route
+ * solver); it fails when no OpenCL GPU is found. */
+#define MN_COLLISION_BACKWARDS_GPU 3
+
+/* The OpenCL GPU the Backwards_GPU mode uses: MN_OK and its name, or a status and mn_last_error. */
+MN_API int32_t mn_gpu_device(char* name, int32_t capacity);
+/* The GPU processes on their own, for the comparisons with the CPU (T-177): the closing of a map
+ * (mn_remaining on the GPU), the route floor of one route (the CPU's is mn_route_floor: over uncut stock
+ * the floor rises to `safe` and the touch floor stays above what the tip map keeps; lifted holds both,
+ * 2 * cells) and the start tours of the route solver (orders keep * count, kept their number). */
+MN_API int32_t mn_gpu_remaining(const mn_grid* grid, const float* tip, const mn_offset* offsets, int32_t count, float* remaining);
+MN_API int32_t mn_route_floor(const float* stock, const float* tip, const float* floor, int32_t cells, float safe, float* lifted);
+MN_API int32_t mn_gpu_route_floor(const float* stock, const float* tip, const float* floor, int32_t cells, float safe, float* lifted);
+MN_API int32_t mn_gpu_start_tours(const float* x, const float* y, int32_t count, int32_t start, int32_t end, int32_t tours, int32_t keep, int32_t* orders, int32_t* kept);
 
 #define MN_EVENT_HEAD 0
 #define MN_EVENT_RAPID 1
@@ -249,6 +300,15 @@ typedef struct mn_collision {
  * (cells) receives MODEL and, per entered cell, COLLISION; SHOULD_REMOVE is not touched. */
 MN_API int32_t mn_collision_check(const mn_segment* segments, int32_t count, const mn_grid* grid, const float* stock, const float* model, float floor, const mn_tool* tool, float tolerance, uint8_t* status, mn_collision** events, int32_t* event_count);
 
+/* Far stepdown withdrawal (T-164): a collision's place (a cell the head or a rapid entered, and the
+ * tool axis cell that entered it) and everything within this many millimetres of it in XY are
+ * withdrawn from the far stepdown for every later pass and milled with the normal stepdown. */
+#define MN_FAR_WITHDRAW_RADIUS 1.0f
+
+/* Clears `allowed` within `radius` of every marked place; returns how many allowed cells it cleared
+ * or a negative status. */
+MN_API int32_t mn_far_withdraw(const uint8_t* places, int32_t width, int32_t height, float cell_size, float radius, uint8_t* allowed);
+
 /* Everything a strategy reads. Masks of the plan come from mn_plan; should_cut may be NULL. In one
  * run mode (collision_mode MN_COLLISION_ONE_RUN, ratio Y) the strategy evaluates every node against
  * the standing material and writes the raised tips of the positions it does not achieve into
@@ -269,6 +329,10 @@ typedef struct mn_context {
     int32_t collision_mode;
     float ratio;
     float* raised;
+    /* Z layer with a far stepdown (T-164): the positions the far block may take (NULL: every far
+     * position), and, when not NULL, 1 per position it milled with the far stepdown, 0 elsewhere. */
+    const uint8_t* far_allowed;
+    uint8_t* far_area;
 } mn_context;
 
 /* 3 axis freedom helpers: the level map max(tip, level) with NaN kept, and whether a cell of a map
@@ -365,6 +429,11 @@ MN_API int32_t mn_generate(const mn_job* job, mn_stage_fn progress, void* contex
 #define MN_CONTACT_NONE 0
 #define MN_CONTACT_STOCK 1
 #define MN_CONTACT_MODEL 2
+/* Far stepdown (T-164): the positions the first pass milled with it, those the kept pass milled with
+ * it, and those of the first pass the kept pass was no longer allowed (withdrawn around collisions). */
+#define MN_MASK_FAR_FIRST 4
+#define MN_MASK_FAR_MILLED 5
+#define MN_MASK_FAR_WITHDRAWN 6
 
 MN_API void mn_result_grid(const mn_result* result, mn_grid* grid);
 MN_API void mn_result_numbers(const mn_result* result, float* stock_top, float* stock_bottom, float* floor);
@@ -384,9 +453,45 @@ MN_API void mn_result_layers(const mn_result* result, int32_t* segment, float* l
 MN_API int32_t mn_result_passes(const mn_result* result);
 /* Per pass (mn_result_passes entries): the distinct cells its check entered and its events. */
 MN_API void mn_result_pass_counts(const mn_result* result, int32_t* entered, int32_t* events);
+/* Route units of the kept pass (T-166): the entry of every unit after the first (x, y, z each), where
+ * the unit before it ends and it begins. */
+MN_API int32_t mn_result_unit_count(const mn_result* result);
+MN_API void mn_result_units(const mn_result* result, float* points);
+/* Per pass: the positions it milled with the far stepdown and those withdrawn after its check. */
+MN_API void mn_result_pass_far(const mn_result* result, int32_t* milled, int32_t* withdrawn);
 /* Holding bridges of the kept pass: the parts the trench frees, the bridges wanted (parts times the
  * count) and the bridges placed. */
 MN_API void mn_result_bridges(const mn_result* result, int32_t* parts, int32_t* wanted, int32_t* placed);
+/* Backwards (T-172): 1 when the kept pass ran the backward check, then the positions it left unreached
+ * and the model cells, both summed over the levels (a cell counts on every level the model stands above),
+ * and the sweeps from the lowest level up the check took to settle. */
+MN_API int32_t mn_result_unreached(const mn_result* result, int64_t* unreached, int64_t* model_cells, int32_t* sweeps);
+/* Not cut (T-173): the cells the kept pass's toolpath leaves more than the tolerance above what the
+ * first pass's plan intended (the closing of the deepest level of every position in its masks), the
+ * volume of material above that surface there and the highest of them. */
+MN_API void mn_result_uncut(const mn_result* result, int32_t* cells, double* volume, float* max_height);
+
+/* Process times of the whole generation in seconds (T-176), indexed as below: the wall time of every
+ * stage over all passes, then the parts inside them; the solver parts (candidate lists, start walks,
+ * local search, route floors, writing) are summed over the units, which run on several threads at once.
+ * Returns how many values it wrote (at most `capacity`). */
+#define MN_TIME_INTENDED 10
+#define MN_TIME_BACK_SETTLE 11
+#define MN_TIME_BACK_LEVELS 12
+#define MN_TIME_BACK_FILL 13
+#define MN_TIME_BACK_WAIT 14
+#define MN_TIME_GROUPS 15
+#define MN_TIME_UNITS 16
+#define MN_TIME_CANDIDATES 17
+#define MN_TIME_WALKS 18
+#define MN_TIME_SEARCH 19
+#define MN_TIME_FLOORS 20
+#define MN_TIME_WRITE 21
+#define MN_TIME_GPU_SETUP 22
+#define MN_TIME_GPU_TRANSFER 23
+#define MN_TIME_GPU_TOURS 24
+#define MN_TIME_COUNT 25
+MN_API int32_t mn_result_timings(const mn_result* result, double* seconds, int32_t capacity);
 MN_API int32_t mn_result_collision_count(const mn_result* result);
 MN_API void mn_result_collisions(const mn_result* result, mn_collision* collisions);
 MN_API void mn_result_profile(const mn_result* result, int32_t* offset_count, int32_t* annulus_count);

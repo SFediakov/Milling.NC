@@ -31,7 +31,8 @@ public sealed class ToolDefinition
 
     public float CutterLength { get; set; } = DefaultCutterLength;
 
-    // The cylinder's diameter, or the frustum's bottom diameter.
+    // The cylinder's diameter, or the frustum's bottom diameter; down to half the cutter diameter (a
+    // necked tool): the head inside the cutter radius meets only what the flutes leave above them.
     public float HeadDiameter { get; set; } = DefaultHeadDiameter;
 
     public HeadShape HeadShape { get; set; } = HeadShape.Cylinder;

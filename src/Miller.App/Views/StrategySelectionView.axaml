@@ -41,6 +41,7 @@
 
       <TextBlock Classes="label" Text="Collision handling" />
       <ComboBox Name="CollisionModeBox" ItemsSource="{x:Static vm:StrategySelectionViewModel.CollisionModes}" SelectedItem="{Binding CollisionMode}" Width="260" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding CollisionModeError}" IsVisible="{Binding CollisionModeError, Converter={x:Static ObjectConverters.IsNotNull}}" TextWrapping="Wrap" />
       <TextBlock Classes="label" Text="Recursion: finished model cells per damaged cell to keep a position (X)" TextWrapping="Wrap" />
       <c:NumericBox Name="RecursionRatioBox" Classes="numeric" Value="{Binding RecursionRatio}" IsEnabled="{Binding IsRecursion}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding RecursionRatioError}" IsVisible="{Binding RecursionRatioError, Converter={x:Static ObjectConverters.IsNotNull}}" />

@@ -32,24 +32,28 @@ void mn_profile_free(mn_profile* profile);
 float mn_head_radius(const mn_tool* tool);
 float mn_head_widening(const mn_tool* tool);
 float mn_head_radius_at(const mn_tool* tool, float h);
+float mn_meet_radius_at(const mn_tool* tool, float h);
 
 /* ---- mesh ---- */
 
 void mn_transform_point(const float* point, const float* matrix, float* result);
 int mn_grid_from_bounds(float min_x, float min_y, float max_x, float max_y, float cell_size, mn_grid* grid);
-void mn_rasterize_triangles(const float* triangles, int count, const mn_grid* grid, float* z);
+int mn_rasterize_triangles(const float* triangles, int count, const mn_grid* grid, float* z);
 int mn_make_stock(float corner_x, float corner_y, float size_x, float size_y, float top, int cylinder, float diameter, float cell_size, mn_map* stock);
 
 /* ---- heightmap algorithms ---- */
 
-void mn_tip_map_compute(const mn_grid* g, const float* model, const mn_offset* offsets, int count, float* tip);
-void mn_remaining_compute(const mn_grid* g, const float* tip, const mn_offset* offsets, int count, float* remaining);
+int mn_tip_map_compute(const mn_grid* g, const float* model, const mn_offset* offsets, int count, float* tip);
+int mn_remaining_compute(const mn_grid* g, const float* tip, const mn_offset* offsets, int count, float* remaining);
 int mn_reach_compute(const mn_grid* g, const float* model, const float* stock, const mn_offset* offsets, int count, float floor, float percent, float tolerance, const mn_monitor* monitor, float* reach);
-void mn_head_limit_compute(const mn_grid* g, const float* remaining, const mn_offset* annulus, int count, float cutter_length, float* limit);
+int mn_head_limit_compute(const mn_grid* g, const float* remaining, const mn_offset* annulus, int count, float cutter_length, float* limit);
 void mn_apply_limit(const float* tip, const float* limit, int cells, float* effective);
 int mn_mark_should_cut(const mn_grid* g, const float* tip, const float* model, const float* cut_to, const float* remaining, const float* limit, const mn_offset* annulus, int count,
     float cutter_length, float tolerance, uint8_t* should_cut);
 int mn_distance_transform(const uint8_t* mask, int width, int height, float cell_size, float* distances);
+/* In place: values[c] becomes min over q of values[q] + |c - q|^2 in cells (INFINITY where no source);
+ * a source value may be negative (a power distance). */
+int mn_lower_envelope(float* values, int width, int height);
 
 /* ---- slicing ---- */
 
@@ -117,7 +121,12 @@ typedef struct mn_problem {
     const int* before;
     const int* after;
     int pair_count;
+    /* Backwards_GPU (T-177): the start walks are joined by tours built on the GPU. */
+    int gpu_tours;
 } mn_problem;
+
+/* Whether a collision mode is Backwards on the CPU or on the GPU. */
+static inline int mn_backwards_mode(int collision_mode) { return collision_mode == MN_COLLISION_BACKWARDS || collision_mode == MN_COLLISION_BACKWARDS_GPU; }
 
 static inline mn_v3 mn_problem_node(const mn_problem* p, int k) { return mn_v3_make(p->x[k], p->y[k], p->z[k]); }
 
@@ -141,7 +150,9 @@ static inline int mn_turn_is_fined(int defined, float cosine, int side) { return
 int mn_turn_fined(const float* x, const float* y, int a, int b, int c);
 float mn_turn_slow(const float* x, const float* y, const int* order, int count);
 float mn_turn_overlap_of(int zones_a, int zones_b, float gap);
-int mn_solve(const mn_problem* problem, int start, int64_t allowance, const volatile int32_t* cancel, int* order, int64_t* evaluations);
+/* An open path from `start` through every node; with `end` >= 0 (T-166) the path finishes at that node,
+ * which must differ from the start unless the problem has one node and must have no successor. */
+int mn_solve(const mn_problem* problem, int start, int end, int64_t allowance, const volatile int32_t* cancel, int* order, int64_t* evaluations);
 float mn_path_cost(const mn_problem* problem, const int* order, int count);
 
 typedef struct mn_budget {
@@ -188,6 +199,12 @@ int mn_writer_has_position(const mn_writer* writer, mn_v3* position);
 /* Finish: the retract to safe Z, then the segments move to `result` and the marks to `marks` (NULL
  * drops them). */
 int mn_writer_take(mn_writer* writer, mn_segments* result, mn_marks* marks);
+/* Route units (T-166): a unit's writer starts where the tool already is, without a move; its path and
+ * marks are released without the final retract; the merging writer appends them in unit order, the
+ * marks shifted by its segment count and joined like mn_writer_mark joins them. */
+void mn_writer_place(mn_writer* writer, mn_v3 position);
+int mn_writer_release(mn_writer* writer, mn_segments* result, mn_marks* marks);
+int mn_writer_append(mn_writer* writer, const mn_segments* path, const mn_marks* marks);
 
 /* ---- collision check and resolution (T-147, T-148) ---- */
 
@@ -231,9 +248,22 @@ void mn_model_bits(const float* model, int cells, float floor, uint8_t* status);
 
 /* Clears MN_CELL_COLLISION, walks the segments over a clone of `stock` and sets it again on every
  * entered cell; `hits` may be NULL, otherwise its closing map must be set. Events hold one collision
- * per segment and kind. */
+ * per segment and kind. `final_stock` (cells, may be NULL) receives the clone as the walk leaves it. */
 int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const float* stock, const float* model, float floor, const mn_profile* profile, float cutter_radius,
-    float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor);
+    float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, float* final_stock);
+
+/* Not cut (T-173): the cells whose material after the toolpath stands more than the tolerance above
+ * what the plan intended, their volume above it and the highest of them. */
+typedef struct mn_uncut {
+    int cells;
+    double volume;
+    float max_height;
+} mn_uncut;
+
+/* What the plan intends to leave: the closing of the deepest level of every position in its masks
+ * (NaN where no position covers a cell). */
+int mn_intended_compute(const mn_plan* plan, const mn_profile* profile, int gpu, float* deepest, float* intended);
+void mn_uncut_of(const mn_grid* g, const float* final_stock, const float* intended, float tolerance, mn_uncut* uncut);
 
 /* Resolution of one check (recursion mode): entered removable stock becomes SHOULD_REMOVE without
  * COLLISION; a position whose head hit unremovable cells is forbidden (its tip in `raised` lifted
@@ -264,7 +294,46 @@ int mn_bridges_place(const mn_grid* g, const float* stock, const float* model, c
 float mn_distance_to(mn_v3 p, mn_v3 a, mn_v3 b);
 
 /* `marks` (NULL allowed) receives the layer marks of the routes. */
-int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks);
+/* `entries` (may be NULL) receives the entry of every route unit after the first (T-166). */
+/* `unreached` (may be NULL) receives the counts of the backward check when the collision mode is
+ * MN_COLLISION_BACKWARDS (T-170). */
+typedef struct mn_unreached {
+    int checked;
+    int64_t unreached;
+    int64_t model_cells;
+    int sweeps;
+} mn_unreached;
+
+int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks, mn_points* entries, mn_unreached* unreached);
+
+/* ---- backward check (T-170, mn_backwards.c) ---- */
+
+/* One batch of levels first..last from the top (one far stepdown slab, one level without a far
+ * stepdown): per level the positions reached there ((last - first + 1) * cells, level first first) and
+ * the positions of the far go (NULL without one). */
+typedef struct mn_backwards_batch {
+    int first;
+    int last;
+    uint8_t* reached;
+    uint8_t* far;
+} mn_backwards_batch;
+
+typedef struct mn_backwards mn_backwards;
+
+/* Starts the check on a thread of its own with `workers` workers; the batches come from the lowest.
+ * With `gpu` the sweeps run on the GPU (mn_gpu_backward_settle). */
+int mn_backwards_start(const mn_context* context, int group_size, int workers, int gpu, const volatile int32_t* cancel, mn_backwards** check);
+int mn_backwards_batch_count(const mn_backwards* check);
+/* Per position the deepest level index the check settled on (-1 for none); valid once a batch is taken. */
+const int* mn_backwards_deepest(const mn_backwards* check);
+/* The batch `taken` from the bottom (0 the lowest); waits until the check has it. */
+int mn_backwards_take(mn_backwards* check, int taken, const mn_backwards_batch** batch);
+/* Frees the batch and lets the check run on. */
+void mn_backwards_release(mn_backwards* check, int taken);
+/* Joins the check (stopping it first when `abort`) and frees it; returns the check's status unless it
+ * was aborted, the unreached positions and the model cells summed over the levels, and the sweeps it
+ * took to settle. */
+int mn_backwards_finish(mn_backwards* check, int abort, int64_t* unreached, int64_t* model_cells, int* sweeps);
 int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks);
 int mn_is_clear(const mn_segment* segment, const mn_grid* g, const float* effective_tip, float tolerance);
 /* `marks` (NULL allowed) ends a feed run at every marked segment and gets its indices rewritten for

@@ -63,6 +63,39 @@
 - The far stepdown (T-156) is not a cluster of its own: it is a schedule of the Z layer strategy
   (groups of levels, the far region first), so it lives in `mn_z_layer`; a separate cluster would
   need the cave walk twice.
+- The far stepdown withdrawal (T-164) is not a cluster of its own: it reads the hits of the pass's
+  collision check and steers the Z layer's far region of the next pass, so it lives in the pass loop
+  of `mn_pipeline.c` beside the recursion's resolution; `FarWithdrawal` is only the facade of
+  `mn_far_withdraw` for its tests.
+- The route units (T-166, T-167) are not a cluster of their own: they are the schedule of the Z layer's
+  routes inside `mn_z_layer`, built from its groups and cave trees and run on the generation's pool.
+  One run keeps waves of one unit (the same routine, not a second path): its guard decides every node
+  against what the earlier units actually did, which no replay can know in advance.
+- Phase 6 left a failing test on purpose (T-168, user request): the live project confirmation compares
+  the kept events with the 63 of Build_1.0.118 and gets 61. The difference comes from the unit
+  boundaries the request itself defines (isolation below), so no code fix exists inside the request; the
+  decision is the user's, and the test runs only with MILLER_LIVE_PROJECT set.
+- The collision mode Backwards (T-169 to T-172) is not a cluster of its own: its check (`mn_backwards.c`)
+  reads the plan masks and uses the far block's envelope test, and its batches become Z layer groups and
+  route units inside `mn_z_layer` (user request: all generation in the C library).
+- Backwards deviates from the literal request in two places, both for its purpose: every cell is a check
+  position (one cell apart, never more than the tolerance while the cell is not larger; the envelope test
+  costs the same for every cell, and the unreached count is then a cell count like the model cells), and
+  the sweep from the lowest level repeats until nothing changes before the first batch goes to the solver,
+  because one sweep cannot know what the unreached positions of the levels above leave (one sweep left 67
+  events on the frustum box fixture, the settled check none). The solver therefore starts after the check
+  settled (two sweeps, seconds, on the user's heart) and then takes the batches from the queue.
+- The GPU runtime (`mn_gpu.c`, T-175) is part of the generation cluster, not a cluster of its own: its
+  kernels port loops of the check, the closing and the route floors and are called from inside the
+  pass. Its insulation: every OpenCL call returns a status with a message, nothing falls back to the
+  CPU; a fault inside the driver ends the process like any native fault.
+- Backwards_GPU computes on the GPU what Backwards computes on the CPU (user request: a copy of the
+  mode with GPU steps), a second implementation of the same processes by design. The GPU envelope of
+  the check is two windowed minima, not the CPU's line scans: only whether a value reaches 0 is used,
+  and within the widest radius both take the same terms, so the verdicts agree (the heart: 9,508
+  unreached in 2 sweeps in both); the closing and the route floor give the CPU's bits.
+- The not-cut report (T-173) is part of the generation cluster: it compares the stock the check's walk
+  leaves with the plan, inside the pass; `UncutReport` only formats it.
 - The slow zones (T-155, `mn_slow.c`) and the layer marks (T-154) are not clusters of their own:
   both are stages of the native generation between the simplifier and the statistics (user request:
   all generation in the C library), and the layer stepping is part of the simulation cluster
@@ -243,7 +276,10 @@
   it used to follow the union of the placed models, which made every offset of a lone model a
   no-op (the stock moved along) and turned alignment into a fixed-point iteration. Every consumer
   of the stock box (pipeline, viewport outline, validator) must read it from ModelLayout
-  (AnchorBoundsMachine, StockBoundsMachine), never recompute it from model bounds.
+  (AnchorBoundsMachine, StockBoundsMachine), never recompute it from model bounds. Since T-179 machine
+  zero can sit on the models or at a global point, so the stock box in machine space needs the models:
+  `StockBoundsMachine(project, modelBounds)`; the overload without models holds for the stock modes only
+  and throws otherwise, and the validator takes the models from the stock corner (`ModelBoundsInStock`).
 - Legacy project files: a nullable StlPath is read for migration and ignored when null on write, so
   the serializer's unknown-member rule still holds; the schema version is rewritten to 2 on load.
 - The end-to-end golden is read from the test output folder, which is refreshed by a build of the
@@ -617,3 +653,117 @@
   corner family shifts the cutter a cell away from the wall and leaves a strip of wall standing at
   full level height (LevelCoverage and CollisionModes tests), the chord along the outer family
   gouges. At cell resolution the staircase is the wall; smoother moves cost the tolerance.
+- The simulation port (T-159) and the parallel stages (T-160) share one commit on purpose: the
+  header, `CoreNative.cs` and the return types of the map exports carry both, and a split would have
+  left one of the two states unbuildable.
+- Two generation stages stay sequential by nature and are not a missing parallelization: the local
+  search (every move is evaluated against the route the previous move left) and the dynamic
+  collision check (every segment meets the stock as the segments before it left it). The four start
+  walks run in parallel and the route stage still takes 790 of the heart's 1100 ms.
+- `mn_fail` writes a thread-local message: a row that fails on a worker thread leaves no text the
+  caller can read. Every parallel stage collects a status per row and the caller fails again with
+  it on its own thread (simplifier runs, start walks).
+- The pool read `scratch[index]` although `mn_rows_parallel` documents a NULL scratch array; it was
+  only ever called with a scratch array before T-160. Both now accept NULL.
+- A pool per call costs about 3 ms for 15 threads on this machine: the transform went from 0 to
+  3 ms and the slicing masks from 1 to 6 ms on the heart, while the reach map went from 62 to 13 ms
+  and the simplifier from 28 to 13 ms. Stages under a millisecond gain nothing; the result stays
+  identical, so none was taken back out.
+- Merging consecutive sweep samples that fall into one cell into their lowest z is exact because
+  the stamp is a minimum, and it gives most of the native sweep's speed; the check must keep the
+  offset order of the entered cells, because the first entered cell decides the event kind.
+- A regression report after a port is located by differential runs, not by reading: for T-161 the
+  previous build was built in a worktree at a short path (the scratchpad path exceeded MAX_PATH for
+  the MSVC build) and its export compared move for move with the current one, then the toolpath ran
+  through the native and the reference simulation in lockstep. Both were identical; the change the
+  user saw was elsewhere.
+- The simulation panel's collision count depended on the playback cadence (the heart's 11 events
+  became 22 at 60 Hz and 32 at 5 ms steps) because every covered part ended with a head check; the
+  C# sweep had been slow enough to stretch the frames and hide it, the native sweep showed it. The
+  engine now samples at the generation check's positions, numbered from the segment start, so the
+  parts a playback covers a segment in change neither the stock nor the events (T-161).
+- The user's live project is `Mechanical/Lu/project.miller.json` (0.025 mm cells, far stepdown 0.2,
+  scaled and turned model, 0.6 mm bridges), not the `project.miller.json` committed at the root;
+  compare against the file the app actually loads. Its 67 head contacts with the heart's wall at
+  the floor under the frustum head are kept by the recursion (ratio 5) and were 47 in build 1.0.106.
+- The live project at 0.025 mm cells takes about 9 minutes per generation on this machine; the
+  diagnosis ran it in a background shell and read the output file, and a coarser cell (0.05) was
+  used for every comparison that did not need the real resolution.
+- The far block's permission (T-162) must come from the material at its real height: T-157 assumed
+  every standing cell at the group's top, which is right for the first group of the box fixtures and
+  wrong wherever a wall or an uncut column rises higher (the user's heart walls, a column no level
+  cuts). The standing map is folded from the plan masks with one distance transform per level, and
+  per step one power-distance envelope of the forbidden disks replaces the uniform thresholds.
+- T-157's threshold chain added the cutter radius where the geometry subtracts it (the floor a
+  shallower step leaves ends a cutter radius inside the next step's threshold, where that step's
+  footprints begin), so it stopped one step early; the cylinder fixture now reaches a fourth step on a
+  one-cell strip along the stock border, head clear by the same test's annulus assertion.
+- A test on the material a far block leaves must look at cells the allowed footprints cannot reach
+  (between the near band and the forbidden radius less the cutter radius) and at the allowed
+  positions themselves; the band in between depends on where the lattice nodes fall.
+- Far block layers are the first layer in path order at a group's bottom level; "a later layer lies
+  higher" also counts the cave walk's returns to a sibling and labelled every layer of a plain run a
+  far block layer (35 of 35 events) in a first diagnosis.
+- The separation terraces planned the slab at its exact level, so a slab level with the head bottom
+  needed no clearance; the simplifier leaves the slab's material up to the tolerance above its level,
+  and on the user's heart that gave head contacts of 3 to 37 micrometres with stock, not model, in
+  every build since the terraces (T-152). The slab now counts `tolerance` higher (T-163); the fully
+  widened reach moves by the same amount. Verified the claim "no collisions before" by building
+  1.0.106 at the user's real settings: 77 events, 55 touching the model, before any far stepdown.
+- When the user compares runs, check the live project file's modification time: it changed during
+  the session (reach percent 98 to 97), and the same build then gives different counts (67 to 73).
+- `max(R(H), r)` (T-165) never changes a flat-tip far block: a position allowed at a step was allowed
+  at the step before with the same footprint, so every cell within the cutter radius of it already
+  stands at that step's level and is no source. It matters where a footprint cell stands higher than
+  the level it was cut to (a ball tip's edge) and in the separation terraces, whose widening was
+  skipped while `R(h) - r + margin` was not positive.
+- A far withdrawal fixture needs the far region within 1 mm of the collisions: with the default 3 mm
+  stepover the box fixtures' wall contacts lie farther from every far position and nothing is
+  withdrawn; stepover 1 or 2 brings them in. One run on the 9 mm box still fails with cyclic
+  precedence pairs (known, see the short-cutter lesson), the 6 mm box does not.
+- The withdrawal does not remove the live project's collisions (63 against 68 events at cell 0.025, 40
+  against 36 at 0.05, measured against the same code without it in a worktree): they are near-band
+  positions at the floor beside the heart's walls, which the far stepdown never cut. The user had set
+  the head bottom to 0.81 mm by then; at 0.05 mm cells a 0.8 mm bottom keeps 40 events and a 0.6 mm
+  bottom (T-165) none, in one pass. Measure against a baseline before claiming that a rule helps.
+- Isolating a collision change of the route units on the live project at 0.05 mm cells (T-168): units with
+  one cave per slab and no fixed exits on one worker gave Build_1.0.118 bit for bit (322 entered cells in
+  pass 1, 40 kept events, 204.5 min), so the per-unit budget shares, the replayed planned heights and the
+  merge change nothing; splitting the slabs into caves gave 347 and 42, the fixed exits the rest (370 and
+  47 at first). The kept count moves by up to 15 percent with any change of where routes begin and end
+  (31 with a full budget per unit, 40 with entries farthest from the model), so a count is no measure of a
+  parallelization; a bit-identical sequential variant is.
+- Probing a long run without blocking the build: copy `tests/Miller.Tests/bin/Release/net10.0` to the
+  scratchpad, delete the probe source from the repository, and run `dotnet test Miller.Tests.dll` there;
+  a baseline of another commit builds in a worktree at a short path (MAX_PATH).
+- At 0.025 mm cells the route stage scales less (345 s against 687 s) than at 0.05 mm (107 s against
+  362 s): every route copies the planned map and lifts the uncut stock over the whole grid, which is
+  memory bound, and the group preparation before the units (far steps, cave trees) stays sequential.
+- The planned map of the Z layer routes holds a floor per tool position (the level a route took the
+  position to), not the material: seeding it with the material fold of a mask (every cell within the
+  cutter radius) let travels dip below the tip beside the walls (261 gouges on the wall fixture).
+- Route floors from the stock where the material above is unknown are safe but expensive: every travel
+  over such a cell retracts to the safe plane and plunges at the plunge rate. Backwards with stock floors
+  above each batch gave 3,241 retracts, 40 m of plunge and 383.8 minutes on the heart at 0.05 mm; the floors
+  from the settled check gave 192 retracts and 129.3 minutes.
+- A head test that counts the tolerance in height forbids every position when the cutter is as long as the
+  stepdown: the uncut stock top then stands exactly at the head bottom of the first level. The far block's
+  rule counts the tolerance radially only (`mn_head_margin`), and Backwards uses the same rule.
+- OpenCL C reserves names a C port uses freely: `mix` and `clamp` are built-in functions, `half` is a
+  type, `floor` a built-in too; a kernel that declares them fails to build. Read the build log with its
+  size first (`clGetProgramBuildInfo` with a NULL buffer): a fixed small buffer gets nothing back.
+- A per-line scan ported as one work item per line (Felzenszwalb's envelope) was slower on the Quadro
+  T2000 than 8 CPU threads (4.9 s against 2.2 s for the heart's level tests), its row pass reading with a
+  stride of the grid width; a transpose made it 2.9 s, windowed minima per cell 0.96 s. On the GPU the
+  shape that wins is one work item per output cell with neighbouring items reading neighbouring cells.
+- The route floors are PCIe-bound on the GPU: every route uploads its floor and downloads two lifted
+  floors (34.5 MB at 0.025 mm cells), 85 s of transfers for the heart. Both the CPU and the GPU lift the
+  whole grid although a route only reads the cells between its nodes and the tool's position; bounding
+  the lift to that box is the larger saving, on either side.
+- GPU state that belongs to one generation must not live in the process-wide device struct: a single route
+  floor session there let two Backwards_GPU generations (two test classes at once) overwrite each other's
+  stock and tip, and a statistics test failed one full run in two. Each generation now opens its own
+  `mn_gpu_floors` (held in its guard); `TwoGpuGenerationsAtOnce_GiveTheirOwnResults` covers it.
+- Most of Backwards' time is not GPU work: the slab groups (77 s, sequential labelling and a greedy gap
+  cover that depends on its order) and the route units' local search are sequential; the timers of T-176
+  (`mn_result_timings`) show the split for any project.

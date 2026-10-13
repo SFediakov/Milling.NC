@@ -105,8 +105,11 @@ public sealed class FarStepdownStepTests
         return bottom + (top - bottom) * MathF.Max(0f, h) / tool.HeadLength;
     }
 
-    // The thresholds of the rule: 0 within the cutter length, else the head radius at the slab height
-    // plus the margin, and at least what every shallower step two or more steps up demands.
+    // The thresholds of the rule on this fixture, where every standing cell is at the stock top: 0 within
+    // the cutter length, else the head radius at the slab height plus the margin, and at least what the
+    // floor of every step two or more steps up demands; that floor ends a cutter radius inside the next
+    // step's threshold, where the next step's footprints begin (T-162; T-157 added the radius instead
+    // and so stopped one step early).
     private static float[] Thresholds(ToolDefinition tool, float[] depths, float margin)
     {
         var c = tool.CutterLength;
@@ -123,7 +126,7 @@ public sealed class FarStepdownStepTests
                     var slab = depths[t] - depths[u] - c;
                     if (slab > Slicer.LevelTolerance)
                     {
-                        value = MathF.Max(value, thresholds[u + 1] + r + HeadRadiusAt(tool, slab) + margin);
+                        value = MathF.Max(value, thresholds[u + 1] - r + HeadRadiusAt(tool, slab) + margin);
                     }
                 }
             }
@@ -268,24 +271,25 @@ public sealed class FarStepdownStepTests
         Assert.Equal(new[] { 7f, 5f, 3f, 1f, 0f }, levels);
         var path = Strategy.Generate(context, null, TestContext.Current.CancellationToken);
         Assert.Empty(GougeChecker.Verify(path, context.EffectiveTip, context.Parameters.Tolerance));
-        // Steps at 7, 5 and 3 (the fourth threshold lies beyond the stock), then the walk 7, 5, 3, 1 and the
-        // last group at 0. Travels between the corner patches of step 3 feed over the step 2 floor at 5, so
-        // the order of the first cuts and of the walk's return to 7 is asserted, not every entry.
+        // Steps at 7, 5, 3 and 1 (the fourth on a strip along the stock border), then the walk 7, 5, 3, 1
+        // and the last group at 0. Travels between the corner patches of a step feed over the floor of the
+        // step before, and the walk ends at the last group's entry at 0 (T-166), so the order of the first
+        // cuts and of the first visits after the walk's return to 7 is asserted, not every entry.
         var sequence = LevelSequence(path, levels);
         var order = $"levels {string.Join(", ", sequence)}";
         Assert.True(sequence[0] == 7f && sequence[1] == 5f && sequence[2] == 3f, order);
-        Assert.True(sequence.IndexOf(3f) < sequence.LastIndexOf(7f), order);
-        Assert.True(sequence.LastIndexOf(7f) < sequence.IndexOf(1f), order);
+        Assert.True(sequence.IndexOf(3f) < sequence.IndexOf(1f) && sequence.IndexOf(1f) < sequence.LastIndexOf(7f), order);
         Assert.True(sequence.IndexOf(1f) < sequence.IndexOf(0f), order);
-        Assert.True(sequence.Skip(sequence.LastIndexOf(7f)).SequenceEqual(new[] { 7f, 5f, 3f, 1f, 0f }), order);
+        var walk = sequence.Skip(sequence.LastIndexOf(7f)).ToList();
+        Assert.True(walk.IndexOf(5f) > 0 && walk.IndexOf(5f) < walk.IndexOf(3f) && walk.IndexOf(3f) < walk.IndexOf(1f) && walk.IndexOf(1f) < walk.IndexOf(0f) && walk[^1] == 0f, order);
 
         var depths = new[] { 2f, 4f, 6f, 8f };
         var margin = MathF.Sqrt(2f) * Cell + context.Parameters.Tolerance;
         var thresholds = Thresholds(tool, depths, margin);
         Assert.Equal(0f, thresholds[0]);
         Assert.Equal(5f + margin, thresholds[1], 4);
-        Assert.Equal(thresholds[1] + 3f + 5f + margin, thresholds[2], 4);
-        Assert.Equal(thresholds[2] + 3f + 5f + margin, thresholds[3], 4);
+        Assert.Equal(thresholds[1] - 3f + 5f + margin, thresholds[2], 4);
+        Assert.Equal(thresholds[2] - 3f + 5f + margin, thresholds[3], 4);
 
         var far = FarPositions(context, 1f);
         var distance = DistanceToStanding(context, far);
@@ -321,9 +325,8 @@ public sealed class FarStepdownStepTests
             }
         }
 
-        Assert.True(counts[0] > 0 && counts[1] > 0 && counts[2] > 0, $"steps hold {string.Join(", ", counts)} positions");
-        Assert.Equal(0, counts[3]);
-        Assert.Equal(0, CellsAtOrBelow(stock, 3f - tolerance - 1e-3f, 0f));
+        Assert.True(counts[0] > 0 && counts[1] > 0 && counts[2] > 0 && counts[3] > 0, $"steps hold {string.Join(", ", counts)} positions");
+        Assert.Equal(0, CellsAtOrBelow(stock, 1f - tolerance - 1e-3f, 0f));
 
         var plain = Strategy.Generate(Context(tool, 0f), null, TestContext.Current.CancellationToken);
         AssertSameStock(Simulate(context, plain, plain.Count), Simulate(context, path, path.Count), tolerance);
@@ -354,5 +357,189 @@ public sealed class FarStepdownStepTests
         Assert.True(CellsAtOrBelow(frustumStock, 5f, tolerance) > CellsAtOrBelow(topStock, 5f, tolerance));
 
         AssertSameStock(Simulate(frustum, Strategy.Generate(Context(Frustum(), 0f), null, TestContext.Current.CancellationToken), int.MaxValue), Simulate(frustum, frustumPath, frustumPath.Count), tolerance);
+    }
+
+    // A 10 x 10 x 8 box on the floor of a 40 x 40 x 9 stock, far stepdown 4 over stepdown 2: groups 7-5,
+    // 3-1 and 0. No level cuts the stock over the box (its tip is 8), so that column stands at 9 while the
+    // second group's level above is 5. The larger depth is allowed only where the head at 3 and at 1
+    // clears the column (T-162); the uniform threshold of T-157 took the column at 5 and let the far
+    // block cut beside it with the head inside the column.
+    private static ToolpathContext TallContext(ToolDefinition tool, float farStepdown)
+    {
+        var parameters = TestContexts.Parameters();
+        parameters.FarStepdown = farStepdown;
+        parameters.Stepover = 1.5f;
+        return TestContexts.Build(
+            TestMeshes.Box(10, 10, 8),
+            new StockDefinition { Shape = StockShape.Box, SizeX = 40, SizeY = 40, SizeZ = 9, AlignZ = StockAlignment.Min },
+            tool,
+            parameters);
+    }
+
+    // The first cutting move that ends at the level, at or after `from`.
+    private static int FirstCutAt(Toolpath path, float level, int from)
+    {
+        for (var k = from; k < path.Count; k++)
+        {
+            var s = path.Segments[k];
+            if (s.Kind != MoveKind.Rapid && MathF.Abs(s.End.Z - level) < 1e-3f)
+            {
+                return k;
+            }
+        }
+
+        return path.Count;
+    }
+
+    // Distance from a cell centre to the nearest centre of a cell over the box (x and y in 15..25).
+    private static float DistanceToColumn(HeightMap map, int i, int j)
+    {
+        var c = map.CellCenter(i, j);
+        var lowest = 15f + Cell / 2;
+        var highest = 25f - Cell / 2;
+        var dx = MathF.Max(0f, MathF.Max(lowest - c.X, c.X - highest));
+        var dy = MathF.Max(0f, MathF.Max(lowest - c.Y, c.Y - highest));
+        return MathF.Sqrt(dx * dx + dy * dy);
+    }
+
+    // Before the route [from, to) every annulus cell of every tip of its cutting moves stands at or
+    // below the head underside there.
+    private static void AssertHeadClear(ToolpathContext context, Toolpath path, int from, int to)
+    {
+        var stock = Simulate(context, path, from);
+        var profile = context.Profile;
+        var slack = context.Parameters.Tolerance + CollisionDetector.Tolerance;
+        for (var k = from; k < to; k++)
+        {
+            var s = path.Segments[k];
+            if (s.Kind == MoveKind.Rapid)
+            {
+                continue;
+            }
+
+            foreach (var tip in new[] { s.Start, s.End, (s.Start + s.End) / 2 })
+            {
+                var (i, j) = stock.CellOf(tip.X, tip.Y);
+                foreach (var o in profile.AnnulusOffsets)
+                {
+                    var ii = i + o.Dx;
+                    var jj = j + o.Dy;
+                    if (!stock.InBounds(ii, jj))
+                    {
+                        continue;
+                    }
+
+                    var underside = tip.Z + CutterLength + o.Dz;
+                    Assert.True(stock[ii, jj] <= underside + slack, $"segment {k} at {tip}: cell ({ii}, {jj}) stands at {stock[ii, jj]} above the head underside {underside}");
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void TallWall_TheFarDepthIsAllowedOnlyWhereTheHeadClearsTheColumn()
+    {
+        var tool = Frustum();
+        var context = TallContext(tool, 4f);
+        var levels = context.Plan.Steps.Select(s => s.Level).ToList();
+        Assert.Equal(new[] { 7f, 5f, 3f, 1f, 0f }, levels);
+        var path = Strategy.Generate(context, null, TestContext.Current.CancellationToken);
+        Assert.Empty(GougeChecker.Verify(path, context.EffectiveTip, context.Parameters.Tolerance));
+
+        // The second group's far block: the step at 3, the step at 1, then its walk returns to 3.
+        var step3 = FirstCutAt(path, 3f, 0);
+        var step1 = FirstCutAt(path, 1f, step3);
+        var walk = FirstCutAt(path, 3f, step1);
+        Assert.True(step3 < step1 && step1 < walk && walk < path.Count, $"far block at {step3}, {step1}, walk at {walk} of {path.Count}");
+
+        // At 3 the head bottom is at 5 and the column rises 4 above it: positions within the head radius at
+        // that height plus the margin leave the far block, so their footprints no longer reach the material
+        // between the near band (1.5 from the column) and that radius less the cutter radius; it keeps the
+        // group's top level 5, while every position beyond that radius is cut to 3. Under T-157 every far
+        // position (at least 4.5 from the column) was cut to 3 with the head inside the column.
+        var margin = MathF.Sqrt(2f) * Cell + context.Parameters.Tolerance;
+        var forbidden = HeadRadiusAt(tool, 9f - 3f - CutterLength) + margin;
+        var stock = Simulate(context, path, walk);
+        var tolerance = context.Parameters.Tolerance;
+        var kept = 0;
+        var cut = 0;
+        for (var j = 0; j < stock.Height; j++)
+        {
+            for (var i = 0; i < stock.Width; i++)
+            {
+                var d = DistanceToColumn(stock, i, j);
+                if (d > 1.5f + Cell && d < forbidden - tool.CutterRadius - Cell)
+                {
+                    Assert.True(stock[i, j] >= 5f - tolerance, $"cell ({i}, {j}) at {d} from the column was cut to {stock[i, j]} by the far block");
+                    kept++;
+                }
+                else if (d >= forbidden + Cell)
+                {
+                    Assert.True(stock[i, j] <= 3f + tolerance, $"cell ({i}, {j}) at {d} from the column stands at {stock[i, j]} after the far block");
+                    cut++;
+                }
+            }
+        }
+
+        Assert.True(kept > 0 && cut > 0, $"{kept} cells kept, {cut} cut");
+        AssertHeadClear(context, path, step3, step1);
+        AssertHeadClear(context, path, step1, walk);
+
+        var plain = Strategy.Generate(TallContext(tool, 0f), null, TestContext.Current.CancellationToken);
+        AssertSameStock(Simulate(context, plain, plain.Count), Simulate(context, path, path.Count), tolerance);
+    }
+
+    // Before the route [from, to) no footprint cell of a tip of its cutting moves stands above the top of
+    // the flutes there: what stands above them is never cut by a horizontal move, whatever the head.
+    private static void AssertFlutesClear(ToolpathContext context, Toolpath path, int from, int to)
+    {
+        var stock = Simulate(context, path, from);
+        var slack = context.Parameters.Tolerance + CollisionDetector.Tolerance;
+        for (var k = from; k < to; k++)
+        {
+            var s = path.Segments[k];
+            if (s.Kind == MoveKind.Rapid)
+            {
+                continue;
+            }
+
+            foreach (var tip in new[] { s.Start, s.End, (s.Start + s.End) / 2 })
+            {
+                var (i, j) = stock.CellOf(tip.X, tip.Y);
+                foreach (var o in context.Profile.Offsets)
+                {
+                    var ii = i + o.Dx;
+                    var jj = j + o.Dy;
+                    if (stock.InBounds(ii, jj))
+                    {
+                        Assert.True(stock[ii, jj] <= tip.Z + CutterLength + slack, $"segment {k} at {tip}: cell ({ii}, {jj}) stands at {stock[ii, jj]} above the flutes");
+                    }
+                }
+            }
+        }
+    }
+
+    // T-165: the tall wall under a frustum whose bottom is half the cutter (3 mm under a 6 mm cutter,
+    // 20 mm after 10 mm): the far block keeps the head and the flutes clear of what stands, and the walk
+    // ends at the stock the plain schedule leaves.
+    [Fact]
+    public void TallWall_UnderAHeadNarrowerThanTheCutter_TheFarBlockKeepsHeadAndFlutesClear()
+    {
+        var tool = new ToolDefinition { CutterDiameter = 6f, CutterLength = CutterLength, HeadShape = HeadShape.Frustum, HeadDiameter = 3f, HeadTopDiameter = 20f, HeadLength = 10f };
+        var context = TallContext(tool, 4f);
+        var path = Strategy.Generate(context, null, TestContext.Current.CancellationToken);
+        Assert.Empty(GougeChecker.Verify(path, context.EffectiveTip, context.Parameters.Tolerance));
+
+        var step3 = FirstCutAt(path, 3f, 0);
+        var step1 = FirstCutAt(path, 1f, step3);
+        var walk = FirstCutAt(path, 3f, step1);
+        Assert.True(step3 < step1 && step1 < walk && walk < path.Count, $"far block at {step3}, {step1}, walk at {walk} of {path.Count}");
+        AssertHeadClear(context, path, step3, step1);
+        AssertHeadClear(context, path, step1, walk);
+        AssertFlutesClear(context, path, step3, step1);
+        AssertFlutesClear(context, path, step1, walk);
+
+        var plain = Strategy.Generate(TallContext(tool, 0f), null, TestContext.Current.CancellationToken);
+        AssertSameStock(Simulate(context, plain, plain.Count), Simulate(context, path, path.Count), context.Parameters.Tolerance);
     }
 }

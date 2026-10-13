@@ -1,19 +1,27 @@
 using System.Globalization;
 using System.Numerics;
 using Miller.Application.Services;
+using Miller.Core.Geometry;
 using Miller.Core.Setup;
 
 namespace Miller.App.ViewModels;
 
-// Binds AxisSetup and shows where the model lands in machine space for the current setup.
+// Binds AxisSetup and shows where the model and the stock land in machine space for the current setup.
 public sealed class AxisSettingsViewModel : SettingsViewModelBase
 {
     public const string NoModelText = "No model loaded.";
 
+    public const string StockOffsetLabel = "Custom zero relative to the stock corner (mm)";
+
+    public const string ModelOffsetLabel = "Custom zero relative to the models' corner (mm)";
+
+    public const string GlobalOffsetLabel = "Zero in the global frame, the model coordinates after the axis mapping (mm)";
+
     private static readonly string[] BoundProperties =
     {
         nameof(MapX), nameof(MapY), nameof(MapZ), nameof(FlipX), nameof(FlipY), nameof(FlipZ), nameof(RotationX), nameof(RotationY), nameof(RotationZ),
-        nameof(OriginMode), nameof(OffsetX), nameof(OffsetY), nameof(OffsetZ), nameof(IsCustom), nameof(MachineBoundsText),
+        nameof(OriginMode), nameof(OffsetX), nameof(OffsetY), nameof(OffsetZ), nameof(IsCustom), nameof(OffsetLabel), nameof(MachineBoundsText),
+        nameof(StockBoundsText),
     };
 
     private readonly MeshImportService _meshImport;
@@ -22,7 +30,11 @@ public sealed class AxisSettingsViewModel : SettingsViewModelBase
         : base(project, "Axes.")
     {
         _meshImport = meshImport ?? throw new ArgumentNullException(nameof(meshImport));
-        _meshImport.MeshChanged += (_, _) => OnPropertyChanged(nameof(MachineBoundsText));
+        _meshImport.MeshChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(MachineBoundsText));
+            OnPropertyChanged(nameof(StockBoundsText));
+        };
         Revalidate();
     }
 
@@ -55,6 +67,7 @@ public sealed class AxisSettingsViewModel : SettingsViewModelBase
         {
             Set(p => p.Axes.OriginMode = value);
             OnPropertyChanged(nameof(IsCustom));
+            OnPropertyChanged(nameof(OffsetLabel));
         }
     }
 
@@ -64,7 +77,15 @@ public sealed class AxisSettingsViewModel : SettingsViewModelBase
 
     public float OffsetZ { get => Current.Axes.CustomOffset.Z; set => Set(p => p.Axes.CustomOffset = new Vector3(p.Axes.CustomOffset.X, p.Axes.CustomOffset.Y, value)); }
 
-    public bool IsCustom => OriginMode == OriginMode.Custom;
+    // The modes that place zero by CustomOffset, and what the offset is measured from.
+    public bool IsCustom => OriginMode is OriginMode.Custom or OriginMode.ModelCustom or OriginMode.Global;
+
+    public string OffsetLabel => OriginMode switch
+    {
+        OriginMode.ModelCustom => ModelOffsetLabel,
+        OriginMode.Global => GlobalOffsetLabel,
+        _ => StockOffsetLabel,
+    };
 
     public string? MappingError => ErrorFor("Axes.MapX");
 
@@ -84,10 +105,21 @@ public sealed class AxisSettingsViewModel : SettingsViewModelBase
                 return NoModelText;
             }
 
-            var bounds = ModelLayout.MachineBounds(Current, _meshImport.Bounds);
-            var size = bounds.Size;
-            return string.Create(CultureInfo.InvariantCulture,
-                $"{size.X:0.000} x {size.Y:0.000} x {size.Z:0.000} mm, min ({bounds.Min.X:0.000}, {bounds.Min.Y:0.000}, {bounds.Min.Z:0.000})");
+            return BoxText(ModelLayout.MachineBounds(Current, _meshImport.Bounds));
+        }
+    }
+
+    // The stock box in machine space, the same box the viewport outlines and the pipeline cuts.
+    public string StockBoundsText
+    {
+        get
+        {
+            if (!Current.Axes.IsPermutation)
+            {
+                return MappingError ?? string.Empty;
+            }
+
+            return _meshImport.Matches(Current) ? BoxText(ModelLayout.StockBoundsMachine(Current, _meshImport.Bounds)) : NoModelText;
         }
     }
 
@@ -104,11 +136,20 @@ public sealed class AxisSettingsViewModel : SettingsViewModelBase
         base.OnErrorsChanged();
         OnPropertyChanged(nameof(MappingError));
         OnPropertyChanged(nameof(MachineBoundsText));
+        OnPropertyChanged(nameof(StockBoundsText));
+    }
+
+    private static string BoxText(BoundingBox bounds)
+    {
+        var size = bounds.Size;
+        return string.Create(CultureInfo.InvariantCulture,
+            $"{size.X:0.000} x {size.Y:0.000} x {size.Z:0.000} mm, min ({bounds.Min.X:0.000}, {bounds.Min.Y:0.000}, {bounds.Min.Z:0.000})");
     }
 
     private void Set(Action<MillingProject> change, [System.Runtime.CompilerServices.CallerMemberName] string? property = null)
     {
         Edit(change, property);
         OnPropertyChanged(nameof(MachineBoundsText));
+        OnPropertyChanged(nameof(StockBoundsText));
     }
 }

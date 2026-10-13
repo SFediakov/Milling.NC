@@ -1,4 +1,5 @@
 #include "mn_internal.h"
+#include "mn_thread.h"
 
 /* The whole generation after the project is validated (PipelineService): transform, stock, model
  * map and reach map once, then one or more passes of slicing and cut scope, routing, simplification,
@@ -7,8 +8,12 @@
  * the raised tips, and the pass is repeated while the number of entered cells decreases, at most
  * MN_MAX_PASSES times; the pass with the fewest entered cells is kept. In one run mode (T-150) the
  * strategy evaluates its nodes against the standing material and one pass is checked for the
- * report. Progress goes to the caller per pass and stage; cancellation is honoured between the
- * stages and inside the long ones. */
+ * report; in backwards mode (T-170, Z layer only) the strategy leaves out the positions the backward
+ * check finds unreached and one pass is checked the same way. With a far stepdown under the Z layer
+ * (T-164) every collision's place and the MN_FAR_WITHDRAW_RADIUS around it are withdrawn from the far
+ * stepdown after each pass: later passes may take only the first pass's far positions that were never
+ * withdrawn, and a withdrawal that removes a position starts another pass in either mode. Progress goes to the caller per pass and
+ * stage; cancellation is honoured between the stages and inside the long ones. */
 
 /* Everything one pass produced. */
 typedef struct mn_pass {
@@ -25,6 +30,17 @@ typedef struct mn_pass {
     mn_statistics statistics;
     mn_collisions events;
     mn_bridge_counts bridges;
+    /* Far stepdown (T-164): the positions the pass milled with it, and those it was allowed (NULL on
+     * the first pass, which may take every far position). */
+    uint8_t* far_area;
+    uint8_t* far_allowed;
+    int far_cells;
+    /* The entry of every route unit after the first (T-166). */
+    mn_points units;
+    /* Backwards (T-172): the counts of the backward check. */
+    mn_unreached unreached;
+    /* The cells the pass left above what the first pass's plan intended (T-173). */
+    mn_uncut uncut;
     int entered;
     int valid;
 } mn_pass;
@@ -44,6 +60,10 @@ struct mn_result {
     int passes;
     int pass_entered[MN_MAX_PASSES];
     int pass_events[MN_MAX_PASSES];
+    uint8_t* far_first;
+    int pass_far[MN_MAX_PASSES];
+    int pass_withdrawn[MN_MAX_PASSES];
+    double times[MN_TIME_COUNT];
 };
 
 typedef struct stage_monitor {
@@ -51,6 +71,7 @@ typedef struct stage_monitor {
     void* context;
     int pass;
     int stage;
+    double since;
 } stage_monitor;
 
 static void forward_progress(void* context, int32_t step, int32_t steps, float fraction)
@@ -61,8 +82,14 @@ static void forward_progress(void* context, int32_t step, int32_t steps, float f
     }
 }
 
+/* A new stage: the time since the last one began goes to that stage (MN_TIME index stage - 1). */
 static void begin(stage_monitor* m, int stage)
 {
+    double now = mn_seconds();
+    if (m->stage > 0) {
+        mn_time_add(m->stage - 1, now - m->since);
+    }
+    m->since = now;
     m->stage = stage;
     forward_progress(m, 0, 0, 0.0f);
 }
@@ -78,6 +105,9 @@ static void pass_free(mn_pass* pass)
     free(pass->head_limited);
     free(pass->status);
     free(pass->contacts);
+    free(pass->far_area);
+    free(pass->far_allowed);
+    mn_points_free(&pass->units);
     mn_plan_free(pass->plan);
     mn_segments_free(&pass->toolpath);
     mn_marks_free(&pass->layers);
@@ -96,6 +126,7 @@ MN_API void mn_result_free(mn_result* result)
     mn_map_free(&result->tip);
     mn_profile_free(&result->profile);
     pass_free(&result->best);
+    free(result->far_first);
     free(result);
 }
 
@@ -105,6 +136,37 @@ MN_API void mn_result_free(mn_result* result)
             return mn_fail(MN_ERR_CANCELLED, "Cancelled.");                                        \
         }                                                                                          \
     } while (0)
+
+typedef struct transform_job {
+    const mn_job* job;
+    float* target;
+    const int* mesh_start;
+} transform_job;
+
+/* One triangle of the transform (T-160, triangles run on the worker pool): its mesh's matrix, B and
+ * C swapped when the matrix mirrors so the winding stays outward. */
+static void transform_triangle(void* context, int t, void* scratch)
+{
+    (void)scratch;
+    const transform_job* tj = (const transform_job*)context;
+    const mn_job* job = tj->job;
+    int m = 0;
+    while (t >= tj->mesh_start[m + 1]) {
+        m++;
+    }
+    const float* source = job->triangles + 9 * t;
+    const float* matrix = job->matrices + 16 * m;
+    float* target = tj->target + 9 * t;
+    float a[3], b[3], c[3];
+    mn_transform_point(source, matrix, a);
+    mn_transform_point(source + 3, matrix, b);
+    mn_transform_point(source + 6, matrix, c);
+    const float* second = job->mirrored[m] ? c : b;
+    const float* third = job->mirrored[m] ? b : c;
+    memcpy(target, a, sizeof(a));
+    memcpy(target + 3, second, sizeof(a));
+    memcpy(target + 6, third, sizeof(a));
+}
 
 /* Transform, stock, model map and reach map: the part of the generation every pass shares. */
 static int prepare(const mn_job* job, stage_monitor* stage, const volatile int32_t* cancel, mn_result* r)
@@ -127,23 +189,18 @@ static int prepare(const mn_job* job, stage_monitor* stage, const volatile int32
         return mn_fail(MN_ERR_MEMORY, "Out of memory for %d triangles.", total);
     }
     r->triangle_count = total;
-    const float* source = job->triangles;
-    float* target = r->triangles;
-    for (int m = 0; m < job->mesh_count; m++) {
-        const float* matrix = job->matrices + 16 * m;
-        for (int t = 0; t < job->mesh_triangle_counts[m]; t++) {
-            float a[3], b[3], c[3];
-            mn_transform_point(source, matrix, a);
-            mn_transform_point(source + 3, matrix, b);
-            mn_transform_point(source + 6, matrix, c);
-            const float* second = job->mirrored[m] ? c : b;
-            const float* third = job->mirrored[m] ? b : c;
-            memcpy(target, a, sizeof(a));
-            memcpy(target + 3, second, sizeof(a));
-            memcpy(target + 6, third, sizeof(a));
-            source += 9;
-            target += 9;
+    {
+        int* mesh_start = (int*)mn_alloc((size_t)job->mesh_count + 1, sizeof(int));
+        if (mesh_start == NULL) {
+            return mn_fail(MN_ERR_MEMORY, "Out of memory for %d meshes.", job->mesh_count);
         }
+        for (int m = 0; m < job->mesh_count; m++) {
+            mesh_start[m + 1] = mesh_start[m] + job->mesh_triangle_counts[m];
+        }
+        transform_job transform = { job, r->triangles, mesh_start };
+        int status = mn_rows_parallel(total, transform_triangle, &transform, NULL, mn_worker_count());
+        free(mesh_start);
+        MN_CHECK(status);
     }
     MN_STOP_IF_CANCELLED();
 
@@ -161,7 +218,7 @@ static int prepare(const mn_job* job, stage_monitor* stage, const volatile int32
     const mn_grid* g = &r->grid;
     r->floor = r->stock_bottom;
     MN_CHECK(mn_map_create(&r->model, g, r->floor));
-    mn_rasterize_triangles(r->triangles, total, g, r->model.z);
+    MN_CHECK(mn_rasterize_triangles(r->triangles, total, g, r->model.z));
     MN_STOP_IF_CANCELLED();
 
     /* reach map */
@@ -173,11 +230,17 @@ static int prepare(const mn_job* job, stage_monitor* stage, const volatile int32
     return MN_OK;
 }
 
+/* Whether the passes withdraw far positions around collisions: the Z layer with a far stepdown. */
+static int far_withdrawal_on(const mn_job* job) { return job->strategy == MN_STRATEGY_Z_LAYER && job->parameters.far_stepdown > 0; }
+
 /* One pass: the tip under the raised map, slicing and cut scope, holding bridges, routing,
  * simplification, statistics and the check. `status` holds the MODEL and SHOULD_REMOVE bits the pass
  * runs with and receives the BRIDGE bits of its bridges and the COLLISION bits of its check; `hits`
- * receives the check's aggregation when given. */
-static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int32_t* cancel, const mn_result* r, const float* raised, uint8_t* status, mn_hits* hits, mn_pass* pass)
+ * receives the check's aggregation when given; `far_allowed` limits the far positions (NULL: all).
+ * `intended` (T-173) is filled from the first pass's plan, before any collision handling lifts a
+ * position, and every pass's final stock is compared with it. */
+static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int32_t* cancel, const mn_result* r, const float* raised, const uint8_t* far_allowed, uint8_t* status, mn_hits* hits,
+    float* intended, int* intended_ready, mn_pass* pass)
 {
     const mn_parameters* p = &job->parameters;
     const mn_grid* g = &r->grid;
@@ -251,6 +314,19 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
         free(should_cut);
         return mn_fail(MN_ERR_CANCELLED, "Cancelled.");
     }
+    if (!*intended_ready) {
+        double started = mn_seconds();
+        float* deepest = (float*)mn_alloc((size_t)cells, sizeof(float));
+        status_code = deepest == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the intended surface.")
+                                      : mn_intended_compute(pass->plan, &r->profile, job->collision_mode == MN_COLLISION_BACKWARDS_GPU, deepest, intended);
+        free(deepest);
+        if (status_code != MN_OK) {
+            free(should_cut);
+            return status_code;
+        }
+        *intended_ready = 1;
+        mn_time_add(MN_TIME_INTENDED, mn_seconds() - started);
+    }
 
     /* route */
     begin(stage, MN_STAGE_ROUTE);
@@ -270,9 +346,23 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
     context.collision_mode = job->collision_mode;
     context.ratio = job->collision_mode == MN_COLLISION_ONE_RUN ? job->one_run_ratio : job->recursion_ratio;
     context.raised = job->collision_mode == MN_COLLISION_ONE_RUN ? pass->limit.z : NULL;
+    context.far_allowed = far_allowed;
+    context.far_area = NULL;
+    if (far_withdrawal_on(job)) {
+        pass->far_area = (uint8_t*)mn_alloc((size_t)cells, 1);
+        pass->far_allowed = far_allowed != NULL ? (uint8_t*)mn_alloc((size_t)cells, 1) : NULL;
+        if (pass->far_area == NULL || (far_allowed != NULL && pass->far_allowed == NULL)) {
+            free(should_cut);
+            return mn_fail(MN_ERR_MEMORY, "Out of memory for the far area.");
+        }
+        if (far_allowed != NULL) {
+            memcpy(pass->far_allowed, far_allowed, (size_t)cells);
+        }
+        context.far_area = pass->far_area;
+    }
     mn_segments routed = { 0 };
     if (job->strategy == MN_STRATEGY_Z_LAYER) {
-        status_code = mn_z_layer(&context, &monitor, &routed, &pass->layers);
+        status_code = mn_z_layer(&context, &monitor, &routed, &pass->layers, &pass->units, &pass->unreached);
     } else if (job->strategy == MN_STRATEGY_THREE_AXIS_FREEDOM) {
         status_code = mn_three_axis_freedom(&context, &monitor, &routed, &pass->layers);
     } else {
@@ -287,6 +377,9 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
         return status_code;
     }
     mn_head_limited_mask(r->tip.z, pass->limit.z, cells, p->tolerance, pass->head_limited);
+    for (int k = 0; pass->far_area != NULL && k < cells; k++) {
+        pass->far_cells += pass->far_area[k];
+    }
 
     /* simplify, then the slow zones of every movement (the turn fine the route solver billed). */
     begin(stage, MN_STAGE_SIMPLIFY);
@@ -311,12 +404,22 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
     mn_map closing = { 0 };
     if (hits != NULL) {
         MN_CHECK(mn_map_create(&closing, g, NAN));
-        mn_remaining_compute(g, pass->strategy_tip.z, r->profile.offsets, r->profile.offset_count, closing.z);
+        status_code = mn_remaining_compute(g, pass->strategy_tip.z, r->profile.offsets, r->profile.offset_count, closing.z);
+        if (status_code != MN_OK) {
+            mn_map_free(&closing);
+            return status_code;
+        }
         hits->closing = closing.z;
         hits->slack = p->tolerance;
     }
-    status_code = mn_check_path(pass->toolpath.items, pass->toolpath.count, g, r->stock.z, r->model.z, r->floor, &r->profile, job->tool.cutter_diameter / 2.0f, job->tool.cutter_length,
-        MN_COLLISION_TOLERANCE, status, hits, &pass->events, &monitor);
+    float* final_stock = (float*)mn_alloc((size_t)cells, sizeof(float));
+    status_code = final_stock == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the final stock.")
+                                      : mn_check_path(pass->toolpath.items, pass->toolpath.count, g, r->stock.z, r->model.z, r->floor, &r->profile, job->tool.cutter_diameter / 2.0f,
+                                          job->tool.cutter_length, MN_COLLISION_TOLERANCE, status, hits, &pass->events, &monitor, final_stock);
+    if (status_code == MN_OK) {
+        mn_uncut_of(g, final_stock, intended, p->tolerance, &pass->uncut);
+    }
+    free(final_stock);
     if (status_code != MN_OK) {
         mn_map_free(&closing);
         if (hits != NULL) {
@@ -346,8 +449,11 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
 
 static int generate(const mn_job* job, stage_monitor* stage, const volatile int32_t* cancel, mn_result* r)
 {
-    if (job->collision_mode != MN_COLLISION_RECURSION && job->collision_mode != MN_COLLISION_ONE_RUN) {
+    if (job->collision_mode != MN_COLLISION_RECURSION && job->collision_mode != MN_COLLISION_ONE_RUN && !mn_backwards_mode(job->collision_mode)) {
         return mn_fail(MN_ERR_ARGUMENT, "Unknown collision mode %d.", job->collision_mode);
+    }
+    if (mn_backwards_mode(job->collision_mode) && job->strategy != MN_STRATEGY_Z_LAYER) {
+        return mn_fail(MN_ERR_ARGUMENT, "The backwards collision handling works with the Z layer strategy only.");
     }
     if (!(job->recursion_ratio >= 0) || !(job->one_run_ratio >= 0)) {
         return mn_fail(MN_ERR_ARGUMENT, "The collision ratios must be zero or positive.");
@@ -365,10 +471,17 @@ static int generate(const mn_job* job, stage_monitor* stage, const volatile int3
     int cells = mn_cells(g);
     uint8_t* status = (uint8_t*)mn_alloc((size_t)cells, 1);
     float* raised = (float*)mn_alloc((size_t)cells, sizeof(float));
+    int far_on = far_withdrawal_on(job);
+    /* The far positions later passes may take (the first pass's, less every withdrawal) and the
+     * places of the last check's collisions. */
+    uint8_t* far_allowed = NULL;
+    uint8_t* places = far_on ? (uint8_t*)mn_alloc((size_t)cells, 1) : NULL;
+    float* intended = (float*)mn_alloc((size_t)cells, sizeof(float));
+    int intended_ready = 0;
     mn_hits hits;
     int hits_ready = 0;
     int result = MN_OK;
-    if (status == NULL || raised == NULL) {
+    if (status == NULL || raised == NULL || intended == NULL || (far_on && places == NULL)) {
         result = mn_fail(MN_ERR_MEMORY, "Out of memory for the cell status.");
         goto done;
     }
@@ -398,22 +511,46 @@ static int generate(const mn_job* job, stage_monitor* stage, const volatile int3
         }
         hits.entered = 0;
         hits.unremovable = 0;
-        result = run_pass(job, stage, cancel, r, raised, status, &hits, &pass);
+        result = run_pass(job, stage, cancel, r, raised, far_allowed, status, &hits, intended, &intended_ready, &pass);
         if (result != MN_OK) {
             pass_free(&pass);
             goto done;
         }
+        if (far_on && pass_index == 1) {
+            r->far_first = (uint8_t*)mn_alloc((size_t)cells, 1);
+            far_allowed = (uint8_t*)mn_alloc((size_t)cells, 1);
+            if (r->far_first == NULL || far_allowed == NULL) {
+                pass_free(&pass);
+                result = mn_fail(MN_ERR_MEMORY, "Out of memory for the far area.");
+                goto done;
+            }
+            memcpy(r->far_first, pass.far_area, (size_t)cells);
+            memcpy(far_allowed, pass.far_area, (size_t)cells);
+        }
         r->passes = pass_index;
         r->pass_entered[pass_index - 1] = pass.entered;
         r->pass_events[pass_index - 1] = pass.events.count;
+        r->pass_far[pass_index - 1] = pass.far_cells;
         int improved = !r->best.valid || pass.entered < r->best.entered;
         int decreasing = previous_entered < 0 || pass.entered < previous_entered || hits.unremovable < previous_unremovable;
         previous_entered = pass.entered;
         previous_unremovable = hits.unremovable;
-        int last = job->collision_mode == MN_COLLISION_ONE_RUN || pass.entered == 0 || !decreasing;
+        int last = (job->collision_mode != MN_COLLISION_RECURSION && !far_on) || pass.entered == 0 || !decreasing;
         int changed = 0;
-        if (!last) {
+        if (!last && job->collision_mode == MN_COLLISION_RECURSION) {
             changed = mn_resolve(g, &r->profile, job->tool.cutter_length, r->model.z, pass.effective.z, pass.strategy_tip.z, r->floor, job->parameters.tolerance, job->recursion_ratio, &hits, status, raised);
+        }
+        if (!last && far_on && changed >= 0) {
+            for (int k = 0; k < cells; k++) {
+                places[k] = (uint8_t)(hits.cell_flags[k] != 0 || hits.position_flags[k] != 0);
+            }
+            int withdrawn = mn_far_withdraw(places, g->width, g->height, g->cell_size, MN_FAR_WITHDRAW_RADIUS, far_allowed);
+            if (withdrawn < 0) {
+                changed = withdrawn;
+            } else {
+                r->pass_withdrawn[pass_index - 1] = withdrawn;
+                changed += withdrawn;
+            }
         }
         if (improved) {
             pass_free(&r->best);
@@ -443,6 +580,9 @@ done:
     }
     free(status);
     free(raised);
+    free(far_allowed);
+    free(places);
+    free(intended);
     return result;
 }
 
@@ -459,7 +599,13 @@ MN_API int32_t mn_generate(const mn_job* job, mn_stage_fn progress, void* contex
     stage.context = context;
     stage.pass = 1;
     stage.stage = 0;
+    stage.since = 0.0;
+    mn_time_take(NULL);
     int status = generate(job, &stage, cancel, r);
+    if (stage.stage > 0) {
+        mn_time_add(stage.stage - 1, mn_seconds() - stage.since);
+    }
+    mn_time_take(r->times);
     if (status != MN_OK) {
         mn_result_free(r);
         return status;
@@ -497,6 +643,19 @@ MN_API void mn_result_mask(const mn_result* result, int32_t which, uint8_t* mask
     }
     if (which == MN_MASK_CONTACTS) {
         memcpy(mask, b->contacts, (size_t)cells);
+        return;
+    }
+    if (which == MN_MASK_FAR_FIRST || which == MN_MASK_FAR_MILLED || which == MN_MASK_FAR_WITHDRAWN) {
+        for (int k = 0; k < cells; k++) {
+            int first = result->far_first != NULL && result->far_first[k];
+            if (which == MN_MASK_FAR_FIRST) {
+                mask[k] = (uint8_t)first;
+            } else if (which == MN_MASK_FAR_MILLED) {
+                mask[k] = (uint8_t)(b->far_area != NULL && b->far_area[k]);
+            } else {
+                mask[k] = (uint8_t)(first && b->far_allowed != NULL && !b->far_allowed[k]);
+            }
+        }
         return;
     }
     if (which == MN_MASK_SHOULD_CUT) {
@@ -542,11 +701,54 @@ MN_API void mn_result_pass_counts(const mn_result* result, int32_t* entered, int
     }
 }
 
+MN_API void mn_result_pass_far(const mn_result* result, int32_t* milled, int32_t* withdrawn)
+{
+    for (int k = 0; k < result->passes; k++) {
+        milled[k] = result->pass_far[k];
+        withdrawn[k] = result->pass_withdrawn[k];
+    }
+}
+
+MN_API int32_t mn_result_unit_count(const mn_result* result) { return result->best.units.count; }
+
+MN_API void mn_result_units(const mn_result* result, float* points)
+{
+    for (int k = 0; k < result->best.units.count; k++) {
+        points[3 * k] = result->best.units.items[k].x;
+        points[3 * k + 1] = result->best.units.items[k].y;
+        points[3 * k + 2] = result->best.units.items[k].z;
+    }
+}
+
 MN_API void mn_result_bridges(const mn_result* result, int32_t* parts, int32_t* wanted, int32_t* placed)
 {
     *parts = result->best.bridges.parts;
     *wanted = result->best.bridges.wanted;
     *placed = result->best.bridges.placed;
+}
+
+MN_API int32_t mn_result_unreached(const mn_result* result, int64_t* unreached, int64_t* model_cells, int32_t* sweeps)
+{
+    *unreached = result->best.unreached.unreached;
+    *model_cells = result->best.unreached.model_cells;
+    *sweeps = result->best.unreached.sweeps;
+    return result->best.unreached.checked;
+}
+
+MN_API int32_t mn_result_timings(const mn_result* result, double* seconds, int32_t capacity)
+{
+    int count = mn_mini(capacity, MN_TIME_COUNT);
+    for (int k = 0; k < count; k++) {
+        seconds[k] = result->times[k];
+    }
+    return count;
+}
+
+MN_API void mn_result_uncut(const mn_result* result, int32_t* cells, double* volume, float* max_height)
+{
+    *cells = result->best.uncut.cells;
+    *volume = result->best.uncut.volume;
+    *max_height = result->best.uncut.max_height;
 }
 
 MN_API int32_t mn_result_collision_count(const mn_result* result) { return result->best.events.count; }

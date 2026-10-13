@@ -78,6 +78,32 @@ public sealed class ToolProfileTests
         Assert.Empty(set.Intersect(profile.Offsets.Select(o => (o.Dx, o.Dy))));
     }
 
+    // T-165: a head bottom narrower than the 6 mm cutter. A 3 mm cylinder stays inside the cutter radius
+    // and has no ring; a frustum from 4 mm to 10 mm over 6 mm rings the cutter from its radius out to
+    // 5 mm, at the underside height 6 * (d - 2) / 3 there, and the footprint is the same as under a
+    // wide head.
+    [Fact]
+    public void NarrowerHead_RingsTheCutterOnlyWhereTheHeadReachesBeyondIt()
+    {
+        var wide = ToolProfile.Create(Tool(TipType.Flat), CellSize);
+        var cylinder = ToolProfile.Create(Tool(TipType.Flat, headDiameter: 3f), CellSize);
+        Assert.Empty(cylinder.AnnulusOffsets);
+        Assert.Equal(wide.Offsets, cylinder.Offsets);
+
+        var frustum = ToolProfile.Create(
+            new ToolDefinition { CutterDiameter = 6f, CutterLength = 20f, HeadShape = HeadShape.Frustum, HeadDiameter = 4f, HeadTopDiameter = 10f, HeadLength = 6f },
+            CellSize);
+        Assert.Equal(wide.Offsets, frustum.Offsets);
+        Assert.NotEmpty(frustum.AnnulusOffsets);
+        Assert.All(frustum.AnnulusOffsets, o =>
+        {
+            var d = Distance(o);
+            Assert.True(d > 3f && d <= 5f + ToolProfile.RadiusTolerance, $"({o.Dx},{o.Dy}) d={d}");
+            Assert.Equal(MathF.Min(6f * (d - 2f) / 3f, 6f), o.Dz, 4);
+        });
+        Assert.Equal(wide.AnnulusOffsets.Select(o => (o.Dx, o.Dy)), frustum.AnnulusOffsets.Select(o => (o.Dx, o.Dy)));
+    }
+
     [Fact]
     public void CoarseGrid_KeepsTheAxisCellOnly()
     {

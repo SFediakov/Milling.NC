@@ -58,6 +58,26 @@ public sealed record PipelineResult(
 
     // Layers of the toolpath in path order (the simulation steps layer by layer over them).
     public IReadOnlyList<ToolpathLayer> Layers { get; init; } = Array.Empty<ToolpathLayer>();
+
+    // Far stepdown positions of the first and the kept pass and those withdrawn around collisions (T-164).
+    public FarStepdownAreas FarStepdown { get; init; } = new(new bool[0, 0], new bool[0, 0], new bool[0, 0]);
+
+    // Where every route unit after the first begins and the one before it ends (T-166): the route stage
+    // solved the units in parallel; one unit when there is no entry.
+    public IReadOnlyList<System.Numerics.Vector3> RouteUnitEntries { get; init; } = Array.Empty<System.Numerics.Vector3>();
+
+    // Backwards (T-172): the positions the backward check left unreached against the model cells; null
+    // in the other collision modes.
+    public UnreachedCells? Unreached { get; init; }
+
+    // The cells the toolpath leaves above what the plan intended (T-173).
+    public UncutCells Uncut { get; init; }
+
+    // Process times of the generation (T-176).
+    public ProcessTimes Times { get; init; } = new(Array.Empty<double>());
+
+    // The GPU the generation ran on (Backwards_GPU, T-174); null in the other modes.
+    public string? Gpu { get; init; }
 }
 
 // Runs the stages of docs/ARCHITECTURE.md 5.1 in order: the validation here, every later stage in one
@@ -138,6 +158,12 @@ public sealed class PipelineService
             PassCollisions = generated.PassCollisions,
             Bridges = generated.Bridges,
             Layers = generated.Layers,
+            FarStepdown = generated.FarStepdown,
+            RouteUnitEntries = generated.RouteUnitEntries,
+            Unreached = generated.Unreached,
+            Uncut = generated.Uncut,
+            Times = generated.Times,
+            Gpu = project.CollisionMode == CollisionMode.Backwards_GPU ? Miller.Core.Native.GpuDevice.Description : null,
         };
     }
 

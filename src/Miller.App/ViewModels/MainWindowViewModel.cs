@@ -221,8 +221,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             SimulationPanel.OnLoadedChanged();
             Analysis.SetPipeline(result, collisions.Report);
             StatusText = string.Create(CultureInfo.InvariantCulture,
-                $"Toolpath ready: {result.Statistics.SegmentCount} segments, {result.Statistics.EstimatedMinutes:0.0} min, {CollisionService.StatusSuffix(collisions)}");
-            summary = CollisionService.Summarize(collisions);
+                $"Toolpath ready: {result.Statistics.SegmentCount} segments, {result.Statistics.EstimatedMinutes:0.0} min, {CollisionService.StatusSuffix(collisions)}, {UncutReport.StatusSuffix(result)}");
+            summary = CollisionService.Summarize(collisions) + "\n\n" + UncutReport.Summarize(result);
             ToolpathGenerated?.Invoke(this, EventArgs.Empty);
         }
         catch (OperationCanceledException)
@@ -377,7 +377,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             Viewport.SetMeshes(meshes.Select((mesh, k) => mesh.Transform(matrices[k])).ToList());
         }
 
-        Viewport.SetStock(ModelLayout.StockBoundsMachine(Project.Current), stock);
+        Viewport.SetStock(ModelLayout.StockBoundsMachine(Project.Current, MeshImport.Bounds), stock);
     }
 
     private bool SameScene(IReadOnlyList<Mesh> meshes, IReadOnlyList<Matrix4x4> matrices)

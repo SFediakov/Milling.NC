@@ -26,7 +26,7 @@ public abstract class SettingsViewModelBase : ViewModelBase
 
     protected MillingProject Current => Project.Current;
 
-    public void Revalidate() => ApplyValidation(ProjectValidator.Validate(Current, ModelBoundsForValidation()), FieldPrefix);
+    public void Revalidate() => ApplyValidation(ProjectValidator.Validate(Current, ModelBoundsInStockForValidation()), FieldPrefix);
 
     protected void Edit(Action<MillingProject> change, [CallerMemberName] string? property = null)
     {
@@ -45,7 +45,8 @@ public abstract class SettingsViewModelBase : ViewModelBase
         Revalidate();
     }
 
-    protected virtual BoundingBox? ModelBoundsForValidation() => null;
+    // The placed models relative to the stock corner for the containment test; null skips it.
+    protected virtual BoundingBox? ModelBoundsInStockForValidation() => null;
 
     // Derived panels raise a change for every bound property here.
     protected abstract void OnReload();

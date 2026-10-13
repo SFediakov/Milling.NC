@@ -109,6 +109,39 @@ public sealed class RendererGeometryTests
         Assert.Equal(tool.HeadRadius, maxHeadRadius, 3);
     }
 
+    // T-165: a head bottom narrower than the cutter shows the cutter's top face as one more disc, at the
+    // cutter length, facing up, in the cutter color; the head keeps its narrower radius.
+    [Fact]
+    public void Tool_NarrowerHead_ClosesTheCutterTop()
+    {
+        var tool = new ToolDefinition { CutterDiameter = 6, CutterLength = 20, HeadDiameter = 3 };
+        var data = ToolRenderer.Build(tool, Red, Green);
+        var cylinder = ToolRenderer.Segments * 6;
+        var disc = ToolRenderer.Segments * 3;
+        Assert.Equal((cylinder + disc + cylinder + 3 * disc) * ToolRenderer.FloatsPerVertex, data.Length);
+
+        var topFace = 0;
+        var maxHeadRadius = 0f;
+        for (var o = 0; o < data.Length; o += ToolRenderer.FloatsPerVertex)
+        {
+            var p = new Vector3(data[o], data[o + 1], data[o + 2]);
+            var n = new Vector3(data[o + 3], data[o + 4], data[o + 5]);
+            var color = new Vector4(data[o + 6], data[o + 7], data[o + 8], data[o + 9]);
+            if (color == Red && n.Z > 0.5f)
+            {
+                Assert.Equal(tool.CutterLength, p.Z, 4);
+                topFace++;
+            }
+            else if (color == Green)
+            {
+                maxHeadRadius = MathF.Max(maxHeadRadius, MathF.Sqrt(p.X * p.X + p.Y * p.Y));
+            }
+        }
+
+        Assert.Equal(disc, topFace);
+        Assert.Equal(1.5f, maxHeadRadius, 3);
+    }
+
     // T-135: a frustum from 10 mm to 20 mm over 8 mm, then the top cylinder for the display length.
     [Fact]
     public void Tool_FrustumHead_WidensFromTheBottomToTheTopDiameter()

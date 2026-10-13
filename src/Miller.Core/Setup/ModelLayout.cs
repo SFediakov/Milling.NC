@@ -6,8 +6,9 @@ namespace Miller.Core.Setup;
 // Where every model of a project ends up in machine space. Placement (orientation, scale and
 // rotation about Z around the oriented center, offset) is per model. The stock is anchored to the union of the
 // models before their offsets (AnchorBounds), so an offset moves a model inside the stock and never
-// drags the stock along; machine zero comes from the stock corner around that anchor and is shared,
-// so one model with a zero placement lands exactly where AxisSetup.ToMatrix used to put it.
+// drags the stock along. Machine zero (AxisSetup.MachineZero) is shared: on the stock it comes from the
+// stock corner around that anchor, so one model with a zero placement lands exactly where
+// AxisSetup.ToMatrix puts it; on the models it follows their placed box; Global keeps it fixed.
 public static class ModelLayout
 {
     private const float DegToRad = MathF.PI / 180f;
@@ -53,19 +54,28 @@ public static class ModelLayout
         return union;
     }
 
-    public static Vector3 MachineZero(MillingProject project, BoundingBox anchorBounds)
-        => AxisSetup.StockCorner(anchorBounds, project.Stock) + project.Axes.OriginOffset(project.Stock);
+    // Machine zero in the global frame (AxisSetup.MachineZero over the anchor and the placed models).
+    public static Vector3 MachineZero(MillingProject project, IReadOnlyList<BoundingBox> modelBounds)
+        => project.Axes.MachineZero(AnchorBounds(project, modelBounds), PlacedBounds(project, modelBounds), project.Stock);
 
     // The anchor in machine space; StockModel.Create aligns the stock to it.
     public static BoundingBox AnchorBoundsMachine(MillingProject project, IReadOnlyList<BoundingBox> modelBounds)
     {
         var anchor = AnchorBounds(project, modelBounds);
-        var zero = MachineZero(project, anchor);
+        var zero = MachineZero(project, modelBounds);
         return new BoundingBox(anchor.Min - zero, anchor.Max - zero);
     }
 
-    // The stock's bounding box in machine space. Machine zero is the stock corner plus the origin
-    // offset, so the corner sits at minus that offset whatever the models are.
+    // The stock's bounding box in machine space, the one box the pipeline, the viewport and the axes
+    // panel use: the stock corner around the anchor in machine space.
+    public static BoundingBox StockBoundsMachine(MillingProject project, IReadOnlyList<BoundingBox> modelBounds)
+    {
+        var corner = AxisSetup.StockCorner(AnchorBoundsMachine(project, modelBounds), project.Stock);
+        return new BoundingBox(corner, corner + AxisSetup.StockBoundingSize(project.Stock));
+    }
+
+    // With machine zero on the stock the box does not depend on the models: its corner sits at minus
+    // the origin offset. The model and global modes need the models (the overload above).
     public static BoundingBox StockBoundsMachine(MillingProject project)
     {
         ArgumentNullException.ThrowIfNull(project);
@@ -73,10 +83,19 @@ public static class ModelLayout
         return new BoundingBox(corner, corner + AxisSetup.StockBoundingSize(project.Stock));
     }
 
+    // The placed models' bounds relative to the stock's minimum corner, computed in the global frame,
+    // so the containment test (ProjectValidator) does not depend on where machine zero is.
+    public static BoundingBox ModelBoundsInStock(MillingProject project, IReadOnlyList<BoundingBox> modelBounds)
+    {
+        var placed = PlacedBounds(project, modelBounds);
+        var corner = AxisSetup.StockCorner(AnchorBounds(project, modelBounds), project.Stock);
+        return new BoundingBox(placed.Min - corner, placed.Max - corner);
+    }
+
     // Model space to machine space, one matrix per model.
     public static IReadOnlyList<Matrix4x4> MachineMatrices(MillingProject project, IReadOnlyList<BoundingBox> modelBounds)
     {
-        var zero = MachineZero(project, AnchorBounds(project, modelBounds));
+        var zero = MachineZero(project, modelBounds);
         var shift = Matrix4x4.CreateTranslation(-zero);
         var matrices = new Matrix4x4[modelBounds.Count];
         for (var k = 0; k < modelBounds.Count; k++)

@@ -17,6 +17,9 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
 {
     public const string NoToolpathText = "No toolpath yet.";
 
+    // Process times below this are left out of the statistics.
+    public const double MinShownSeconds = 0.05;
+
     public StrategySelectionViewModel(ProjectService project, IAsyncRelayCommand generate, IRelayCommand cancel)
         : base(project, "Strategy.")
     {
@@ -105,6 +108,8 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         }
     }
 
+    public string? CollisionModeError => ErrorFor("Strategy.CollisionMode");
+
     public bool IsRecursion => Current.CollisionMode == CollisionMode.Recursion;
 
     public bool IsOneRun => Current.CollisionMode == CollisionMode.OneRun;
@@ -127,6 +132,20 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
 
     public BridgeReport Bridges { get; private set; }
 
+    // Area of one grid cell, for the far stepdown areas of every pass (T-164).
+    public float CellArea { get; private set; }
+
+    // Route units the route stage solved in parallel (T-167).
+    public int RouteUnits { get; private set; }
+
+    // Backwards (T-172): the unreached positions against the model cells; null in the other modes.
+    public UnreachedCells? Unreached { get; private set; }
+
+    // The process times of the last run (T-176) and the GPU it ran on (Backwards_GPU).
+    public ProcessTimes? Times { get; private set; }
+
+    public string? Gpu { get; private set; }
+
     public string StatisticsText
     {
         get
@@ -141,7 +160,32 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Feed: {Statistics.FeedLength:0.0} mm, plunge: {Statistics.PlungeLength:0.0} mm, rapid: {Statistics.RapidLength:0.0} mm\n"));
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Estimated time: {Statistics.EstimatedMinutes:0.0} min, retracts: {Statistics.RetractCount}\n"));
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Levels: {Plan.Levels}, lowest level: {Plan.LowestLevel:0.000} mm\n"));
+            text.Append(string.Create(CultureInfo.InvariantCulture, $"Route units: {RouteUnits}\n"));
             text.Append(string.Create(CultureInfo.InvariantCulture, $"Generation passes: {Passes}, collisions per pass: {string.Join(", ", PassCollisions.Select(p => p.Events.ToString(CultureInfo.InvariantCulture)))}"));
+            if (PassCollisions.Any(p => p.FarCells > 0 || p.WithdrawnCells > 0))
+            {
+                var milled = string.Join(", ", PassCollisions.Select(p => (p.FarCells * CellArea).ToString("0.0", CultureInfo.InvariantCulture)));
+                var withdrawn = string.Join(", ", PassCollisions.Select(p => (p.WithdrawnCells * CellArea).ToString("0.0", CultureInfo.InvariantCulture)));
+                text.Append(string.Create(CultureInfo.InvariantCulture, $"\nFar stepdown area per pass: {milled} mm2, withdrawn around collisions: {withdrawn} mm2"));
+            }
+
+            if (Unreached is { } unreached)
+            {
+                text.Append(string.Create(CultureInfo.InvariantCulture, $"\nUnreached cells (Backwards): {unreached.Unreached} of {unreached.ModelCells} model cells, {unreached.Percent:0.00} %"));
+            }
+
+            if (Gpu is not null)
+            {
+                text.Append(string.Create(CultureInfo.InvariantCulture, $"\nGPU: {Gpu}"));
+            }
+
+            if (Times is { } times)
+            {
+                var spent = times.Seconds.Select((s, k) => (Seconds: s, Name: ProcessTimes.Names[k])).Where(t => t.Seconds >= MinShownSeconds)
+                    .Select(t => string.Create(CultureInfo.InvariantCulture, $"{t.Name} {t.Seconds:0.0}"));
+                text.Append("\nProcess times (s): ").Append(string.Join(", ", spent));
+            }
+
             if (Bridges.Wanted > 0)
             {
                 text.Append(string.Create(CultureInfo.InvariantCulture, $"\nBridges: {Bridges.Placed} of {Bridges.Wanted} placed on {Bridges.Parts} freed part(s)"));
@@ -159,6 +203,11 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         Passes = result.Passes;
         PassCollisions = result.PassCollisions;
         Bridges = result.Bridges;
+        CellArea = result.Parameters.CellSize * result.Parameters.CellSize;
+        RouteUnits = result.RouteUnitEntries.Count + 1;
+        Unreached = result.Unreached;
+        Times = result.Times;
+        Gpu = result.Gpu;
         RaiseStatistics();
     }
 
@@ -169,6 +218,11 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         Passes = 0;
         PassCollisions = Array.Empty<PassCollisions>();
         Bridges = default;
+        CellArea = 0;
+        RouteUnits = 0;
+        Unreached = null;
+        Times = null;
+        Gpu = null;
         RaiseStatistics();
     }
 
@@ -186,6 +240,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         OnPropertyChanged(nameof(ReachPercent));
         OnPropertyChanged(nameof(ReachPercentError));
         OnPropertyChanged(nameof(CollisionMode));
+        OnPropertyChanged(nameof(CollisionModeError));
         OnPropertyChanged(nameof(IsRecursion));
         OnPropertyChanged(nameof(IsOneRun));
         OnPropertyChanged(nameof(RecursionRatio));
@@ -203,6 +258,7 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         OnPropertyChanged(nameof(BridgeWidthWarning));
         OnPropertyChanged(nameof(BridgeHeightError));
         OnPropertyChanged(nameof(ReachPercentError));
+        OnPropertyChanged(nameof(CollisionModeError));
         OnPropertyChanged(nameof(RecursionRatioError));
         OnPropertyChanged(nameof(OneRunRatioError));
     }

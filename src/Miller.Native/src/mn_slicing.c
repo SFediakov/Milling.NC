@@ -1,4 +1,5 @@
 #include "mn_internal.h"
+#include "mn_thread.h"
 
 /* Levels, their masks and the cut scope (Slicer, SeparationRegion, MaterialIslands, DistanceTransform,
  * CaveTree.Label). Masks are row-major bytes like the maps. */
@@ -51,49 +52,84 @@ static void transform_line(const float* f, int n, float* d, int* v, float* z)
     }
 }
 
+typedef struct envelope_scratch {
+    float* line;
+    float* output;
+    int* vertices;
+    float* boundaries;
+} envelope_scratch;
+
+typedef struct envelope_job {
+    float* values;
+    int width;
+    int height;
+    int columns;
+} envelope_job;
+
+/* One column (columns pass) or one row (rows pass); a line reads and writes its own cells only. */
+static void envelope_line(void* context, int index, void* scratch_pointer)
+{
+    const envelope_job* job = (const envelope_job*)context;
+    envelope_scratch* s = (envelope_scratch*)scratch_pointer;
+    int width = job->width;
+    if (job->columns) {
+        for (int j = 0; j < job->height; j++) {
+            s->line[j] = job->values[j * width + index];
+        }
+        transform_line(s->line, job->height, s->output, s->vertices, s->boundaries);
+        for (int j = 0; j < job->height; j++) {
+            job->values[j * width + index] = s->output[j];
+        }
+    } else {
+        float* row = job->values + (size_t)index * (size_t)width;
+        memcpy(s->line, row, (size_t)width * sizeof(float));
+        transform_line(s->line, width, s->output, s->vertices, s->boundaries);
+        memcpy(row, s->output, (size_t)width * sizeof(float));
+    }
+}
+
 /* In place: values[c] becomes min over q of values[q] + |c - q|^2 in cells (INFINITY for no source);
- * a source value may be negative. */
+ * a source value may be negative. The columns run on the worker pool, then the rows (T-160); every
+ * line is independent, so the result does not depend on the workers. */
 static int lower_envelope(float* values, int width, int height)
 {
+    int workers = mn_worker_count();
     int length = mn_maxi(width, height);
-    float* line = (float*)mn_alloc((size_t)length, sizeof(float));
-    float* output = (float*)mn_alloc((size_t)length, sizeof(float));
-    int* vertices = (int*)mn_alloc((size_t)length, sizeof(int));
-    float* boundaries = (float*)mn_alloc((size_t)length + 1, sizeof(float));
-    if (line == NULL || output == NULL || vertices == NULL || boundaries == NULL) {
-        free(line);
-        free(output);
-        free(vertices);
-        free(boundaries);
+    envelope_scratch* scratch = (envelope_scratch*)mn_alloc((size_t)workers, sizeof(envelope_scratch));
+    void* pointers[MN_MAX_WORKERS];
+    int status = MN_OK;
+    if (scratch == NULL) {
         return mn_fail(MN_ERR_MEMORY, "Out of memory for a distance transform.");
     }
-
-    for (int i = 0; i < width; i++) {
-        for (int j = 0; j < height; j++) {
-            line[j] = values[j * width + i];
-        }
-        transform_line(line, height, output, vertices, boundaries);
-        for (int j = 0; j < height; j++) {
-            values[j * width + i] = output[j];
-        }
-    }
-
-    for (int j = 0; j < height; j++) {
-        for (int i = 0; i < width; i++) {
-            line[i] = values[j * width + i];
-        }
-        transform_line(line, width, output, vertices, boundaries);
-        for (int i = 0; i < width; i++) {
-            values[j * width + i] = output[i];
+    for (int w = 0; w < workers; w++) {
+        scratch[w].line = (float*)mn_alloc((size_t)length, sizeof(float));
+        scratch[w].output = (float*)mn_alloc((size_t)length, sizeof(float));
+        scratch[w].vertices = (int*)mn_alloc((size_t)length, sizeof(int));
+        scratch[w].boundaries = (float*)mn_alloc((size_t)length + 1, sizeof(float));
+        pointers[w] = &scratch[w];
+        if (scratch[w].line == NULL || scratch[w].output == NULL || scratch[w].vertices == NULL || scratch[w].boundaries == NULL) {
+            status = mn_fail(MN_ERR_MEMORY, "Out of memory for a distance transform.");
         }
     }
-
-    free(line);
-    free(output);
-    free(vertices);
-    free(boundaries);
-    return MN_OK;
+    if (status == MN_OK) {
+        envelope_job job = { values, width, height, 1 };
+        status = mn_rows_parallel(width, envelope_line, &job, pointers, workers);
+        if (status == MN_OK) {
+            job.columns = 0;
+            status = mn_rows_parallel(height, envelope_line, &job, pointers, workers);
+        }
+    }
+    for (int w = 0; w < workers; w++) {
+        free(scratch[w].line);
+        free(scratch[w].output);
+        free(scratch[w].vertices);
+        free(scratch[w].boundaries);
+    }
+    free(scratch);
+    return status;
 }
+
+int mn_lower_envelope(float* values, int width, int height) { return lower_envelope(values, width, height); }
 
 int mn_distance_transform(const uint8_t* mask, int width, int height, float cell_size, float* distances)
 {
@@ -306,6 +342,31 @@ MN_API void mn_plan_free(mn_plan* plan)
     free(plan);
 }
 
+typedef struct slice_job {
+    mn_plan* plan;
+    const float* effective_tip;
+    const float* stock;
+} slice_job;
+
+/* The masks of every level over one row (T-160, rows on the worker pool). */
+static void slice_row(void* context, int j, void* scratch)
+{
+    (void)scratch;
+    const slice_job* job = (const slice_job*)context;
+    mn_plan* p = job->plan;
+    int width = p->grid.width;
+    int cells = mn_cells(&p->grid);
+    for (int k = 0; k < p->count; k++) {
+        float level = p->levels[k];
+        uint8_t* mask = p->masks + (size_t)k * (size_t)cells + (size_t)j * (size_t)width;
+        for (int i = 0; i < width; i++) {
+            int c = j * width + i;
+            float s = job->stock[c];
+            mask[i] = (uint8_t)(mn_reachable_at_level(job->effective_tip[c], level) && !mn_isnan(s) && s > level);
+        }
+    }
+}
+
 int mn_slice_build(const mn_grid* g, const float* effective_tip, const float* stock, float stepdown, mn_plan** plan)
 {
     if (!(stepdown > 0)) {
@@ -331,13 +392,14 @@ int mn_slice_build(const mn_grid* g, const float* effective_tip, const float* st
 
     int cells = mn_cells(g);
     for (int k = 0; k < count; k++) {
-        float level = levels[k];
-        p->levels[k] = level;
-        uint8_t* mask = p->masks + (size_t)k * (size_t)cells;
-        for (int c = 0; c < cells; c++) {
-            float s = stock[c];
-            mask[c] = (uint8_t)(mn_reachable_at_level(effective_tip[c], level) && !mn_isnan(s) && s > level);
-        }
+        p->levels[k] = levels[k];
+    }
+    slice_job job = { p, effective_tip, stock };
+    status = mn_rows_parallel(g->height, slice_row, &job, NULL, mn_worker_count());
+    if (status != MN_OK) {
+        mn_plan_free(p);
+        free(levels);
+        return status;
     }
     for (int c = 0; c < cells; c++) {
         p->coverage[c] = (uint8_t)!mn_isnan(effective_tip[c]);
@@ -411,8 +473,9 @@ MN_API float mn_adjacency_margin(float cell_size) { return sqrtf(2.0f) * cell_si
 
 MN_API float mn_head_margin(float cell_size, float tolerance) { return mn_adjacency_margin(cell_size) + tolerance; }
 
-/* How far the head reaches beyond the cutter edge; the widest head radius for a frustum. */
-MN_API float mn_head_overhang(const mn_tool* tool) { return mn_head_radius(tool) - tool->cutter_diameter / 2.0f; }
+/* How far the head reaches beyond the cutter edge; the widest head radius for a frustum, 0 for a head
+ * that stays inside the cutter radius (T-165). */
+MN_API float mn_head_overhang(const mn_tool* tool) { return mn_max(0.0f, mn_head_radius(tool) - tool->cutter_diameter / 2.0f); }
 
 int mn_touches_outside(const int* cells, int count, const mn_grid* g, const float* stock)
 {
@@ -516,7 +579,9 @@ MN_API int32_t mn_islands_find(const mn_grid* grid, const float* standing, const
  * wherever the head of a deeper position would meet the slab above it: by the widest head radius
  * where the head bottom lies at least the head's widening height below that slab, and by the head
  * radius at the height the slab stands above the head bottom where it lies closer, so a frustum
- * leaves a slope instead of one tread of its widest radius. */
+ * leaves a slope instead of one tread of its widest radius; a head narrower than the cutter counts
+ * as the cutter radius, the flutes cannot cut a slab above them (T-165). The slab counts `tolerance` higher than
+ * its level, the height the simplifier's chords leave its material at (T-163). */
 int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* stock, const mn_tool* tool, float tolerance, float stock_top, float floor, float min_island_volume, float* standing, mn_ints* island_cells, mn_ints* island_offsets, float** island_volumes, int* island_count)
 {
     const mn_grid* g = &plan->grid;
@@ -566,7 +631,7 @@ int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* 
             goto done;
         }
         const uint8_t* below = k + 1 < count ? masks + (size_t)(k + 1) * (size_t)cells : NULL;
-        int reach = mn_head_reach(plan->levels, count, k, stock_top, tool->cutter_length + widening);
+        int reach = mn_head_reach(plan->levels, count, k, stock_top, tool->cutter_length + widening - tolerance);
         int any_cleared = reach >= 0;
         if (any_cleared) {
             status = mn_within_radius(masks + (size_t)reach * (size_t)cells, width, height, cell_size, overhang, cleared);
@@ -574,12 +639,15 @@ int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* 
                 goto done;
             }
         }
+        /* The slab's material stands up to `tolerance` above its level (the simplifier keeps chords
+         * that far above the planned tip), so the head meets it that much earlier: a slab level with
+         * the head bottom is not clear, its chords are (T-163). */
         float slab_top = k == 0 ? stock_top : plan->levels[k - 1];
         int sources = 0;
         for (int c = 0; c < cells; c++) {
-            float h = slab_top - deepest_position[c] - tool->cutter_length;
-            float radius = mn_head_radius_at(tool, h) - cutter_radius + margin;
-            int widens = h > MN_LEVEL_TOLERANCE && !(h > widening + MN_LEVEL_TOLERANCE) && radius > 0;
+            float h = slab_top + tolerance - deepest_position[c] - tool->cutter_length;
+            float radius = mn_meet_radius_at(tool, h) - cutter_radius + margin;
+            int widens = h > MN_LEVEL_TOLERANCE && !(h > widening + MN_LEVEL_TOLERANCE);
             slope[c] = widens ? -(radius / cell_size) * (radius / cell_size) : INFINITY;
             sources += widens;
         }
