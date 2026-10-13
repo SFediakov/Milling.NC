@@ -15,7 +15,7 @@ public sealed class AxisSettingsViewModel : SettingsViewModelBase
 
     public const string ModelOffsetLabel = "Custom zero relative to the models' corner (mm)";
 
-    public const string GlobalZeroText = "Zero is the global origin: the model coordinates after the axis mapping and the rotations, which turn about it. Model offsets and an explicit stock corner are measured from it.";
+    public const string GlobalZeroText = "Zero is the global origin, the one 0 of the axes and the stock: the axis rotations turn the models about it and an explicit stock corner is measured from it. A model offset moves the model from its file position; its scale and turn act about the model's own centre.";
 
     private static readonly string[] BoundProperties =
     {

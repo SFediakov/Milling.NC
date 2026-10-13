@@ -2467,6 +2467,14 @@ check that decides done.
 - Acceptance: the models' box in the stock is the same before and after a change into `Global` and back (1e-3 mm) for every stock and model mode; a change between two other modes and an auto-fit stock keep the values exactly
 - Status: done
 
+#### T-192 One zero in Global on the user's heart
+- Depends on: T-191
+- Files: `src/Miller.App/ViewModels/AxisSettingsViewModel.cs`, `tests/Miller.Tests/Core/Setup/MachineZeroTests.cs`
+- Input: user report (a Build_1.0.123 screenshot: stock corner 0, the axes away from it, more than one zero)
+- Output: the screenshot's corner (-2.746, 0.698, 0.352) is the models' minimum of the 1.0.123 rule, which T-190 removed; the launcher had kept 1.0.123 because the running instance locked the Release folder. Reference points of `Global`: machine zero (the axes), the explicit stock corner and the axis rotations share the global origin; a model's scale and turn act about its own centre and its offset moves it from its file position (the panel text says so)
+- Acceptance: on the heart with the screenshot's settings the corner 0 puts the stock at (0, 0, 0), the axes; the model lands at the screenshot's (-1.746, 2.898, -4.898); the generation cuts the stock box of the same frame; `Miller.cmd --version` prints the session's build
+- Status: done
+
 #### T-165 Head bottom down to half the cutter diameter
 - Depends on: T-135, T-162
 - Files: `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.Native/src/mn_profile.c`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_slicing.c`, `src/Miller.App/Rendering/ToolRenderer.cs`, `tests/Miller.Tests/Application/NarrowHeadTests.cs`

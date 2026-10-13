@@ -293,6 +293,46 @@ public sealed class MachineZeroTests
         }
     }
 
+    // T-192: the user's heart setup of the Build_1.0.123 screenshot (turned axes, scaled and offset model,
+    // 60 x 30 x 5.25 explicit stock). There the corner 0 put the stock at the models' minimum
+    // (-2.746, 0.698, 0.352), away from the axes; now it puts the stock at the axes, the one zero, and the
+    // generation cuts the stock box of that same frame.
+    [Fact]
+    public void Global_OnTheUsersHeart_PutsTheStockCornerAtTheAxes_AndTheGenerationUsesTheSameZero()
+    {
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var import = new MeshImportService();
+        import.Import(Path.Combine(root, "Milling_Heart_V2.STL"));
+        var bounds = import.Bounds;
+        var project = Turned(OriginMode.StockCornerMinXYMinZ);
+        project.Models[0].StlPath = "Milling_Heart_V2.STL";
+        project.Axes.CustomOffset = Vector3.Zero;
+
+        ModelLayout.SetOriginMode(project, bounds, OriginMode.Global);
+        var model = ModelLayout.MachineBounds(project, bounds);
+        AssertClose(new Vector3(-1.746f, 2.898f, -4.898f), model.Min);
+        AssertClose(new Vector3(27.463f, 25.603f, 5.25f), model.Size);
+        AssertClose(new Vector3(-2.746f, 0.698f, -4.898f), project.Stock.ExplicitOrigin);
+        AssertClose(new Vector3(-2.746f, 0.698f, 0.352f), ModelLayout.AnchorBounds(project, bounds).Min);
+
+        var stored = project.Stock.ExplicitOrigin;
+        project.Stock.ExplicitOrigin = Vector3.Zero;
+        Assert.Equal(Vector3.Zero, ModelLayout.MachineZero(project, bounds));
+        Assert.Equal(Vector3.Zero, ModelLayout.StockBoundsMachine(project, bounds).Min);
+
+        project.Stock.ExplicitOrigin = stored;
+        project.Parameters.CellSize = 0.5f;
+        var result = new PipelineService().Run(project, import.Meshes, null, CancellationToken.None);
+        Assert.Equal(stored, result.Stock.Bounds.Min);
+        AssertClose(model.Min, result.MachineMesh.Bounds.Min);
+        var reach = project.Tool.CutterDiameter / 2 + project.Parameters.CellSize;
+        Assert.All(result.Toolpath.Segments, s =>
+        {
+            Assert.InRange(s.End.X, stored.X - reach, stored.X + 60 + reach);
+            Assert.InRange(s.End.Y, stored.Y - reach, stored.Y + 30 + reach);
+        });
+    }
+
     [Theory]
     [InlineData(OriginMode.ModelCornerMinXYMinZ)]
     [InlineData(OriginMode.ModelCornerMinXYTopZ)]
