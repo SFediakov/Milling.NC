@@ -17,10 +17,9 @@
  * changes nothing (a position only ever loses levels, so this ends; for a flat tip the result equals
  * the cut from the top down). Then the batches of `group_size` levels (one far stepdown slab) go to the
  * solver from the lowest, each with the positions reached on every one of its levels as its far go.
- * The rows of every level run on the checker's share of the workers. */
-
-/* The checker runs at most this many batches ahead of the solver. */
-#define MN_BACKWARDS_AHEAD 4
+ * The rows of every level run on the checker's share of the workers. The batches are filled at once
+ * after the levels settle (T-185: the solver solves the slabs at once), and each is freed when its slab
+ * is done. */
 
 #define MN_BACKWARDS_ERROR 512
 
@@ -61,6 +60,9 @@ typedef struct row_job {
     const uint8_t* mask;
     uint8_t* reached;
     int sources;
+    /* The field and the counts per row the job writes: the check's own, or a batch worker's (T-185). */
+    float* field;
+    int* counts;
 } row_job;
 
 static int stopped(const mn_backwards* check) { return check->abort || (check->cancel != NULL && *check->cancel != 0); }
@@ -93,7 +95,7 @@ static void start_row(void* context, int j, void* scratch)
             counted += m > plan->levels[k] + MN_LEVEL_TOLERANCE ? 1 : 0;
         }
     }
-    check->row_counts[j] = counted;
+    job->counts[j] = counted;
 }
 
 /* The deepest level of every position as a height (NaN for none), for the closing. */
@@ -109,10 +111,10 @@ static void height_row(void* context, int j, void* scratch)
         int c = j * width + i;
         changed += check->next[c] != check->deepest[c] ? 1 : 0;
         check->deepest[c] = check->next[c];
-        check->field[c] = check->deepest[c] >= 0 ? ctx->plan->levels[check->deepest[c]] : NAN;
+        job->field[c] = check->deepest[c] >= 0 ? ctx->plan->levels[check->deepest[c]] : NAN;
         check->next[c] = -1;
     }
-    check->row_counts[j] = changed;
+    job->counts[j] = changed;
 }
 
 /* The disks of the material standing above the head bottom at the job's level (field), counted per row. */
@@ -130,7 +132,7 @@ static void source_row(void* context, int j, void* scratch)
         int c = j * g->width + i;
         float stock = ctx->stock[c];
         float a = check->closing[c];
-        check->field[c] = INFINITY;
+        job->field[c] = INFINITY;
         if (mn_isnan(stock)) {
             continue;
         }
@@ -140,10 +142,10 @@ static void source_row(void* context, int j, void* scratch)
             continue;
         }
         float radius = (mn_meet_radius_at(&ctx->tool, h) + margin) / g->cell_size;
-        check->field[c] = -radius * radius;
+        job->field[c] = -radius * radius;
         sources++;
     }
-    check->row_counts[j] = sources;
+    job->counts[j] = sources;
 }
 
 /* The positions of the mask outside every disk; with a sweep, the deepest level each one reaches. */
@@ -155,7 +157,7 @@ static void verdict_row(void* context, int j, void* scratch)
     int width = check->context->grid.width;
     for (int i = 0; i < width; i++) {
         int c = j * width + i;
-        uint8_t clear = (uint8_t)(job->mask[c] && (job->sources == 0 || check->field[c] > 0.0f));
+        uint8_t clear = (uint8_t)(job->mask[c] && (job->sources == 0 || job->field[c] > 0.0f));
         job->reached[c] = clear;
         if (clear && job->reached == check->reached && check->next[c] < 0) {
             check->next[c] = job->level;
@@ -163,26 +165,27 @@ static void verdict_row(void* context, int j, void* scratch)
     }
 }
 
-static int64_t row_sum(const mn_backwards* check)
+static int64_t row_sum(const mn_backwards* check, const int* counts)
 {
     int64_t sum = 0;
     for (int j = 0; j < check->context->grid.height; j++) {
-        sum += check->row_counts[j];
+        sum += counts[j];
     }
     return sum;
 }
 
-/* The positions of `mask` the head clears at plan level `level` with nothing cut below `clamp` yet. */
-static int clear_at(mn_backwards* check, int level, float clamp, const uint8_t* mask, uint8_t* reached)
+/* The positions of `mask` the head clears at plan level `level` with nothing cut below `clamp` yet, with
+ * the field and row counts given and the rows on `workers` workers. */
+static int clear_at(mn_backwards* check, int level, float clamp, const uint8_t* mask, uint8_t* reached, float* field, int* counts, int workers)
 {
     const mn_grid* g = &check->context->grid;
-    row_job job = { check, level, clamp, mask, reached, 0 };
-    MN_CHECK(mn_rows_parallel(g->height, source_row, &job, NULL, check->workers));
-    job.sources = row_sum(check) > 0;
+    row_job job = { check, level, clamp, mask, reached, 0, field, counts };
+    MN_CHECK(mn_rows_parallel(g->height, source_row, &job, NULL, workers));
+    job.sources = row_sum(check, counts) > 0;
     if (job.sources) {
-        MN_CHECK(mn_lower_envelope(check->field, g->width, g->height));
+        MN_CHECK(mn_lower_envelope(field, g->width, g->height));
     }
-    return mn_rows_parallel(g->height, verdict_row, &job, NULL, check->workers);
+    return mn_rows_parallel(g->height, verdict_row, &job, NULL, workers);
 }
 
 static float level_above(const mn_context* context, int k) { return k > 0 ? context->plan->levels[k - 1] : context->stock_top; }
@@ -192,9 +195,9 @@ static float level_above(const mn_context* context, int k) { return k > 0 ? cont
 static int64_t settle(mn_backwards* check)
 {
     const mn_grid* g = &check->context->grid;
-    row_job job = { check, 0, 0.0f, NULL, NULL, 0 };
+    row_job job = { check, 0, 0.0f, NULL, NULL, 0, check->field, check->row_counts };
     MN_CHECK(mn_rows_parallel(g->height, height_row, &job, NULL, check->workers));
-    int64_t changed = row_sum(check);
+    int64_t changed = row_sum(check, check->row_counts);
     MN_CHECK(mn_remaining_compute(g, check->field, check->profile.offsets, check->profile.offset_count, check->closing));
     return changed;
 }
@@ -208,7 +211,7 @@ static int sweep(mn_backwards* check)
         if (stopped(check)) {
             return mn_fail(MN_ERR_CANCELLED, "Cancelled.");
         }
-        MN_CHECK(clear_at(check, k, level_above(ctx, k), ctx->plan->masks + (size_t)k * (size_t)cells, check->reached));
+        MN_CHECK(clear_at(check, k, level_above(ctx, k), ctx->plan->masks + (size_t)k * (size_t)cells, check->reached, check->field, check->row_counts, check->workers));
     }
     return MN_OK;
 }
@@ -216,8 +219,9 @@ static int sweep(mn_backwards* check)
 /* One batch from the converged levels: per level the positions of its mask reached that deep, then the
  * far go (positions reached on every level, never a withdrawn one, T-164); the far go cuts from the
  * batch top in one step, so where that is deeper than the head allows it is tested against the
- * material at the batch top. */
-static int fill_batch(mn_backwards* check, mn_backwards_batch* batch)
+ * material at the batch top. The batches only read the settled levels, so they fill at once (T-185),
+ * each with its own field and row counts; `unreached` receives the batch's count. */
+static int fill_batch(mn_backwards* check, mn_backwards_batch* batch, float* field, int* counts, int64_t* unreached)
 {
     const mn_context* ctx = check->context;
     int cells = mn_cells(&ctx->grid);
@@ -231,7 +235,7 @@ static int fill_batch(mn_backwards* check, mn_backwards_batch* batch)
         uint8_t* reached = batch->reached + (size_t)(k - batch->first) * (size_t)cells;
         for (int c = 0; c < cells; c++) {
             reached[c] = (uint8_t)(mask[c] && check->deepest[c] >= k);
-            check->unreached += mask[c] && !reached[c] ? 1 : 0;
+            *unreached += mask[c] && !reached[c] ? 1 : 0;
         }
     }
     if (levels < 2 || !(ctx->parameters.far_stepdown > 0)) {
@@ -250,7 +254,7 @@ static int fill_batch(mn_backwards* check, mn_backwards_batch* batch)
     }
     float top = level_above(ctx, batch->first);
     if (top - (ctx->plan->levels[batch->last] + ctx->tool.cutter_length) > MN_LEVEL_TOLERANCE) {
-        MN_CHECK(clear_at(check, batch->last, top, batch->far, batch->far));
+        MN_CHECK(clear_at(check, batch->last, top, batch->far, batch->far, field, counts, 1));
     }
     return MN_OK;
 }
@@ -263,17 +267,86 @@ static void free_batch(mn_backwards_batch* batch)
     batch->far = NULL;
 }
 
+typedef struct fill_scratch {
+    float* field;
+    int* counts;
+} fill_scratch;
+
+typedef struct fill_job {
+    mn_backwards* check;
+    int64_t* unreached;
+    int* status;
+    char (*errors)[MN_BACKWARDS_ERROR];
+} fill_job;
+
+static void fill_row(void* context, int row, void* scratch)
+{
+    fill_job* job = (fill_job*)context;
+    const fill_scratch* w = (const fill_scratch*)scratch;
+    int cap = mn_set_thread_cap(1);
+    job->unreached[row] = 0;
+    job->status[row] = stopped(job->check) ? mn_fail(MN_ERR_CANCELLED, "Cancelled.") : fill_batch(job->check, &job->check->batches[row], w->field, w->counts, &job->unreached[row]);
+    if (job->status[row] != MN_OK) {
+        snprintf(job->errors[row], MN_BACKWARDS_ERROR, "%s", mn_last_error());
+    }
+    mn_set_thread_cap(cap);
+}
+
+/* Every batch at once on the checker's workers. */
+static int fill_all(mn_backwards* check)
+{
+    const mn_grid* g = &check->context->grid;
+    int count = check->batch_count;
+    int workers = mn_maxi(1, mn_mini(check->workers, count));
+    size_t slots = (size_t)(count > 0 ? count : 1);
+    fill_scratch* sets = (fill_scratch*)mn_alloc((size_t)workers, sizeof(fill_scratch));
+    void** scratch = (void**)mn_alloc((size_t)workers, sizeof(void*));
+    int64_t* unreached = (int64_t*)mn_alloc(slots, sizeof(int64_t));
+    int* status = (int*)mn_alloc(slots, sizeof(int));
+    char (*errors)[MN_BACKWARDS_ERROR] = (char (*)[MN_BACKWARDS_ERROR])mn_alloc(slots, MN_BACKWARDS_ERROR);
+    int result = sets == NULL || scratch == NULL || unreached == NULL || status == NULL || errors == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the batches.") : MN_OK;
+    for (int w = 0; w < workers && result == MN_OK; w++) {
+        sets[w].field = (float*)mn_alloc((size_t)mn_cells(g), sizeof(float));
+        sets[w].counts = (int*)mn_alloc((size_t)g->height, sizeof(int));
+        scratch[w] = &sets[w];
+        if (sets[w].field == NULL || sets[w].counts == NULL) {
+            result = mn_fail(MN_ERR_MEMORY, "Out of memory for the batches.");
+        }
+    }
+    if (result == MN_OK) {
+        fill_job job = { check, unreached, status, errors };
+        result = mn_rows_dynamic(count, fill_row, &job, scratch, workers);
+    }
+    for (int n = 0; n < count && result == MN_OK; n++) {
+        if (status[n] != MN_OK) {
+            result = mn_fail(status[n], "%s", errors[n]);
+        } else {
+            check->unreached += unreached[n];
+        }
+    }
+    for (int w = 0; sets != NULL && w < workers; w++) {
+        free(sets[w].field);
+        free(sets[w].counts);
+    }
+    free(sets);
+    free(scratch);
+    free(unreached);
+    free(status);
+    free(errors);
+    return result;
+}
+
 static int check_all(mn_backwards* check)
 {
     const mn_context* ctx = check->context;
     const mn_grid* g = &ctx->grid;
     int cells = mn_cells(g);
-    row_job job = { check, 0, 0.0f, NULL, NULL, 0 };
+    row_job job = { check, 0, 0.0f, NULL, NULL, 0, check->field, check->row_counts };
     MN_CHECK(mn_rows_parallel(g->height, start_row, &job, NULL, check->workers));
-    check->model_cells = row_sum(check);
+    check->model_cells = row_sum(check, check->row_counts);
     memcpy(check->next, check->deepest, (size_t)cells * sizeof(int));
     if (check->gpu) {
-        MN_CHECK(mn_gpu_backward_settle(ctx, &check->profile, check->deepest, &check->sweeps));
+        MN_CHECK(mn_gpu_backward_settle(ctx->gpu, ctx, check->deepest, check->closing, &check->sweeps));
     }
     for (int round = 0; !check->gpu && round <= ctx->plan->count; round++) {
         double started = mn_seconds();
@@ -290,21 +363,10 @@ static int check_all(mn_backwards* check)
         mn_time_add(MN_TIME_BACK_LEVELS, mn_seconds() - started);
         check->sweeps++;
     }
-    for (int n = 0; n < check->batch_count; n++) {
-        if (n >= MN_BACKWARDS_AHEAD) {
-            int consumed = mn_signal_wait(check->signal, 1, n - MN_BACKWARDS_AHEAD + 1);
-            if (consumed == MN_SIGNAL_DONE) {
-                return mn_fail(MN_ERR_CANCELLED, "Cancelled.");
-            }
-        }
-        if (stopped(check)) {
-            return mn_fail(MN_ERR_CANCELLED, "Cancelled.");
-        }
-        double started = mn_seconds();
-        MN_CHECK(fill_batch(check, &check->batches[check->batch_count - 1 - n]));
-        mn_time_add(MN_TIME_BACK_FILL, mn_seconds() - started);
-        mn_signal_raise(check->signal, 0, n + 1);
-    }
+    double started = mn_seconds();
+    MN_CHECK(fill_all(check));
+    mn_time_add(MN_TIME_BACK_FILL, mn_seconds() - started);
+    mn_signal_raise(check->signal, 0, check->batch_count);
     return MN_OK;
 }
 
@@ -337,7 +399,7 @@ static void release_all(mn_backwards* check)
     free(check);
 }
 
-int mn_backwards_start(const mn_context* context, int group_size, int workers, int gpu, const volatile int32_t* cancel, mn_backwards** result)
+int mn_backwards_start(const mn_context* context, int group_size, int workers, const volatile int32_t* cancel, mn_backwards** result)
 {
     const mn_grid* g = &context->grid;
     int cells = mn_cells(g);
@@ -351,7 +413,7 @@ int mn_backwards_start(const mn_context* context, int group_size, int workers, i
     check->group_size = group_size;
     check->batch_count = count > 0 ? (count + group_size - 1) / group_size : 0;
     check->workers = workers;
-    check->gpu = gpu;
+    check->gpu = context->gpu != NULL;
     check->batches = (mn_backwards_batch*)mn_alloc((size_t)(check->batch_count > 0 ? check->batch_count : 1), sizeof(mn_backwards_batch));
     check->deepest = (int*)mn_alloc((size_t)cells, sizeof(int));
     check->next = (int*)mn_alloc((size_t)cells, sizeof(int));

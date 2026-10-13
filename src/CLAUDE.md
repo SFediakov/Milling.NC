@@ -767,3 +767,21 @@
 - Most of Backwards' time is not GPU work: the slab groups (77 s, sequential labelling and a greedy gap
   cover that depends on its order) and the route units' local search are sequential; the timers of T-176
   (`mn_result_timings`) show the split for any project.
+- The GPU lost to the CPU on the heart (242 s against 255 s) because of work done per route and per cave
+  over the whole grid, not because of the GPU: every route copied and lifted 2.88 million cells (and sent
+  34.5 MB over PCIe in Backwards_GPU), every cave of a slab scanned the grid four times. A route reads only
+  the cells between its points and one beyond, a cave lies in its own box; with that, route floors went
+  from 120 s to 1.3 s and slab groups from 89 s to 13 s of thread time, the same toolpaths bit for bit
+  (T-185). Look for whole-grid work inside a loop before moving anything to the GPU.
+- A sequential walk is slow on one GPU thread: a tour per work item over a bucket grid gave the same tours
+  as the work-group per tour and kept the solver waiting 2,557 s on the heart (T-186). Keep a whole
+  work-group on one sequential construction, or keep it on the CPU.
+- A check test against an earlier stock is not cheap to make exact: a retract starts where the feed
+  before it just cut, so testing a batch against the stock at its start flagged nearly every batch (no
+  speed-up). Walking the batch in order per row band is exact, because a cell sees its removals and
+  tests in the same order as in one walk (T-187).
+- Bug that existed before this session, fixed: in Backwards_GPU the far go of a batch read the check's
+  closing on the CPU, which the GPU sweeps never copied back, so it was all zero; the far go was tested
+  against wrong material wherever the far go is deeper than the cutter and the closing stood above the
+  batch top. No fixture and not the heart hit that case (their toolpaths were the same before and after);
+  the GPU sweeps now return the closing (T-185).

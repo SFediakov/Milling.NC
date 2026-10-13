@@ -44,26 +44,6 @@ public sealed class GpuTests
         Assert.Equal(cpu.Z.Select(BitConverter.SingleToInt32Bits), gpu.Z.Select(BitConverter.SingleToInt32Bits));
     }
 
-    [Fact]
-    public void TheRouteFloor_GivesTheBitsOfTheCpu()
-    {
-        RequireGpu();
-        const int cells = 5000;
-        var stock = Map(cells, 1, 0.1f);
-        var tip = Map(cells, 2, 0.1f);
-        var floor = Map(cells, 3, 0.05f);
-        for (var k = 0; k < cells; k += 7)
-        {
-            floor[k] = stock[k];
-            tip[k] = stock[k];
-        }
-
-        var cpu = GpuProcesses.RouteFloor(stock, tip, floor, 12f);
-        var gpu = GpuProcesses.GpuRouteFloor(stock, tip, floor, 12f);
-        Assert.Equal(cpu.Select(BitConverter.SingleToInt32Bits), gpu.Select(BitConverter.SingleToInt32Bits));
-        Assert.Contains(cpu.Take(cells), v => v == 12f);
-    }
-
     // Every kept tour visits every node once, from the start, with the fixed end last, shortest first and
     // the same in every run; the plain nearest-neighbour walk (tour 0) is kept or beaten.
     [Fact]
@@ -151,7 +131,7 @@ public sealed class GpuTests
         Assert.Equal(0, cpu.Times.Seconds[ProcessTimes.Names.ToList().IndexOf("GPU start tours")]);
     }
 
-    // Two generations at once on the GPU keep their own route floors (each holds its stock and tip).
+    // Two generations at once on the GPU keep their own sessions (each holds its stock, profile and masks).
     [Fact]
     public async Task TwoGpuGenerationsAtOnce_GiveTheirOwnResults()
     {
@@ -165,6 +145,68 @@ public sealed class GpuTests
             Task.Run(() => new PipelineService().Run(Frustum(CollisionMode.Backwards_GPU, 4f), wide, null, CancellationToken.None)));
         Assert.Equal(first.Toolpath.Segments, both[0].Toolpath.Segments);
         Assert.Equal(second.Toolpath.Segments, both[1].Toolpath.Segments);
+    }
+
+    private static IEnumerable<int> Bits(float[] z) => z.Select(BitConverter.SingleToInt32Bits);
+
+    private static void AssertSameMaps(PipelineResult cpu, PipelineResult gpu)
+    {
+        Assert.Equal(Bits(cpu.Model.Z), Bits(gpu.Model.Z));
+        Assert.Equal(Bits(cpu.Tip.Z), Bits(gpu.Tip.Z));
+        Assert.Equal(Bits(cpu.EffectiveTip.Z), Bits(gpu.EffectiveTip.Z));
+        Assert.Equal(Bits(cpu.Standing.Z), Bits(gpu.Standing.Z));
+        Assert.Equal(cpu.Plan.Steps.Select(s => s.Level), gpu.Plan.Steps.Select(s => s.Level));
+        for (var k = 0; k < cpu.Plan.Levels; k++)
+        {
+            Assert.Equal(cpu.Plan.Steps[k].Mask.Cast<bool>(), gpu.Plan.Steps[k].Mask.Cast<bool>());
+        }
+
+        Assert.Equal(cpu.Plan.Coverage.Cast<bool>(), gpu.Plan.Coverage.Cast<bool>());
+        Assert.Equal(cpu.Unreached, gpu.Unreached);
+    }
+
+    // T-184: the reach map, the slicing with the separation's levels, the intended surface and the
+    // backward check run on the GPU from the session's resident data and give the CPU's maps bit for bit.
+    [Theory]
+    [InlineData(CutScope.Everything, 0f)]
+    [InlineData(CutScope.Separation, 0f)]
+    [InlineData(CutScope.Separation, 4f)]
+    public void BackwardsGpu_GivesTheMapsOfBackwards(CutScope scope, float farStepdown)
+    {
+        RequireGpu();
+        var mesh = new[] { TestMeshes.Box(10, 10, 4) };
+        var cpuProject = Frustum(CollisionMode.Backwards, farStepdown);
+        var gpuProject = Frustum(CollisionMode.Backwards_GPU, farStepdown);
+        cpuProject.CutScope = scope;
+        gpuProject.CutScope = scope;
+        var cpu = new PipelineService().Run(cpuProject, mesh, null, CancellationToken.None);
+        var gpu = new PipelineService().Run(gpuProject, mesh, null, CancellationToken.None);
+        AssertSameMaps(cpu, gpu);
+        Assert.Equal(cpu.Uncut, gpu.Uncut);
+    }
+
+    // The heart sample (a curved model with islands and bridges in the separation scope) at a coarse cell:
+    // the same maps on the GPU as on the CPU; the toolpath may differ where a GPU tour wins.
+    [Fact]
+    public void BackwardsGpu_GivesTheMapsOfBackwards_OnTheHeart()
+    {
+        RequireGpu();
+        var samplePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "samples", "heart.miller.json"));
+        var import = new MeshImportService();
+        var project = ProjectSerializer.Deserialize(File.ReadAllText(samplePath));
+        foreach (var model in project.Models)
+        {
+            import.Import(Path.Combine(Path.GetDirectoryName(samplePath)!, model.StlPath));
+        }
+
+        project.Parameters.CellSize = 0.4f;
+        project.CutScope = CutScope.Separation;
+        project.CollisionMode = CollisionMode.Backwards;
+        var cpu = new PipelineService().Run(project, import.Meshes, null, CancellationToken.None);
+        project.CollisionMode = CollisionMode.Backwards_GPU;
+        var gpu = new PipelineService().Run(project, import.Meshes, null, CancellationToken.None);
+        AssertSameMaps(cpu, gpu);
+        Assert.Empty(gpu.Collisions.Report!.Events);
     }
 
     [Fact]

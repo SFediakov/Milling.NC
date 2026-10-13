@@ -31,6 +31,17 @@ void mn_pool_destroy(mn_pool* pool);
  * runs inline); scratch may be NULL or hold `workers` entries. */
 int mn_rows_parallel(int rows, mn_row_fn fn, void* context, void** scratch, int workers);
 
+/* As mn_rows_parallel, but every worker takes the next row when it is done with one (rows of very
+ * different cost, T-185); the row a worker runs never changes what a row computes. */
+int mn_rows_dynamic(int rows, mn_row_fn fn, void* context, void** scratch, int workers);
+
+/* A lock for state several workers of one stage share (T-185: the progress of the Backwards slabs). */
+typedef struct mn_gate mn_gate;
+int mn_gate_create(mn_gate** gate);
+void mn_gate_enter(mn_gate* gate);
+void mn_gate_leave(mn_gate* gate);
+void mn_gate_destroy(mn_gate* gate);
+
 /* One process-wide lock for shared state that is created once and used from several threads (T-175:
  * the GPU device and its queue). */
 void mn_shared_lock(void);

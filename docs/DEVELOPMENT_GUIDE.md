@@ -627,17 +627,22 @@ Uncuttable classification (`UncuttableRegions`):
   position only loses levels; the result equals the cut from the top down for a
   flat tip, a ball tip's scallops above the level above are not counted). The
   settled levels go to the solver as batches of far stepdown / stepdown levels
-  (one level without a far stepdown), the lowest first, at most 4 ahead of it.
+  (one level without a far stepdown), filled at once once the levels settle
+  (T-185).
   A batch's far go is every position reached on all of its levels (never one
   withdrawn around a collision, T-164), cut in one step at its bottom level;
   where the batch top stands higher above that level than the cutter length the
   far go is tested against the material at the batch top as well. The solver
-  takes each batch as it comes and routes it like a Z layer slab: the far go,
-  then the batch's levels without the far go positions, cave by cave in route
-  units (T-166, T-167) over the material the batches above leave (every
-  position at the deepest level it reaches above the batch). A batch starts at
-  the entry of its first unit and its last unit ends at the start of the batch
-  below it (solved before it); the lowest batch ends where its routes end. The
+  routes every batch like a Z layer slab: the far go, then the batch's levels
+  without the far go positions, cave by cave in route units (T-166, T-167) over
+  the material the batches above leave (every position at the deepest level it
+  reaches above the batch). A batch starts at the entry of its first unit and
+  its last unit ends at the start of the nearest batch below it with routes; the
+  lowest batch ends where its routes end. A batch depends on nothing another
+  batch routes, so the batches run at once (T-185): first every batch's group
+  and its first entry, then every batch's routes, the batch with the most nodes
+  first, one batch per worker with its units in sequence (units give the same
+  paths whatever runs at once, T-168). The
   batches' paths are then joined from the top one down, the program starting
   with a plunge from the safe plane to the first batch's entry, and the
   established stages follow (simplifier, slow zones, statistics, check; the far
@@ -653,24 +658,32 @@ Uncuttable classification (`UncuttableRegions`):
   summary window after a generation names their count, area (mm2), the volume
   above the surface (mm3) and the highest of them, in Backwards also the
   unreached positions, and the status bar ends with "not cut: N cells".
-- Backwards_GPU (`CollisionMode.Backwards_GPU`, T-174 to T-177, user request:
-  a copy of Backwards whose data-parallel processes run on the discrete GPU):
-  OpenCL loaded at run time from the graphics driver (`OpenCL.dll`,
-  `libOpenCL.so.1`; no SDK, nothing vendored), the GPU device without memory
-  shared with the host chosen first, kernels built once per process with
-  `FP_CONTRACT OFF` and correctly rounded division and square root. On the GPU:
-  the backward check's sweeps (the closing of the deepest levels and the level
-  tests of all levels of a chunk; the power-distance envelope is two windowed
-  minima per cell over the widest radius of the level, which decide every
-  verdict the CPU's line scans decide), the intended surface, the route floors
-  of every route (the stock and the strategy tip uploaded once, the floor of a
-  route up and its lifted floors down) and 64 start tours per route built in
-  parallel (tour 0 the nearest-neighbour walk, the others under distances
-  stretched up to 25 percent by a fixed hash), of which the 4 shortest in XY
-  are priced exactly beside the CPU's start walks. The validator refuses the
-  mode without an OpenCL GPU; there is no CPU path behind a GPU call. The
-  statistics name the GPU and every process time (`ProcessTimes`,
-  `mn_result_timings`).
+- Backwards_GPU (`CollisionMode.Backwards_GPU`, T-174 to T-177, T-183 to
+  T-186, user request: a copy of Backwards whose data-parallel processes run on
+  the discrete GPU): OpenCL loaded at run time from the graphics driver
+  (`OpenCL.dll`, `libOpenCL.so.1`; no SDK, nothing vendored), the GPU device
+  without memory shared with the host chosen first, kernels built once per
+  process with `FP_CONTRACT OFF` and correctly rounded division and square
+  root. A session per generation (T-183, `mn_gpu_session`) opens with the reach
+  map: the tool profile and the stock go up once and stay, the plan's masks and
+  levels stay from the separation to the backward check. On the GPU, every one
+  with the CPU's results bit for bit: the reach map (the vote's lowest passing
+  top by bisection over the ordered bits of the tops), the separation's levels
+  (the within-radius tests as two windowed minima of whole squares, the slope
+  envelope as in the check), the intended surface, the backward check's sweeps
+  (the closing of the deepest levels and the level tests of all levels of a
+  chunk; the power-distance envelope is two windowed minima per cell over the
+  widest radius of the level, which decide every verdict the CPU's line scans
+  decide), the closing the check's hits are judged against, and 64 start tours
+  per route of 16 to 4,999 nodes (one work-group per tour; tour 0 the
+  nearest-neighbour walk, the others under distances stretched up to 25
+  percent by a fixed hash), launched before the CPU's start walks and collected
+  after them, of which the 4 shortest in XY are priced exactly beside the walks.
+  On the CPU: the islands of the separation, the route floors (built over each
+  route's box only, T-185), the slab groups, the solver and the check (in bands,
+  T-187). The validator refuses the mode without an OpenCL GPU; there is no CPU
+  path behind a GPU call. The statistics name the GPU and every process time
+  (`ProcessTimes`, `mn_result_timings`).
 - "3 axis freedom": one free route per level of the plan. At level L the nodes
   are the coverage cells whose tip lies below the previous level (the stock top
   for the first), each at `max(tip, L)`, and the moves follow the surface
@@ -2368,6 +2381,62 @@ check that decides done.
 - Input: user request (as T-179)
 - Output: the machine zero list with nine modes, the offset label naming the reference (`OffsetLabel`), the stock box in machine space (`StockBoundsText`), the viewport stock outline from the layout
 - Acceptance: on the stock a corner edit moves the model and the outline stays; at a global point it moves the outline and an offset moves only the model; the panel shows the outlined box
+- Status: done
+
+#### T-182 Pull request of the session's work
+- Depends on: T-180
+- Files: none (branch `t-159-to-t-180` from `origin/main`)
+- Input: user request (create a PR)
+- Output: https://github.com/SFediakov/Milling.NC/pull/6; the branch of the earlier work shared no history with `origin/main` (rewritten before), so its 16 commits after the tree of `origin/main` were put on a branch from it
+- Acceptance: the PR to `main` is open with the commits up to T-180
+- Status: done
+
+#### T-183 GPU session per generation
+- Depends on: T-177
+- Files: `src/Miller.Native/src/mn_gpu.c`, `src/Miller.Native/src/mn_gpu.h`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Core/Native/CoreNative.cs`
+- Input: user request (load the inputs as early as possible, keep the GPU memory until the end, think on the driver level)
+- Output: `mn_gpu_session` (profile, stock, masks and levels resident for the generation; `mn_context.gpu`); every transfer on the heart at 0.025 mm cells measured (uploads 4.4 to 5.9 GB/s from pageable memory, about 1 GB per generation, 1.0 s with the kernels the reads wait for); page-locked buffers not used, they would save under 0.1 s
+- Acceptance: no input map goes up twice; the session is released when the generation ends; two generations at once give their own results
+- Status: done
+
+#### T-184 Whole-grid stages on the GPU
+- Depends on: T-183
+- Files: `src/Miller.Native/src/mn_gpu.c`, `src/Miller.Native/src/mn_slicing.c`, `src/Miller.Native/src/mn_reach.c`, `src/Miller.Native/src/mn_collision.c`, `src/Miller.Native/src/mn_backwards.c`, `tests/Miller.Tests/Application/GpuTests.cs`
+- Input: user request (fully on the GPU where the work is data-parallel)
+- Output: reach map, separation levels (`mn_separation_levels` split from `mn_separation_finish`), intended surface, backward sweeps and the check's closing on the session's data
+- Acceptance: the model, reach, effective tip, standing maps, the masks, coverage and levels of Backwards_GPU equal those of Backwards bit for bit on the frustum box (both scopes, with and without a far stepdown) and the heart sample; reach map 3.2 s to 0.3 s, slice 6.1 s to 1.1 s on the heart
+- Status: done
+
+#### T-185 Route stage without per-route transfers
+- Depends on: T-171
+- Files: `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_internal.h`, `src/Miller.Native/src/mn_thread.c`, `src/Miller.Native/src/mn_backwards.c`, `tests/Miller.Tests/Application/ParallelGenerationTests.cs`
+- Input: user request (move responsibilities where little data has to move)
+- Output: the route floors built over each route's box (`route_box`), the caves of a slab group prepared over their own box (`mn_lattice_in`, `list_nodes`), the Backwards slabs solved at once (`mn_rows_dynamic`), the GPU route floors removed
+- Acceptance: the toolpaths of 20 fixture runs (4 modes, far stepdown on and off, both scopes, both strategies) and of the heart in Backwards are bit for bit those of Build_1.0.122; one worker and all give the same Backwards generation; route floors 120 s to 1.3 s and slab groups 89 s to 13 s of thread time on the heart
+- Status: done
+
+#### T-186 Start tours that pay
+- Depends on: T-177, T-185
+- Files: `src/Miller.Native/src/mn_gpu.c`, `src/Miller.Native/src/mn_solver.c`
+- Input: user request (several combinations at once on the GPU, the fastest kept; no more machining time than the original)
+- Output: tours launched before the start walks and collected after them, for routes of 16 to 4,999 nodes; one work-group per tour with the free nodes kept packed
+- Acceptance: on the heart, tours below 16 nodes never beat the walks (5,546 of 6,354 routes); no tours 24.2 s and 154.12 min, tours below 5,000 nodes 24.4 s and 149.00 min, tours on every route 28.2 s and 147.72 min; one work item per tour gave the same tours after 2,557 s of waiting and was dropped
+- Status: done
+
+#### T-187 Collision check in bands
+- Depends on: T-147
+- Files: `src/Miller.Native/src/mn_collision.c`, `tests/Miller.Tests/Application/ParallelGenerationTests.cs`
+- Input: user request (smallest time without more collisions)
+- Output: the walk in batches of about 65,536 samples, every worker walking a batch over its own rows (every W-th row), a batch with a hit put back and walked as one walk
+- Acceptance: the same events, cell status and not-cut cells on one worker as on all, on a fixture with hits; 18.5 s to 3.2 s on the heart
+- Status: done
+
+#### T-188 Measurement and analysis
+- Depends on: T-183 to T-187
+- Files: none (measured with the timers of T-176 and the new `check bands` and `check walk`)
+- Input: user request (the summed time of the whole process, not only the parts)
+- Output: the heart at 0.025 mm cells, one build, one after the other: Backwards 298.8 s to 27.3 s, Backwards_GPU 296.1 s to 15.2 s; 0 events in both; machining 154.12 min (Backwards, as the original) and 149.00 min (Backwards_GPU, original 147.72 with tours on every route)
+- Acceptance: every process with its time, its place (GPU or CPU) and the data it moves in the report
 - Status: done
 
 #### T-165 Head bottom down to half the cutter diameter

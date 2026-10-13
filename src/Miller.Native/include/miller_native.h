@@ -261,19 +261,16 @@ MN_API void mn_writer_free(mn_writer* writer);
 #define MN_COLLISION_ONE_RUN 1
 #define MN_COLLISION_BACKWARDS 2
 /* Backwards_GPU (T-174, user request): Backwards with its data-parallel processes on the discrete GPU
- * (the backward check's sweeps, the intended surface, the route floors, extra start tours of the route
- * solver); it fails when no OpenCL GPU is found. */
+ * (the backward check's sweeps, the intended surface, extra start tours of the route solver); it fails
+ * when no OpenCL GPU is found. */
 #define MN_COLLISION_BACKWARDS_GPU 3
 
 /* The OpenCL GPU the Backwards_GPU mode uses: MN_OK and its name, or a status and mn_last_error. */
 MN_API int32_t mn_gpu_device(char* name, int32_t capacity);
 /* The GPU processes on their own, for the comparisons with the CPU (T-177): the closing of a map
- * (mn_remaining on the GPU), the route floor of one route (the CPU's is mn_route_floor: over uncut stock
- * the floor rises to `safe` and the touch floor stays above what the tip map keeps; lifted holds both,
- * 2 * cells) and the start tours of the route solver (orders keep * count, kept their number). */
+ * (mn_remaining on the GPU) and the start tours of the route solver (orders keep * count, kept their
+ * number). */
 MN_API int32_t mn_gpu_remaining(const mn_grid* grid, const float* tip, const mn_offset* offsets, int32_t count, float* remaining);
-MN_API int32_t mn_route_floor(const float* stock, const float* tip, const float* floor, int32_t cells, float safe, float* lifted);
-MN_API int32_t mn_gpu_route_floor(const float* stock, const float* tip, const float* floor, int32_t cells, float safe, float* lifted);
 MN_API int32_t mn_gpu_start_tours(const float* x, const float* y, int32_t count, int32_t start, int32_t end, int32_t tours, int32_t keep, int32_t* orders, int32_t* kept);
 
 #define MN_EVENT_HEAD 0
@@ -333,6 +330,9 @@ typedef struct mn_context {
      * position), and, when not NULL, 1 per position it milled with the far stepdown, 0 elsewhere. */
     const uint8_t* far_allowed;
     uint8_t* far_area;
+    /* Backwards_GPU (T-183): the generation's GPU session, which holds the stock, the profile and the
+     * plan's masks; NULL in every other mode. */
+    struct mn_gpu_session* gpu;
 } mn_context;
 
 /* 3 axis freedom helpers: the level map max(tip, level) with NaN kept, and whether a cell of a map
@@ -472,9 +472,11 @@ MN_API int32_t mn_result_unreached(const mn_result* result, int64_t* unreached, 
 MN_API void mn_result_uncut(const mn_result* result, int32_t* cells, double* volume, float* max_height);
 
 /* Process times of the whole generation in seconds (T-176), indexed as below: the wall time of every
- * stage over all passes, then the parts inside them; the solver parts (candidate lists, start walks,
- * local search, route floors, writing) are summed over the units, which run on several threads at once.
- * Returns how many values it wrote (at most `capacity`). */
+ * stage over all passes, then the parts inside them; the slab groups, the route units and the solver
+ * parts (candidate lists, start walks, local search, route floors, writing, GPU start tours) are summed
+ * over the slabs and units, which run on several threads at once (T-185); the check's bands are the
+ * batches the workers walked at once, its walk the batches with a hit that ran as one walk (T-187); GPU
+ * transfers include the kernels a read waits for. Returns how many values it wrote (at most `capacity`). */
 #define MN_TIME_INTENDED 10
 #define MN_TIME_BACK_SETTLE 11
 #define MN_TIME_BACK_LEVELS 12
@@ -490,7 +492,9 @@ MN_API void mn_result_uncut(const mn_result* result, int32_t* cells, double* vol
 #define MN_TIME_GPU_SETUP 22
 #define MN_TIME_GPU_TRANSFER 23
 #define MN_TIME_GPU_TOURS 24
-#define MN_TIME_COUNT 25
+#define MN_TIME_CHECK_BANDS 25
+#define MN_TIME_CHECK_WALK 26
+#define MN_TIME_COUNT 27
 MN_API int32_t mn_result_timings(const mn_result* result, double* seconds, int32_t capacity);
 MN_API int32_t mn_result_collision_count(const mn_result* result);
 MN_API void mn_result_collisions(const mn_result* result, mn_collision* collisions);

@@ -582,7 +582,7 @@ MN_API int32_t mn_islands_find(const mn_grid* grid, const float* standing, const
  * leaves a slope instead of one tread of its widest radius; a head narrower than the cutter counts
  * as the cutter radius, the flutes cannot cut a slab above them (T-165). The slab counts `tolerance` higher than
  * its level, the height the simplifier's chords leave its material at (T-163). */
-int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* stock, const mn_tool* tool, float tolerance, float stock_top, float floor, float min_island_volume, float* standing, mn_ints* island_cells, mn_ints* island_offsets, float** island_volumes, int* island_count)
+int mn_separation_levels(const mn_plan* plan, const float* effective_tip, const mn_tool* tool, float tolerance, float stock_top, float floor, uint8_t* masks, uint8_t* model_region, float* deepest)
 {
     const mn_grid* g = &plan->grid;
     int width = g->width;
@@ -597,22 +597,14 @@ int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* 
     float cutter_radius = tool->cutter_diameter / 2.0f;
     float widening = mn_head_widening(tool);
 
-    uint8_t* model_region = (uint8_t*)mn_alloc((size_t)cells, 1);
-    uint8_t* masks = (uint8_t*)mn_alloc((size_t)count * (size_t)cells, 1);
     uint8_t* obstacles = (uint8_t*)mn_alloc((size_t)cells, 1);
     uint8_t* hug = (uint8_t*)mn_alloc((size_t)cells, 1);
     uint8_t* cleared = (uint8_t*)mn_alloc((size_t)cells, 1);
-    uint8_t* coverage = (uint8_t*)mn_alloc((size_t)cells, 1);
-    float* deepest = (float*)mn_alloc((size_t)cells, sizeof(float));
     /* The deepest level whose mask holds the position, and the squared radius (in cells, negated) of
      * the positions whose head widens over the slab of the current level. */
     float* deepest_position = (float*)mn_alloc((size_t)cells, sizeof(float));
     float* slope = (float*)mn_alloc((size_t)cells, sizeof(float));
-    mn_ints found_cells = { 0 };
-    mn_ints found_offsets = { 0 };
-    float* found_volumes = NULL;
-    int found_count = 0;
-    if (model_region == NULL || masks == NULL || obstacles == NULL || hug == NULL || cleared == NULL || coverage == NULL || deepest == NULL || deepest_position == NULL || slope == NULL) {
+    if (obstacles == NULL || hug == NULL || cleared == NULL || deepest_position == NULL || slope == NULL) {
         status = mn_fail(MN_ERR_MEMORY, "Out of memory for the separation region.");
         goto done;
     }
@@ -674,6 +666,31 @@ int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* 
         }
     }
 
+done:
+    free(obstacles);
+    free(hug);
+    free(cleared);
+    free(deepest_position);
+    free(slope);
+    return status;
+}
+
+int mn_separation_finish(mn_plan* plan, uint8_t* masks, const float* effective_tip, const float* stock, const uint8_t* model_region, const float* deepest, float tolerance, float min_island_volume,
+    float* standing, mn_ints* island_cells, mn_ints* island_offsets, float** island_volumes, int* island_count)
+{
+    const mn_grid* g = &plan->grid;
+    int cells = mn_cells(g);
+    int count = plan->count;
+    int status = MN_OK;
+    uint8_t* coverage = (uint8_t*)mn_alloc((size_t)cells, 1);
+    mn_ints found_cells = { 0 };
+    mn_ints found_offsets = { 0 };
+    float* found_volumes = NULL;
+    int found_count = 0;
+    if (coverage == NULL) {
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for the separation region.");
+    }
+
     const uint8_t* innermost = count > 0 ? masks + (size_t)(count - 1) * (size_t)cells : NULL;
     for (int c = 0; c < cells; c++) {
         standing[c] = NAN;
@@ -727,18 +744,30 @@ int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* 
     }
 
 done:
-    free(model_region);
-    free(masks);
-    free(obstacles);
-    free(hug);
-    free(cleared);
     free(coverage);
-    free(deepest);
-    free(deepest_position);
-    free(slope);
     mn_ints_free(&found_cells);
     mn_ints_free(&found_offsets);
     free(found_volumes);
+    return status;
+}
+
+int mn_separation_build(mn_plan* plan, const float* effective_tip, const float* stock, const mn_tool* tool, float tolerance, float stock_top, float floor, float min_island_volume, float* standing, mn_ints* island_cells, mn_ints* island_offsets, float** island_volumes, int* island_count)
+{
+    int cells = mn_cells(&plan->grid);
+    uint8_t* masks = (uint8_t*)mn_alloc((size_t)plan->count * (size_t)cells, 1);
+    uint8_t* model_region = (uint8_t*)mn_alloc((size_t)cells, 1);
+    float* deepest = (float*)mn_alloc((size_t)cells, sizeof(float));
+    int status = masks == NULL || model_region == NULL || deepest == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the separation region.") : MN_OK;
+    if (status == MN_OK) {
+        status = mn_separation_levels(plan, effective_tip, tool, tolerance, stock_top, floor, masks, model_region, deepest);
+    }
+    if (status == MN_OK) {
+        status = mn_separation_finish(plan, masks, effective_tip, stock, model_region, deepest, tolerance, min_island_volume, standing, island_cells, island_offsets, island_volumes,
+            island_count);
+    }
+    free(masks);
+    free(model_region);
+    free(deepest);
     return status;
 }
 

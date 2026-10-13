@@ -75,6 +75,58 @@ public sealed class ParallelGenerationTests
         Assert.Equal(one.Collisions.Report!.Events.Select(e => (e.Kind, e.SegmentIndex, e.Position)), all.Collisions.Report!.Events.Select(e => (e.Kind, e.SegmentIndex, e.Position)));
     }
 
+    // The frustum box of the Backwards and GPU tests: a head wider than the cutter over a box beside walls.
+    private static PipelineResult Frustum(CollisionMode mode, string strategy, CutScope scope, float far, int workers)
+    {
+        var project = MillingProject.Default();
+        project.CollisionMode = mode;
+        project.RoutingStrategyId = strategy;
+        project.CutScope = scope;
+        project.Stock.AlignZ = StockAlignment.Min;
+        project.Tool.CutterLength = 2f;
+        project.Tool.HeadShape = HeadShape.Frustum;
+        project.Tool.HeadDiameter = 7f;
+        project.Tool.HeadTopDiameter = 10f;
+        project.Tool.HeadLength = 10f;
+        project.Parameters.FarStepdown = far;
+        project.Parameters.Stepover = 1f;
+        project.Stock.SizeX = 40;
+        project.Stock.SizeY = 40;
+        project.Stock.SizeZ = 9;
+        project.Parameters.CellSize = 0.5f;
+        project.Models.Add(new ModelPlacement { StlPath = "box.stl" });
+        return Run(project, new[] { TestMeshes.Box(10, 10, 4) }, workers, null);
+    }
+
+    // T-185: the slabs of Backwards are prepared and routed at once, the largest first; the toolpath, the
+    // maps, the unreached and not-cut counts are the one worker's bit for bit.
+    [Theory]
+    [InlineData(CutScope.Everything, 0f)]
+    [InlineData(CutScope.Everything, 4f)]
+    [InlineData(CutScope.Separation, 4f)]
+    public void Backwards_OneWorkerAndAllWorkers_GiveTheSameGeneration(CutScope scope, float far)
+    {
+        var one = Frustum(CollisionMode.Backwards, ZLayerByLayerStrategy.StrategyId, scope, far, 1);
+        var all = Frustum(CollisionMode.Backwards, ZLayerByLayerStrategy.StrategyId, scope, far, 0);
+        AssertIdentical(one, all);
+        Assert.Equal(one.Unreached, all.Unreached);
+        Assert.Equal(one.Uncut, all.Uncut);
+    }
+
+    // T-187: a check that finds hits (3 axis freedom in the separation scope under the frustum head):
+    // the batches with a hit run as one walk, the others in bands of rows, and the events, the cell
+    // status and the not-cut cells are the one walk's.
+    [Fact]
+    public void CheckWithHits_OneWorkerAndAllWorkers_GiveTheSameEvents()
+    {
+        var one = Frustum(CollisionMode.Recursion, ThreeAxisFreedomStrategy.StrategyId, CutScope.Separation, 0f, 1);
+        var all = Frustum(CollisionMode.Recursion, ThreeAxisFreedomStrategy.StrategyId, CutScope.Separation, 0f, 0);
+        Assert.NotEmpty(one.Collisions.Report!.Events);
+        AssertIdentical(one, all);
+        Assert.Equal(one.Uncut, all.Uncut);
+        Assert.Equal(one.PassCollisions, all.PassCollisions);
+    }
+
     [Fact]
     public void WorkerLimit_IsRespected()
     {
