@@ -360,28 +360,16 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
 
 /* ---- backward check (T-170, mn_backwards.c) ---- */
 
-/* One batch of levels first..last from the top (one far stepdown slab, one level without a far
- * stepdown): per level the positions reached there ((last - first + 1) * cells, level first first) and
- * the positions of the far go (NULL without one). */
-typedef struct mn_backwards_batch {
-    int first;
-    int last;
-    uint8_t* reached;
-    uint8_t* far;
-} mn_backwards_batch;
-
 typedef struct mn_backwards mn_backwards;
 
-/* Starts the check on a thread of its own with `workers` workers; the batches come from the lowest.
- * With the context's GPU session the sweeps run on the GPU (mn_gpu_backward_settle). */
-int mn_backwards_start(const mn_context* context, int group_size, int workers, const volatile int32_t* cancel, mn_backwards** check);
-int mn_backwards_batch_count(const mn_backwards* check);
-/* Per position the deepest level index the check settled on (-1 for none); valid once a batch is taken. */
-const int* mn_backwards_deepest(const mn_backwards* check);
-/* The batch `taken` from the bottom (0 the lowest); waits until the check has it. */
-int mn_backwards_take(mn_backwards* check, int taken, const mn_backwards_batch** batch);
-/* Frees the batch and lets the check run on. */
-void mn_backwards_release(mn_backwards* check, int taken);
+/* Starts the check on a thread of its own with `workers` workers. With the context's GPU session the
+ * sweeps run on the GPU (mn_gpu_backward_settle). */
+int mn_backwards_start(const mn_context* context, int workers, const volatile int32_t* cancel, mn_backwards** check);
+/* Waits until the check has settled (T-193) and gives the reached plan, the plan's levels with per level
+ * the positions of its mask reached that deep, and the strategy tip with every position that loses a
+ * level raised to the deepest level it reaches (the stock top where it reaches none), so the Z layer
+ * routes them as it routes a raised position; both stay valid until mn_backwards_finish. */
+int mn_backwards_settled(mn_backwards* check, const mn_plan** reached, const float** tip);
 /* Joins the check (stopping it first when `abort`) and frees it; returns the check's status unless it
  * was aborted, the unreached positions and the model cells summed over the levels, and the sweeps it
  * took to settle. */

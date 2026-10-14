@@ -472,15 +472,16 @@ MN_API int32_t mn_result_unreached(const mn_result* result, int64_t* unreached, 
 MN_API void mn_result_uncut(const mn_result* result, int32_t* cells, double* volume, float* max_height);
 
 /* Process times of the whole generation in seconds (T-176), indexed as below: the wall time of every
- * stage over all passes, then the parts inside them; the slab groups, the route units and the solver
- * parts (candidate lists, start walks, local search, route floors, writing, GPU start tours) are summed
- * over the slabs and units, which run on several threads at once (T-185); the check's bands are the
+ * stage over all passes, then the parts inside them; the backward check's input is the reached plan and
+ * the raised tip it gives the Z layer (T-193), the level groups the Z layer's preparation of its groups;
+ * the route units and the solver parts (candidate lists, start walks, local search, route floors,
+ * writing, GPU start tours) are summed over the units, which run on several threads at once; the check's bands are the
  * batches the workers walked at once, its walk the batches with a hit that ran as one walk (T-187); GPU
  * transfers include the kernels a read waits for. Returns how many values it wrote (at most `capacity`). */
 #define MN_TIME_INTENDED 10
 #define MN_TIME_BACK_SETTLE 11
 #define MN_TIME_BACK_LEVELS 12
-#define MN_TIME_BACK_FILL 13
+#define MN_TIME_BACK_INPUT 13
 #define MN_TIME_BACK_WAIT 14
 #define MN_TIME_GROUPS 15
 #define MN_TIME_UNITS 16

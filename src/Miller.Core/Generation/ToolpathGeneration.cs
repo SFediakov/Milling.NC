@@ -54,7 +54,7 @@ public sealed record ProcessTimes(IReadOnlyList<double> Seconds)
     public static readonly IReadOnlyList<string> Names = new[]
     {
         "transform", "stock", "model map", "reach map", "head clearance", "slice", "route", "simplify", "statistics", "collision check",
-        "intended surface", "backward closings", "backward level tests", "backward batches", "solver waiting for the check", "slab groups",
+        "intended surface", "backward closings", "backward level tests", "backward reached plan", "solver waiting for the check", "level groups",
         "route units", "solver candidate lists", "solver start walks", "solver local search", "route floors", "route writing",
         "GPU setup", "GPU transfers", "GPU start tours", "check bands", "check walk",
     };

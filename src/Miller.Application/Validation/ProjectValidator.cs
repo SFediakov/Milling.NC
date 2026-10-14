@@ -74,11 +74,6 @@ public static class ProjectValidator
             errors.Add(new ValidationMessage("Parameters.FarStepdown",
                 $"Far stepdown {F(p.FarStepdown)} must be 0 (none) or a whole multiple of the stepdown {F(p.Stepdown)} of at least twice it."));
         }
-        else if (p.Stepdown > 0 && project.CollisionMode is CollisionMode.Backwards or CollisionMode.Backwards_GPU && p.FarStepdown + p.Tolerance > tool.CutterLength + Slicer.LevelTolerance)
-        {
-            warnings.Add(new ValidationMessage("Parameters.FarStepdown",
-                $"Far stepdown {F(p.FarStepdown)} plus the tolerance {F(p.Tolerance)} exceeds the cutter length {F(tool.CutterLength)}: Backwards cuts the far go only where the head clears the material at the slab top, everything else level by level."));
-        }
         else if (p.Stepdown > 0 && p.FarStepdown > tool.CutterLength + Slicer.LevelTolerance)
         {
             warnings.Add(new ValidationMessage("Parameters.FarStepdown",

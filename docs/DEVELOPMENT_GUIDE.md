@@ -580,10 +580,15 @@ Uncuttable classification (`UncuttableRegions`):
   the next unit's entry, at that route's height: it is the last node of the
   unit's last route (the solver's fixed end, `mn_solve` with `end`), and the
   walk visits the branch to the leaf cave nearest to it last, so the way there
-  is short. The units are solved in waves of up to min(`MN_MAX_WORKERS` (64),
-  processors) at once, each from its own copy of the planned heights the units
+  is short. The units are solved on up to min(`MN_MAX_WORKERS` (64), processors) workers,
+  each taking the next unit in order as soon as it is free (T-195, no wave waits
+  for its longest unit), from its own copy of the planned heights the units
   before it leave (replayed region by region: the routes write only regions
-  while the guard is off) and with its own writer placed at its entry; the
+  while the guard is off) and with its own writer placed at its entry; with the
+  guard on (one run, one worker) a unit starts from the heights and the position
+  the unit before actually left. The groups are prepared at once as well (T-195:
+  the standing maps folded per group and combined as running minima, then one
+  group per worker). The
   paths and layer marks are appended in unit order and the established stages
   (simplifier, slow zones, statistics, check) continue. The evaluation budget
   is shared by node count in unit order. One run decides every node against the
@@ -630,27 +635,24 @@ Uncuttable classification (`UncuttableRegions`):
   the deepest levels the sweep before reached, until one changes nothing (a
   position only loses levels; the result equals the cut from the top down for a
   flat tip, a ball tip's scallops above the level above are not counted). The
-  settled levels go to the solver as batches of far stepdown / stepdown levels
-  (one level without a far stepdown), filled at once once the levels settle
-  (T-185).
-  A batch's far go is every position reached on all of its levels (never one
-  withdrawn around a collision, T-164), cut in one step at its bottom level;
-  where the batch top stands higher above that level than the cutter length the
-  far go is tested against the material at the batch top as well. The solver
-  routes every batch like a Z layer slab: the far go, then the batch's levels
-  without the far go positions, cave by cave in route units (T-166, T-167) over
-  the material the batches above leave (every position at the deepest level it
-  reaches above the batch). A batch starts at the entry of its first unit and
-  its last unit ends at the start of the nearest batch below it with routes; the
-  lowest batch ends where its routes end. A batch depends on nothing another
-  batch routes, so the batches run at once (T-185): first every batch's group
-  and its first entry, then every batch's routes, the batch with the most nodes
-  first, one batch per worker with its units in sequence (units give the same
-  paths whatever runs at once, T-168). The
-  batches' paths are then joined from the top one down, the program starting
-  with a plunge from the safe plane to the first batch's entry, and the
-  established stages follow (simplifier, slow zones, statistics, check; the far
-  withdrawal of T-164 may start another pass). Statistics: "Unreached cells
+  settled check gives the Z layer its input in one pass over the masks (T-193,
+  user request: Backwards routes by the rules of "Z layer by layer"): the
+  reached plan, each level's mask without the positions that do not reach it,
+  and the strategy tip with those positions raised to the deepest level they
+  reach (the stock top where they reach none), as the recursion raises a
+  position. The Z layer then routes that plan exactly as it routes a pass: far
+  stepdown slabs whose far block takes only positions at least the stepover
+  from every obstacle, the raised positions included, in steps within the
+  cutter length where the head clears what stands (T-156, T-157, T-162, T-164),
+  everything else at every level cave by cave, in route units ending where the
+  next begins, priced with the turn fine. Where nothing is unreached the
+  toolpath is the Z layer's (Recursion's first pass) bit for bit. The far go of
+  T-171 (every position reached on all levels of a batch, cut in one step at
+  its bottom level) is gone: it cut the band beside the walls a far stepdown
+  deep (on the user's heart at 0.05 mm 22 percent of the depth steps were one
+  stepdown, 70 percent after T-193, 69 percent in Recursion). The established
+  stages follow (simplifier, slow zones, statistics, check; the far withdrawal
+  of T-164 may start another pass). Statistics: "Unreached cells
   (Backwards): U of M model cells, P %", U the unreached positions summed over
   the levels, M the cells whose model stands above a level summed over the
   levels, P = 100 U / M.
@@ -684,7 +686,7 @@ Uncuttable classification (`UncuttableRegions`):
   percent by a fixed hash), launched before the CPU's start walks and collected
   after them, of which the 4 shortest in XY are priced exactly beside the walks.
   On the CPU: the islands of the separation, the route floors (built over each
-  route's box only, T-185), the slab groups, the solver and the check (in bands,
+  route's box only, T-185), the level groups, the solver and the check (in bands,
   T-187). The validator refuses the mode without an OpenCL GPU; there is no CPU
   path behind a GPU call. The statistics name the GPU and every process time
   (`ProcessTimes`, `mn_result_timings`).
@@ -830,8 +832,7 @@ M30
 | `0 < FinishingStepover <= CutterDiameter` | Parameters.FinishingStepover |
 | `Stepdown > 0` | Parameters.Stepdown |
 | `FarStepdown == 0` or a whole multiple of `Stepdown` of at least `2 * Stepdown` (within `Slicer.LevelTolerance`) | Parameters.FarStepdown |
-| `FarStepdown <= CutterLength` (warning, not error: the far block then steps by the cutter length) | Parameters.FarStepdown |
-| Backwards: `FarStepdown + Tolerance <= CutterLength` (warning, not error: the far go then cuts only where the head clears the batch top) | Parameters.FarStepdown |
+| `FarStepdown <= CutterLength` (warning, not error: the far block then steps by the cutter length; every collision mode, Backwards too since T-193) | Parameters.FarStepdown |
 | `SafeHeight > 0` (clearance above the stock top) | Parameters.SafeHeight |
 | `0.01 <= CellSize <= 5` | Parameters.CellSize |
 | `FeedRate, PlungeRate, RapidRate > 0` | Parameters.* |
@@ -2473,6 +2474,30 @@ check that decides done.
 - Input: user report (a Build_1.0.123 screenshot: stock corner 0, the axes away from it, more than one zero)
 - Output: the screenshot's corner (-2.746, 0.698, 0.352) is the models' minimum of the 1.0.123 rule, which T-190 removed; the launcher had kept 1.0.123 because the running instance locked the Release folder. Reference points of `Global`: machine zero (the axes), the explicit stock corner and the axis rotations share the global origin; a model's scale and turn act about its own centre and its offset moves it from its file position (the panel text says so)
 - Acceptance: on the heart with the screenshot's settings the corner 0 puts the stock at (0, 0, 0), the axes; the model lands at the screenshot's (-1.746, 2.898, -4.898); the generation cuts the stock box of the same frame; `Miller.cmd --version` prints the session's build
+- Status: done
+
+#### T-193 Backwards routed by the Z layer's rules
+- Depends on: T-170, T-171
+- Files: `src/Miller.Native/src/mn_backwards.c`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_internal.h`, `src/Miller.Native/src/mn_gpu.c`, `src/Miller.Native/src/mn_gpu.h`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, `tests/Miller.Tests/Application/BackwardsTests.cs`, `tests/Miller.Tests/Application/GpuTests.cs`
+- Input: user request (both Backwards modes did not mill layer by layer; their routes must follow the basic rules of "Z layer by layer" for the penalties and the targets)
+- Output: the rule of section 6.4: the check's reached plan and raised tip (`mn_backwards_settled`), one Z layer route body for every mode (`z_layer_route`); the batches, the far go of T-171, the slab schedule of T-185 and the GPU closing read-back are gone; the validator's Backwards warning is the Z layer's; process times "backward reached plan" and "level groups"
+- Acceptance: where nothing is unreached (the wall, far stepdown 0 and 4) Backwards gives Recursion's toolpath, layers, unit entries and far area bit for bit; on the frustum box every far position is reached at its slab's bottom and at least the stepover from the model and every unreached position; every plan level is a layer of the wall; zero events, no gouge, the same unreached counts (heart 9,508 of 56,171,255 at 0.025 mm); Backwards_GPU gives the CPU's layers, entries, far area and final stock (its start tours may order a route's nodes differently); the user's heart at 0.05 mm: one-stepdown depth steps 22 to 70 percent (Recursion 69), retracts 206 to 8, plunge 6,389 to 1,177 mm, 130.6 to 176.0 estimated minutes (Backwards_GPU 127.1 to 171.7), zero events
+- Status: done
+
+#### T-194 Validator and tests of T-193
+- Depends on: T-193
+- Files: `src/Miller.Application/Validation/ProjectValidator.cs`, `tests/Miller.Tests/Application/BackwardsTests.cs`, `tests/Miller.Tests/Application/GpuTests.cs`
+- Input: user request (as T-193)
+- Output: the Backwards far stepdown warning replaced by the Z layer's (steps within the cutter length); the far go order test replaced by the layer test; the GPU test compares what the start tours cannot change (verified: without the tours both modes give the same segments)
+- Acceptance: 891 tests pass
+- Status: done
+
+#### T-195 Driver-level time of the routes
+- Depends on: T-193
+- Files: `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_slicing.c`, `src/Miller.Native/src/mn_backwards.c`
+- Input: user request (keep the driver-level approach: inputs once, nothing whole-grid inside a loop, every stage measured and the total)
+- Output: the level groups prepared at once (standing maps folded per group, running minima, one group per worker, the far area written after); the should-cut touches stamped from the marked cells instead of gathered over the footprint for every cell (4.7 s of a first pass at 0.025 mm with nothing marked); route units taken by free workers in order without wave barriers; the lower envelope's column pass in blocks of 16 adjacent columns; the check's sweep scratch only on the CPU; every change gives the same toolpaths bit for bit (the user's heart G-code compared byte for byte, the worker-count, one run and golden tests)
+- Acceptance: the user's heart at 0.025 mm in Backwards 44.8 s after T-193 to 31.0 s (27.3 s before T-193, whose far go cut fewer layers), Backwards_GPU 34.6 s to 20.9 s (15.2 s): level groups 10.7 to 2.3 s, route units 10.4 to 9.3 s (lower bound about 7.8 s: 125 s of solver thread time on 16 threads), check wait 4.6 s (the check on half the workers, user request of T-170); Recursion at the same settings 453 s, 8 passes, 67 events
 - Status: done
 
 #### T-165 Head bottom down to half the cutter diameter

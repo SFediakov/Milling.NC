@@ -66,19 +66,37 @@ typedef struct envelope_job {
     int columns;
 } envelope_job;
 
-/* One column (columns pass) or one row (rows pass); a line reads and writes its own cells only. */
+/* Adjacent columns one worker transforms together: a row's cache line then serves all of them, where one
+ * column at a time read one value per line of the grid (T-195). */
+#define MN_ENVELOPE_BLOCK 16
+
+/* One block of columns (columns pass) or one row (rows pass); a line reads and writes its own cells
+ * only, and every column is transformed alone, so the block changes no value. */
 static void envelope_line(void* context, int index, void* scratch_pointer)
 {
     const envelope_job* job = (const envelope_job*)context;
     envelope_scratch* s = (envelope_scratch*)scratch_pointer;
     int width = job->width;
     if (job->columns) {
-        for (int j = 0; j < job->height; j++) {
-            s->line[j] = job->values[j * width + index];
+        int height = job->height;
+        int i0 = index * MN_ENVELOPE_BLOCK;
+        int count = mn_mini(MN_ENVELOPE_BLOCK, width - i0);
+        for (int j = 0; j < height; j++) {
+            const float* row = job->values + (size_t)j * (size_t)width + (size_t)i0;
+            for (int b = 0; b < count; b++) {
+                s->line[(size_t)b * (size_t)height + (size_t)j] = row[b];
+            }
         }
-        transform_line(s->line, job->height, s->output, s->vertices, s->boundaries);
-        for (int j = 0; j < job->height; j++) {
-            job->values[j * width + index] = s->output[j];
+        for (int b = 0; b < count; b++) {
+            float* column = s->line + (size_t)b * (size_t)height;
+            transform_line(column, height, s->output, s->vertices, s->boundaries);
+            memcpy(column, s->output, (size_t)height * sizeof(float));
+        }
+        for (int j = 0; j < height; j++) {
+            float* row = job->values + (size_t)j * (size_t)width + (size_t)i0;
+            for (int b = 0; b < count; b++) {
+                row[b] = s->line[(size_t)b * (size_t)height + (size_t)j];
+            }
         }
     } else {
         float* row = job->values + (size_t)index * (size_t)width;
@@ -101,8 +119,9 @@ static int lower_envelope(float* values, int width, int height)
     if (scratch == NULL) {
         return mn_fail(MN_ERR_MEMORY, "Out of memory for a distance transform.");
     }
+    size_t block = (size_t)MN_ENVELOPE_BLOCK * (size_t)height;
     for (int w = 0; w < workers; w++) {
-        scratch[w].line = (float*)mn_alloc((size_t)length, sizeof(float));
+        scratch[w].line = (float*)mn_alloc((size_t)length > block ? (size_t)length : block, sizeof(float));
         scratch[w].output = (float*)mn_alloc((size_t)length, sizeof(float));
         scratch[w].vertices = (int*)mn_alloc((size_t)length, sizeof(int));
         scratch[w].boundaries = (float*)mn_alloc((size_t)length + 1, sizeof(float));
@@ -113,7 +132,7 @@ static int lower_envelope(float* values, int width, int height)
     }
     if (status == MN_OK) {
         envelope_job job = { values, width, height, 1 };
-        status = mn_rows_parallel(width, envelope_line, &job, pointers, workers);
+        status = mn_rows_parallel((width + MN_ENVELOPE_BLOCK - 1) / MN_ENVELOPE_BLOCK, envelope_line, &job, pointers, workers);
         if (status == MN_OK) {
             job.columns = 0;
             status = mn_rows_parallel(height, envelope_line, &job, pointers, workers);

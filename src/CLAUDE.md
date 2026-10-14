@@ -76,15 +76,20 @@
   boundaries the request itself defines (isolation below), so no code fix exists inside the request; the
   decision is the user's, and the test runs only with MILLER_LIVE_PROJECT set.
 - The collision mode Backwards (T-169 to T-172) is not a cluster of its own: its check (`mn_backwards.c`)
-  reads the plan masks and uses the far block's envelope test, and its batches become Z layer groups and
-  route units inside `mn_z_layer` (user request: all generation in the C library).
+  reads the plan masks and uses the far block's envelope test, and since T-193 its reached plan and raised
+  tip are routed by the Z layer's own route body inside `mn_z_layer` (user request: all generation in the C
+  library; Backwards routes by the Z layer's rules).
 - Backwards deviates from the literal request in two places, both for its purpose: every cell is a check
   position (one cell apart, never more than the tolerance while the cell is not larger; the envelope test
   costs the same for every cell, and the unreached count is then a cell count like the model cells), and
   the sweep from the lowest level repeats until nothing changes before the first batch goes to the solver,
   because one sweep cannot know what the unreached positions of the levels above leave (one sweep left 67
   events on the frustum box fixture, the settled check none). The solver therefore starts after the check
-  settled (two sweeps, seconds, on the user's heart) and then takes the batches from the queue.
+  settled (two sweeps, seconds, on the user's heart); since T-193 it takes the whole reached plan, not batches.
+- T-193 narrows the far go of the Backwards request ("one go of far stepdown where every small layer of the
+  batch is reached") by the Z layer's rule, on the user's later request that Backwards route by the rules of
+  "Z layer by layer": the far stepdown also needs the stepover from every obstacle and steps within the
+  cutter length where the head clears (T-156, T-157, T-162); the reached condition stays as a necessary one.
 - The GPU runtime (`mn_gpu.c`, T-175) is part of the generation cluster, not a cluster of its own: its
   kernels port loops of the check, the closing and the route floors and are called from inside the
   pass. Its insulation: every OpenCL call returns a status with a message, nothing falls back to the
@@ -782,6 +787,15 @@
   before it just cut, so testing a batch against the stock at its start flagged nearly every batch (no
   speed-up). Walking the batch in order per row band is exact, because a cell sees its removals and
   tests in the same order as in one walk (T-187).
+- A gather over the tool footprint for every cell is whole-grid work times about 800 offsets at 0.025 mm
+  cells: `footprint_touches` took 4.7 s in every first pass of the Z layer although no cell was marked.
+  Stamping from the marked cells gives the same map; look for gathers before parallelizing them (T-195).
+- Route units in waves of the worker count wait for the longest unit of every wave; the units' starting
+  heights are the replayed writes of the units before (with the guard off), so a free worker can take the
+  next unit at once. With the one run guard a unit must start where the unit before actually ended: its
+  guard may drop the exit node, and starting at the entry instead broke two one run far stepdown tests.
+- Solver thread times rise when every thread is busy (8 cores, 16 threads): the units' summed solver time
+  went from 79 to 126 s when the wave barriers went, while the wall time fell; compare wall times.
 - Bug that existed before this session, fixed: in Backwards_GPU the far go of a batch read the check's
   closing on the CPU, which the GPU sweeps never copied back, so it was all zero; the far go was tested
   against wrong material wherever the far go is deeper than the cutter and the closing stood above the
