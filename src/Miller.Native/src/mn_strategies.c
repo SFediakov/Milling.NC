@@ -2802,20 +2802,16 @@ static int z_backwards(const mn_context* context, const mn_monitor* monitor, int
 int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks, mn_points* entries, mn_unreached* unreached)
 {
     const mn_plan* plan = context->plan;
-    float far = context->parameters.far_stepdown;
-    int far_on = far > 0;
-    int group_size = plan->count > 0 ? plan->count : 1;
+    int k = mn_far_levels(&context->parameters);
     if (unreached != NULL) {
         memset(unreached, 0, sizeof(*unreached));
     }
-    if (far_on) {
-        float stepdown = context->parameters.stepdown;
-        int k = mn_f2i(rintf(far / stepdown));
-        if (k < 2 || fabsf(far - (float)k * stepdown) > MN_LEVEL_TOLERANCE) {
-            return mn_fail(MN_ERR_ARGUMENT, "Far stepdown %g must be a whole multiple of the stepdown %g, at least twice it.", (double)far, (double)stepdown);
-        }
-        group_size = k;
+    if (k == 0) {
+        return mn_fail(MN_ERR_ARGUMENT, "Far stepdown %g must be 0 or the stepdown %g (none) or a whole multiple of it, at least twice it.", (double)context->parameters.far_stepdown,
+            (double)context->parameters.stepdown);
     }
+    int far_on = k >= 2;
+    int group_size = far_on ? k : (plan->count > 0 ? plan->count : 1);
     if (mn_backwards_mode(context->collision_mode)) {
         return z_backwards(context, monitor, group_size, far_on, result, marks, entries, unreached);
     }

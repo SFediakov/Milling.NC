@@ -95,7 +95,7 @@ typedef struct mn_parameters {
     float cell_size;
     float tolerance;
     /* Z layer by layer: the far region of every group of far_stepdown / stepdown levels is cut this
-     * much deeper in one step (T-156); 0 for none. */
+     * much deeper in one step (T-156); 0 or the stepdown itself for none (T-196). */
     float far_stepdown;
 } mn_parameters;
 

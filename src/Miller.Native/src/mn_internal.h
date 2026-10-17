@@ -180,6 +180,21 @@ typedef struct mn_problem {
 /* Whether a collision mode is Backwards on the CPU or on the GPU. */
 static inline int mn_backwards_mode(int collision_mode) { return collision_mode == MN_COLLISION_BACKWARDS || collision_mode == MN_COLLISION_BACKWARDS_GPU; }
 
+/* The levels a far stepdown spans (T-156, T-196): k >= 2 when it is on, 1 when it is off (0, or the
+ * stepdown itself: nothing then goes deeper than one stepdown), 0 when it is no whole multiple of the
+ * stepdown, which the caller reports. */
+static inline int mn_far_levels(const mn_parameters* p)
+{
+    if (p->far_stepdown == 0.0f) {
+        return 1;
+    }
+    if (!(p->far_stepdown > 0.0f && p->stepdown > 0.0f)) {
+        return 0;
+    }
+    int k = mn_f2i(rintf(p->far_stepdown / p->stepdown));
+    return k >= 1 && fabsf(p->far_stepdown - (float)k * p->stepdown) <= MN_LEVEL_TOLERANCE ? k : 0;
+}
+
 static inline mn_v3 mn_problem_node(const mn_problem* p, int k) { return mn_v3_make(p->x[k], p->y[k], p->z[k]); }
 
 /* TurnFine constants: the slow zones of a movement run at MN_SLOW_SPEED_FACTOR of the speed (three

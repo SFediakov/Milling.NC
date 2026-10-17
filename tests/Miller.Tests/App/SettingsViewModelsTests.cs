@@ -141,6 +141,19 @@ public sealed class SettingsViewModelsTests : IDisposable
         Assert.NotNull(_vm.Cutting.SafeHeightError);
     }
 
+    // T-196: the stepdown itself switches the far stepdown off, and follows a new stepdown only when equal.
+    [Fact]
+    public void Cutting_FarStepdownEqualToTheStepdown_IsNone()
+    {
+        _vm.Cutting.FarStepdown = _vm.Cutting.Stepdown;
+        Assert.Null(_vm.Cutting.FarStepdownError);
+        Assert.Null(_vm.Cutting.FarStepdownWarning);
+        _vm.Cutting.Stepdown = _vm.Cutting.FarStepdown + 1f;
+        Assert.NotNull(_vm.Cutting.FarStepdownError);
+        _vm.Cutting.FarStepdown = _vm.Cutting.Stepdown;
+        Assert.Null(_vm.Cutting.FarStepdownError);
+    }
+
     [Fact]
     public void Cutting_FarStepdown_MustBeAMultipleOfTheStepdown()
     {

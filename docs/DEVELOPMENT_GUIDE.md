@@ -501,7 +501,9 @@ Uncuttable classification (`UncuttableRegions`):
   Every such cell is a node (a lattice at the finishing stepover left the stock
   higher than the head limit counts on). Without should-cut cells the strategy is
   unchanged.
-- Far stepdown (`FarStepdown`, T-156, "Z layer by layer" only): 0 for none,
+- Far stepdown (`FarStepdown`, T-156, "Z layer by layer" only): 0 or the
+  Stepdown itself for none (T-196: nothing goes deeper than one Stepdown, and
+  every strategy and collision mode mills exactly as with 0, `mn_far_levels`),
   otherwise a whole multiple k of the Stepdown of at least twice it. The plan
   levels form groups of k (the last group may be shorter). Per group the far
   region of its bottom level, the positions of that level's mask at least the
@@ -831,7 +833,7 @@ M30
 | `0 < Stepover <= CutterDiameter` | Parameters.Stepover |
 | `0 < FinishingStepover <= CutterDiameter` | Parameters.FinishingStepover |
 | `Stepdown > 0` | Parameters.Stepdown |
-| `FarStepdown == 0` or a whole multiple of `Stepdown` of at least `2 * Stepdown` (within `Slicer.LevelTolerance`) | Parameters.FarStepdown |
+| `FarStepdown == 0`, `FarStepdown == Stepdown` (both none, T-196) or a whole multiple of `Stepdown` of at least `2 * Stepdown` (within `Slicer.LevelTolerance`) | Parameters.FarStepdown |
 | `FarStepdown <= CutterLength` (warning, not error: the far block then steps by the cutter length; every collision mode, Backwards too since T-193) | Parameters.FarStepdown |
 | `SafeHeight > 0` (clearance above the stock top) | Parameters.SafeHeight |
 | `0.01 <= CellSize <= 5` | Parameters.CellSize |
@@ -2498,6 +2500,14 @@ check that decides done.
 - Input: user request (keep the driver-level approach: inputs once, nothing whole-grid inside a loop, every stage measured and the total)
 - Output: the level groups prepared at once (standing maps folded per group, running minima, one group per worker, the far area written after); the should-cut touches stamped from the marked cells instead of gathered over the footprint for every cell (4.7 s of a first pass at 0.025 mm with nothing marked); route units taken by free workers in order without wave barriers; the lower envelope's column pass in blocks of 16 adjacent columns; the check's sweep scratch only on the CPU; every change gives the same toolpaths bit for bit (the user's heart G-code compared byte for byte, the worker-count, one run and golden tests)
 - Acceptance: the user's heart at 0.025 mm in Backwards 44.8 s after T-193 to 31.0 s (27.3 s before T-193, whose far go cut fewer layers), Backwards_GPU 34.6 s to 20.9 s (15.2 s): level groups 10.7 to 2.3 s, route units 10.4 to 9.3 s (lower bound about 7.8 s: 125 s of solver thread time on 16 threads), check wait 4.6 s (the check on half the workers, user request of T-170); Recursion at the same settings 453 s, 8 passes, 67 events
+- Status: done
+
+#### T-196 The stepdown as far stepdown switches it off
+- Depends on: T-156, T-193
+- Files: `src/Miller.Native/src/mn_internal.h`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.App/Views/CuttingParametersView.axaml`, `tests/Miller.Tests/Application/FarStepdownOffTests.cs`, `tests/Miller.Tests/Application/ProjectValidatorTests.cs`, `tests/Miller.Tests/App/SettingsViewModelsTests.cs`
+- Input: user request (for all options the far stepdown may equal the normal stepdown; the far stepdown is then off and all milling uses the normal stepdown as its deepest cut; define the existing milling strategies and implement it)
+- Output: `mn_far_levels` (k >= 2 on, 1 off for 0 or the stepdown, 0 invalid) decides the Z layer's groups and the far withdrawal's passes; `ProjectValidator.IsFarStepdownOff`, the error text and the Cutting tab label name the new value; the cutter length warning only for a far stepdown that is on. The options: strategies "Z layer by layer" (collision modes Recursion, One run, Backwards, Backwards_GPU; the far stepdown applies) and "3 axis freedom" (Recursion, One run; it never reads the far stepdown), cut scopes Everything and Separation
+- Acceptance: 0, the stepdown (2 and 2.00005 over 2, 0.2 over 0.2), 4, 6 and 0.6 over 0.2 accepted, 1, 3, 2.001, negative, NaN and infinite refused, no cutter length warning for the stepdown itself, the stepdown accepted with every strategy and mode; for every strategy, every mode it takes and both scopes the stepdown as far stepdown gives the toolpath, layers, passes, unit entries, unreached and not-cut counts and events of 0 bit for bit and no far area; 910 tests pass
 - Status: done
 
 #### T-165 Head bottom down to half the cutter diameter
