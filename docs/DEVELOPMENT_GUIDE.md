@@ -852,12 +852,14 @@ M30
 ### 6.8 Machine connection (Grbl)
 
 - Links: a serial port through the native library `miller_serial` (8N1, no flow control, DTR and
-  RTS on; the rates 9600 to 921600 every system accepts, Grbl uses 115200) or a raw TCP stream to a
+  RTS off on Windows and no hang-up on close on Linux, so connecting does not restart an Arduino and
+  the machine keeps its position, overrides and modal state; Linux raises DTR on the first open
+  after the board is plugged in, which still restarts it once; the rates 9600 to 921600 every system accepts, Grbl uses 115200) or a raw TCP stream to a
   network controller (port 23 for FluidNC and grblHAL). One I/O thread reads and writes the link,
   because a synchronous Windows handle serializes reads and writes anyway.
-- Identification: an Arduino restarts when its port opens and prints `Grbl 1.1h ['$' for help]`;
-  the controller waits 2.5 s for that line, then asks `?`; the welcome line or a status report
-  identifies it, nothing after 5 s closes the connection.
+- Identification: a controller that restarts prints `Grbl 1.1h ['$' for help]`; the controller
+  waits 2.5 s for that line, then asks `?`; the welcome line or a status report identifies it,
+  nothing after 5 s closes the connection. Nothing but `?` is written on connect.
 - Streaming is send-response: a line is written only after the controller answered the previous
   one with `ok` or `error:N`, so it never holds more than one unconfirmed line. Grbl's `ok` means
   the line was executed; a move is then in its planner, which keeps motion continuous. A program job
@@ -878,6 +880,12 @@ M30
   a reset), go to `G90 G0 X0 Y0`, touch-plate probe `G21 G91 G38.2 Z-<travel> F<feed>`, then
   `G10 L20 P0 Z<plate>`, `G0 Z<lift>`, `G90`, the outline as rapids round the program's XY bounds at
   the current height, home `$H`, unlock `$X`, check mode `$C` around the program.
+- Console while a program is paused (Hold or Door): the line goes out before the next program
+  line, its answer is logged and never counted as program progress, an `error:N` does not fail the
+  program. Grbl queues a move behind the moves already in its planner; `$` commands other than `$G`
+  are refused by Grbl in Hold (error 8).
+- Macros: named command lists in `macros.json` beside the settings (own cluster, `MacroService`),
+  sent as one command job with a fixed delay (0 to 60000 ms) after each `ok` before the next line.
 - Positions: `WPos = MPos - WCO`; Grbl sends one of the two ($10) and the offset and overrides only
   every 10 to 30 reports, so both are carried over. Values are in the controller's unit ($13); the
   commands themselves are in millimetres.

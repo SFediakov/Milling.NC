@@ -2,10 +2,11 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:Miller.App.ViewModels"
              xmlns:c="using:Miller.App.Controls"
+             xmlns:m="using:Miller.Application.Macros"
              x:Class="Miller.App.Views.MachineView"
              x:DataType="vm:MachineViewModel">
-  <!-- Connection, work coordinates and program are open; jog, overrides and console stay folded until
-       needed. Every display text is a SelectableTextBlock so it can be selected and copied. -->
+  <!-- Connection, work coordinates, program and macros are open; jog, overrides and console stay
+       folded until needed. Every display text is a SelectableTextBlock so it can be selected and copied. -->
   <ScrollViewer>
     <StackPanel Margin="8" Spacing="4">
       <SelectableTextBlock Classes="header" Text="Machine" />
@@ -104,6 +105,40 @@
           <SelectableTextBlock Name="ProgressText" Text="{Binding ProgressText}" TextWrapping="Wrap" IsVisible="{Binding ProgressText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
           <SelectableTextBlock Name="TimeText" Text="{Binding TimeText}" IsVisible="{Binding TimeText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
           <SelectableTextBlock Name="JobText" Text="{Binding JobText}" TextWrapping="Wrap" Classes.warning="{Binding JobFailed}" IsVisible="{Binding JobText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        </StackPanel>
+      </Expander>
+
+      <Expander Name="MacrosSection" Header="Macros" IsExpanded="True" HorizontalAlignment="Stretch">
+        <StackPanel Spacing="4">
+          <ItemsControl Name="MacroButtons" ItemsSource="{Binding Macros}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <WrapPanel />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="m:MachineMacro">
+                <Button Content="{Binding Name}" Margin="0,0,6,6"
+                        Command="{Binding $parent[ItemsControl].((vm:MachineViewModel)DataContext).RunMacroCommand}"
+                        CommandParameter="{Binding}" />
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <Grid Name="MacroEditor" ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="6" RowSpacing="4">
+            <SelectableTextBlock Classes="label" Text="Edit" />
+            <ComboBox Grid.Column="1" Name="MacroBox" ItemsSource="{Binding MacroNames}" SelectedIndex="{Binding MacroIndex}" HorizontalAlignment="Stretch" />
+            <SelectableTextBlock Grid.Row="1" Classes="label" Text="Name" />
+            <TextBox Grid.Row="1" Grid.Column="1" Name="MacroNameBox" Text="{Binding MacroName}" />
+            <SelectableTextBlock Grid.Row="2" Classes="label" Text="Delay (ms)" />
+            <c:NumericBox Grid.Row="2" Grid.Column="1" Name="MacroDelayBox" Classes="numeric" Value="{Binding MacroDelay}" HorizontalAlignment="Left" />
+            <SelectableTextBlock Grid.Row="3" Classes="label" Text="Commands" VerticalAlignment="Top" />
+            <TextBox Grid.Row="3" Grid.Column="1" Name="MacroTextBox" Text="{Binding MacroText}" AcceptsReturn="True" TextWrapping="NoWrap" Height="96" />
+          </Grid>
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Button Name="NewMacroButton" Content="New" Command="{Binding NewMacroCommand}" />
+            <Button Name="SaveMacroButton" Content="Save" Command="{Binding SaveMacroCommand}" />
+            <Button Name="DeleteMacroButton" Content="Delete" Command="{Binding DeleteMacroCommand}" />
+          </StackPanel>
         </StackPanel>
       </Expander>
 

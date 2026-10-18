@@ -1,6 +1,7 @@
 using System.Globalization;
 using CommunityToolkit.Mvvm.Input;
 using Miller.Application.Services;
+using Miller.Machine;
 using Miller.Machine.Grbl;
 using Miller.Machine.Links;
 
@@ -43,13 +44,16 @@ public sealed partial class MachineViewModel
 
     private bool CanSaveProgress => _machine.RunJob is { IsActive: false };
 
+    // Console lines go out when nothing runs, or into a program while it is paused.
+    private bool CanSend => CanRunNow || Snapshot is { IsReady: true } snapshot && MachineController.IsPausedProgram(snapshot.Job?.Kind, snapshot.Job?.State, snapshot.Status);
+
     private void NotifyCommands()
     {
         foreach (var command in new IRelayCommand[]
         {
             ConnectCommand, DisconnectCommand, UseToolpathCommand, OpenFileCommand, CheckCommand, StartCommand, OutlineCommand,
             PauseCommand, ResumeCommand, StopCommand, ResetCommand, HomeCommand, UnlockCommand, JogCommand, CancelJogCommand,
-            ZeroCommand, GoToZeroCommand, ProbeCommand, OverrideCommand, SendCommand, SetWorkCommand, ReadWorkCommand, SaveProgressCommand,
+            ZeroCommand, GoToZeroCommand, ProbeCommand, OverrideCommand, SendCommand, SetWorkCommand, ReadWorkCommand, SaveProgressCommand, RunMacroCommand,
         })
         {
             command.NotifyCanExecuteChanged();
@@ -285,7 +289,7 @@ public sealed partial class MachineViewModel
         Try(() => _machine.Realtime(command));
     }
 
-    [RelayCommand(CanExecute = nameof(CanRunNow))]
+    [RelayCommand(CanExecute = nameof(CanSend))]
     private void Send()
     {
         if (string.IsNullOrWhiteSpace(ConsoleInput))

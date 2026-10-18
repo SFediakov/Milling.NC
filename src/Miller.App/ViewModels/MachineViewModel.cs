@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Numerics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Miller.App.Services;
+using Miller.Application.Macros;
 using Miller.Application.Services;
 using Miller.Core.Setup;
 using Miller.Core.Toolpaths;
@@ -42,6 +43,7 @@ public sealed partial class MachineViewModel : ViewModelBase
     private readonly Func<MillingProject> _project;
     private readonly Func<bool> _simulationPlaying;
     private readonly string _appVersion;
+    private readonly MacroService _macroService;
     private Toolpath? _programToolpath;
     private long _logSequence;
     private object? _commandKey;
@@ -196,7 +198,9 @@ public sealed partial class MachineViewModel : ViewModelBase
         _probeTravel = preferences.ProbeTravel;
         _probeFeed = preferences.ProbeFeed;
         _probeRetract = preferences.ProbeRetract;
+        _macroService = new MacroService(settings.Directory);
         RefreshPorts();
+        LoadMacros();
     }
 
     // A program run ended; the main window shows the text in its status bar.

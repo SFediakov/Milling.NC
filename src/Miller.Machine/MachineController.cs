@@ -25,6 +25,7 @@ public sealed class MachineController : IDisposable
     public const string StoppedByResetMessage = "Stopped by a soft reset.";
     public const string UnexpectedResetMessage = "The controller restarted while the job was running.";
     public const string DisconnectedMessage = "The connection was closed while the job was running.";
+    public const string NotPausedMessage = "A line goes into a running program only while it is paused (Hold or Door).";
 
     private const int BufferSize = 4096;
     private const int MaxLineBuffer = 1024;
@@ -49,6 +50,9 @@ public sealed class MachineController : IDisposable
     private GrblStatus _status = GrblStatus.Unknown;
     private MachineJob? _job;
     private JobProgress? _lastProgram;
+    private readonly Queue<string> _interjected = new();
+    private string? _interjectedLine;
+    private long _nextLineAt;
     private JobState _jobState;
     private int _sent;
     private int _acknowledged;
@@ -95,7 +99,7 @@ public sealed class MachineController : IDisposable
 
         Post(() =>
         {
-            var late = Refusal(_linkState == LinkState.Ready, IsJobActive, _outstanding >= 0 || _awaitingBanner, _status, job.Kind);
+            var late = Refusal(_linkState == LinkState.Ready, IsJobActive, LineInFlight, _status, job.Kind);
             if (late is not null)
             {
                 Log.Add(LogKind.Error, $"{job.Name} not started: {late}");
@@ -105,6 +109,49 @@ public sealed class MachineController : IDisposable
             StartJob(job);
         });
     }
+
+    // A line while a program is paused: it goes out before the next program line, and its answer is
+    // only logged, never counted as program progress (an error does not fail the program). Grbl
+    // queues a move behind the ones already in its planner.
+    public void Interject(string line)
+    {
+        ArgumentNullException.ThrowIfNull(line);
+        var prepared = GrblProgram.Clean(line, out var problem);
+        if (problem is not null)
+        {
+            throw new GrblProgramException(0, $"'{line}': {problem}");
+        }
+
+        if (prepared.Length == 0)
+        {
+            throw new GrblProgramException(0, "The command holds no G-code.");
+        }
+
+        var snapshot = Snapshot;
+        if (!snapshot.IsReady)
+        {
+            throw new InvalidOperationException(NotConnectedMessage);
+        }
+
+        if (!IsPausedProgram(snapshot.Job?.Kind, snapshot.Job?.State, snapshot.Status))
+        {
+            throw new InvalidOperationException(NotPausedMessage);
+        }
+
+        Post(() =>
+        {
+            if (_linkState != LinkState.Ready || !IsPausedProgram(_job?.Kind, _jobState, _status))
+            {
+                Log.Add(LogKind.Error, $"{prepared} not sent: {NotPausedMessage}");
+                return;
+            }
+
+            _interjected.Enqueue(prepared);
+        });
+    }
+
+    public static bool IsPausedProgram(MachineJobKind? kind, JobState? state, GrblStatus status)
+        => kind == MachineJobKind.Program && state == JobState.Running && (status.IsReport(GrblStatus.Hold) || status.IsReport(GrblStatus.Door));
 
     // Hold, resume, jog cancel, overrides and coolant; the soft reset has Reset and the status
     // query is sent by the controller thread itself.
@@ -170,6 +217,8 @@ public sealed class MachineController : IDisposable
     private static long Ticks(int milliseconds) => milliseconds * Stopwatch.Frequency / 1000;
 
     private bool IsJobActive => _job is not null && _jobState is JobState.Running or JobState.Stopping;
+
+    private bool LineInFlight => _outstanding >= 0 || _interjectedLine is not null || _awaitingBanner;
 
     private void Post(Action action) => _commands.Enqueue(action);
 
@@ -295,7 +344,20 @@ public sealed class MachineController : IDisposable
 
     private void PumpLine()
     {
-        if (_outstanding >= 0 || _awaitingBanner || _job is null || _jobState != JobState.Running || _sent >= _job.Count)
+        if (LineInFlight || _job is null || _jobState != JobState.Running)
+        {
+            return;
+        }
+
+        if (_interjected.TryDequeue(out var interjected))
+        {
+            _link.Write(Encoding.ASCII.GetBytes(interjected + "\n"));
+            _interjectedLine = interjected;
+            Log.Add(LogKind.Sent, interjected);
+            return;
+        }
+
+        if (_sent >= _job.Count || Stopwatch.GetTimestamp() < _nextLineAt)
         {
             return;
         }
@@ -320,6 +382,8 @@ public sealed class MachineController : IDisposable
         _jobStart = Stopwatch.GetTimestamp();
         _jobEnd = 0;
         _jobMessage = null;
+        _nextLineAt = 0;
+        _interjected.Clear();
         if (job.Kind != MachineJobKind.Command)
         {
             Log.Add(LogKind.Info, $"{job.Kind} started: {job.Name}, {job.Count} lines");
@@ -329,6 +393,7 @@ public sealed class MachineController : IDisposable
     private void FinishJob(JobState state, string? message)
     {
         _jobState = state;
+        _interjected.Clear();
         _jobEnd = Stopwatch.GetTimestamp();
         _jobMessage = message;
         if (_job!.Kind != MachineJobKind.Command || state != JobState.Done)
@@ -451,6 +516,13 @@ public sealed class MachineController : IDisposable
 
     private void OnOk()
     {
+        if (_interjectedLine is not null)
+        {
+            _interjectedLine = null;
+            Log.Add(LogKind.Received, "ok");
+            return;
+        }
+
         if (_outstanding < 0 || _job is null)
         {
             Log.Add(LogKind.Received, "ok (no line was waiting for it)");
@@ -470,11 +542,22 @@ public sealed class MachineController : IDisposable
         {
             FinishJob(JobState.Done, null);
         }
+        else if (_job.DelayMs > 0)
+        {
+            _nextLineAt = Stopwatch.GetTimestamp() + Ticks(_job.DelayMs);
+        }
     }
 
     private void OnError(string line)
     {
         var text = GrblCodes.DescribeError(line);
+        if (_interjectedLine is not null)
+        {
+            Log.Add(LogKind.Error, $"{_interjectedLine}: {text}");
+            _interjectedLine = null;
+            return;
+        }
+
         if (_outstanding < 0 || _job is null)
         {
             Log.Add(LogKind.Error, text);
@@ -541,6 +624,7 @@ public sealed class MachineController : IDisposable
         }
 
         _outstanding = -1;
+        _interjectedLine = null;
         if (!expected && IsJobActive)
         {
             FinishJob(JobState.Failed, UnexpectedResetMessage);
@@ -569,7 +653,7 @@ public sealed class MachineController : IDisposable
             _lastProgram = job;
         }
 
-        var next = new MachineSnapshot(_linkState, _link.Name, _version, _status, job, _outstanding >= 0 || _awaitingBanner, _error, _lastProgram);
+        var next = new MachineSnapshot(_linkState, _link.Name, _version, _status, job, LineInFlight, _error, _lastProgram);
         if (!next.Equals(_snapshot))
         {
             Volatile.Write(ref _snapshot, next);

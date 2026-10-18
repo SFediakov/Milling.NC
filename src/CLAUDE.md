@@ -109,6 +109,9 @@
   tool), a resume line without a Z word gets its Z written in (else it runs at the retract height), and
   an arc, G91, probe or G28/G30/G53 line at the resume point, an unknown position, or an executed G92,
   G10 L20, G28.1 or G30.1 is refused with the line instead of written.
+- Console lines during a paused program (T-202) are not a cluster of their own: they must share the one
+  send-response stream with the program, so `MachineController.Interject` sends them between program
+  lines with an in-flight flag of their own. Macros (T-204) are a cluster (`Miller.Application/Macros`).
 - The slow zones (T-155, `mn_slow.c`) and the layer marks (T-154) are not clusters of their own:
   both are stages of the native generation between the simplifier and the statistics (user request:
   all generation in the C library), and the layer stepping is part of the simulation cluster

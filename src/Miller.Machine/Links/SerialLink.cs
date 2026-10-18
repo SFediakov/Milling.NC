@@ -3,8 +3,8 @@ using Miller.Machine.Native;
 
 namespace Miller.Machine.Links;
 
-// A serial port through the native library: 8N1, no flow control, DTR and RTS on. The rates are
-// the standard ones every system accepts; GRBL uses 115200.
+// A serial port through the native library: 8N1, no flow control, opened without restarting an
+// Arduino (miller_serial.h). The rates are the standard ones every system accepts; GRBL uses 115200.
 public sealed unsafe class SerialLink : IMachineLink
 {
     public const int DefaultBaudRate = 115200;

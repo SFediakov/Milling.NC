@@ -28,6 +28,12 @@ public sealed partial class ViewportViewModel : ViewModelBase
     [ObservableProperty]
     private bool _showTool = true;
 
+    // The next moves after the progress, highlighted; the executed part is not drawn by this option.
+    [ObservableProperty]
+    private bool _showNextMoves;
+
+    public const int NextMoveCount = 20;
+
     public event EventHandler? RequestRender;
 
     public event EventHandler<string>? GlError;
@@ -431,4 +437,6 @@ public sealed partial class ViewportViewModel : ViewModelBase
     partial void OnShowToolpathChanged(bool value) => Invalidate();
 
     partial void OnShowToolChanged(bool value) => Invalidate();
+
+    partial void OnShowNextMovesChanged(bool value) => Invalidate();
 }

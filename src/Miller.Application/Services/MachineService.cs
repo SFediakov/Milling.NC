@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using Miller.Application.Macros;
 using Miller.Core.GCode;
 using Miller.Core.Setup;
 using Miller.Core.Toolpaths;
@@ -204,6 +205,7 @@ public sealed class MachineService : IDisposable
         => Controller.Run(MachineJob.Commands("Probe Z", GrblCommands.ProbeZ(plateThickness, maxTravel, feed, retract)));
 
     // A console line. ! and ~ typed alone are the realtime hold and resume; ? prints the last status.
+    // While a program runs the line goes into it, which the controller allows only while it is paused.
     public void Send(string line)
     {
         ArgumentNullException.ThrowIfNull(line);
@@ -222,7 +224,20 @@ public sealed class MachineService : IDisposable
             return;
         }
 
-        Controller.Run(MachineJob.Commands("Console", trimmed));
+        var controller = Controller;
+        if (controller.Snapshot.IsJobActive)
+        {
+            controller.Interject(trimmed);
+            return;
+        }
+
+        controller.Run(MachineJob.Commands("Console", trimmed));
+    }
+
+    public void RunMacro(MachineMacro macro)
+    {
+        ArgumentNullException.ThrowIfNull(macro);
+        Controller.Run(MachineJob.Commands($"Macro {macro.Name}", macro.DelayMs, macro.Lines));
     }
 
     private MachineController Controller

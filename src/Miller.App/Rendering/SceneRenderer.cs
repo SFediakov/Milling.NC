@@ -40,6 +40,7 @@ public sealed class SceneRenderer : IDisposable
     private bool _showStock = true;
     private bool _showToolpath = true;
     private bool _showTool = true;
+    private bool _showNextMoves;
     private int _progressIndex;
     private Vector3 _toolPosition;
 
@@ -67,7 +68,8 @@ public sealed class SceneRenderer : IDisposable
                 [MoveKind.Feed] = ThemeColors.Get("ToolpathFeedColor"),
                 [MoveKind.Plunge] = ThemeColors.Get("ToolpathPlungeColor"),
             },
-            _background);
+            _background,
+            ThemeColors.Get("ToolpathNextColor"));
         _stockMap = new HeightMapRenderer(gl);
         _categoryColors = new Dictionary<CellCategory, Vector4>
         {
@@ -93,6 +95,7 @@ public sealed class SceneRenderer : IDisposable
         _showStock = viewModel.DisplayStock;
         _showToolpath = viewModel.ShowToolpath;
         _showTool = viewModel.DisplayTool;
+        _showNextMoves = viewModel.ShowNextMoves;
         _progressIndex = viewModel.DisplayedProgressIndex;
         _toolPosition = viewModel.DisplayedToolPosition;
         if (viewModel.ToolpathVersion != _toolpathVersion)
@@ -206,10 +209,7 @@ public sealed class SceneRenderer : IDisposable
         _lines.Use();
         _lines.SetMatrix(_linesMvp, viewProjection);
         _axes.Draw(_showStock);
-        if (_showToolpath)
-        {
-            _toolpath.Draw(_progressIndex);
-        }
+        _toolpath.Draw(_progressIndex, _showToolpath, _showNextMoves, ViewportViewModel.NextMoveCount);
         return _gl.GetError();
     }
 
