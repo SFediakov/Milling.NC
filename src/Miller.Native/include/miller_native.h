@@ -295,6 +295,17 @@ typedef struct mn_collision {
  * the segment; the head ring is tested at every segment end and every max(CellSize, cutter radius)
  * along it, the footprint of a rapid at the same spacing, against the stock as it stands. status
  * (cells) receives MODEL and, per entered cell, COLLISION; SHOULD_REMOVE is not touched. */
+/* The simulation session (T-207): the simulation's whole segments on the collision check's banded walk
+ * over the CPU workers. Open takes the footprint, the annulus and the segments once (copied) and keeps
+ * a worker pool; walk sweeps segments [first, last) over `stock` in place, with one event per check
+ * position from its first entered cell (the per-sample simulation's rule), and returns the events
+ * (free with mn_free) and a rectangle holding every changed cell. */
+typedef struct mn_sim mn_sim;
+MN_API int32_t mn_sim_open(const mn_grid* grid, const mn_offset* offsets, int32_t offset_count, const mn_offset* annulus, int32_t annulus_count, float cutter_radius,
+    float cutter_length, float tolerance, const mn_segment* segments, int32_t segment_count, mn_sim** session);
+MN_API int32_t mn_sim_walk(mn_sim* session, int32_t first, int32_t last, float* stock, const float* model, float floor, mn_collision** events, int32_t* event_count, mn_dirty* dirty);
+MN_API void mn_sim_close(mn_sim* session);
+
 MN_API int32_t mn_collision_check(const mn_segment* segments, int32_t count, const mn_grid* grid, const float* stock, const float* model, float floor, const mn_tool* tool, float tolerance, uint8_t* status, mn_collision** events, int32_t* event_count);
 
 /* Far stepdown withdrawal (T-164): a collision's place (a cell the head or a rapid entered, and the

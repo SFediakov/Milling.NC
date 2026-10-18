@@ -32,7 +32,7 @@ public sealed partial class ViewportViewModel : ViewModelBase
     [ObservableProperty]
     private bool _showNextMoves;
 
-    public const int NextMoveCount = 20;
+    public const int NextMoveCount = 150;
 
     public event EventHandler? RequestRender;
 

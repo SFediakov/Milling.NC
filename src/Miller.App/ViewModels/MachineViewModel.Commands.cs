@@ -26,8 +26,6 @@ public sealed partial class MachineViewModel
 
     private bool CanStartProgram => _machine.Program is not null && CanRunNow && State == GrblStatus.Idle;
 
-    private bool CanOutline => CanStartProgram && _machine.Program!.Bounds is not null;
-
     private bool CanPause => IsReady && (IsJobActive || State is GrblStatus.Run or GrblStatus.Jog);
 
     private bool CanResume => IsReady && State is GrblStatus.Hold or GrblStatus.Door;
@@ -51,7 +49,7 @@ public sealed partial class MachineViewModel
     {
         foreach (var command in new IRelayCommand[]
         {
-            ConnectCommand, DisconnectCommand, UseToolpathCommand, OpenFileCommand, CheckCommand, StartCommand, OutlineCommand,
+            ConnectCommand, DisconnectCommand, UseToolpathCommand, OpenFileCommand, StartCommand,
             PauseCommand, ResumeCommand, StopCommand, ResetCommand, HomeCommand, UnlockCommand, JogCommand, CancelJogCommand,
             ZeroCommand, GoToZeroCommand, ProbeCommand, OverrideCommand, SendCommand, SetWorkCommand, ReadWorkCommand, SaveProgressCommand, RunMacroCommand,
         })
@@ -155,9 +153,6 @@ public sealed partial class MachineViewModel
     }
 
     [RelayCommand(CanExecute = nameof(CanStartProgram))]
-    private void Check() => Try(_machine.CheckProgram);
-
-    [RelayCommand(CanExecute = nameof(CanStartProgram))]
     private async Task StartAsync()
     {
         var program = _machine.Program!;
@@ -168,9 +163,6 @@ public sealed partial class MachineViewModel
             Try(_machine.StartProgram);
         }
     }
-
-    [RelayCommand(CanExecute = nameof(CanOutline))]
-    private void Outline() => Try(_machine.Outline);
 
     [RelayCommand(CanExecute = nameof(CanPause))]
     private void Pause() => Try(_machine.Pause);

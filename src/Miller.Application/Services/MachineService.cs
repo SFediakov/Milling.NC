@@ -21,7 +21,7 @@ public sealed record MachineConnectionSettings(MachineConnectionKind Kind, strin
 // A program ready for the machine. SegmentsAfterLine maps the answered lines of a program made from
 // the generated toolpath to the toolpath segments behind them, so the viewport can show the
 // progress; it is null for a file from disk. Path is the program's own moves for the machine view.
-public sealed record MachineProgram(GrblProgram Grbl, string Source, IReadOnlyList<int>? SegmentsAfterLine, GrblBounds? Bounds)
+public sealed record MachineProgram(GrblProgram Grbl, string Source, IReadOnlyList<int>? SegmentsAfterLine)
 {
     public bool FromToolpath => SegmentsAfterLine is not null;
 
@@ -41,7 +41,6 @@ public sealed class MachineService : IDisposable
 {
     public const string GeneratedProgramName = "Generated toolpath";
     public const string NoProgramMessage = "No program is loaded.";
-    public const string NoOutlineMessage = "The program has no XY moves to outline.";
     public const string NoRunMessage = "No program has run on the machine yet.";
     public const string RunActiveMessage = "The program is still running; stop it before saving its progress.";
     public const string SameFileMessage = "Choose a new file; the program file itself stays as it is.";
@@ -123,7 +122,7 @@ public sealed class MachineService : IDisposable
         using var writer = new StringWriter(CultureInfo.InvariantCulture);
         post.Write(toolpath, project, appVersion, writer);
         var grbl = GrblProgram.Parse(GeneratedProgramName, writer.ToString());
-        Program = new MachineProgram(grbl, GeneratedProgramName, SegmentMap(grbl, toolpath.Count), GrblBounds.Of(grbl));
+        Program = new MachineProgram(grbl, GeneratedProgramName, SegmentMap(grbl, toolpath.Count));
         return Program;
     }
 
@@ -131,7 +130,7 @@ public sealed class MachineService : IDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         var grbl = GrblProgram.Parse(Path.GetFileName(path), File.ReadAllText(path));
-        Program = new MachineProgram(grbl, path, null, GrblBounds.Of(grbl));
+        Program = new MachineProgram(grbl, path, null);
         return Program;
     }
 
@@ -166,14 +165,6 @@ public sealed class MachineService : IDisposable
         }
 
         File.WriteAllText(path, GrblResume.Build(program.Grbl, Math.Min(job.Acknowledged, program.Grbl.Count)));
-    }
-
-    public void CheckProgram() => Controller.Run(MachineJob.Check(RequireProgram().Grbl));
-
-    public void Outline()
-    {
-        var bounds = RequireProgram().Bounds ?? throw new InvalidOperationException(NoOutlineMessage);
-        Controller.Run(MachineJob.Commands("Outline", GrblCommands.Outline(bounds)));
     }
 
     public void Pause() => Controller.Realtime(GrblRealtime.FeedHold);

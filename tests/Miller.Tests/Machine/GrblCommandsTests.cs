@@ -44,25 +44,17 @@ public sealed class GrblCommandsTests
     }
 
     [Fact]
-    public void Outline_GoesRoundTheProgramBounds()
+    public void Walk_FollowsRelativeMovesInchesAndSkipsMachineCoordinates()
     {
-        var program = GrblProgram.Parse("p", "G21 G90\nG0 Z5\nG0 X10 Y5\nG1 X30 Y5 Z-1 F300\nG1 X30 Y25\nG1 X10 Y25\nM30\n");
-        var bounds = GrblBounds.Of(program)!;
-        Assert.Equal(new GrblBounds(10, 5, 30, 25), bounds);
-        Assert.Equal(
-            new[] { "G21 G90 G0 X10 Y5", "G0 X30 Y5", "G0 X30 Y25", "G0 X10 Y25", "G0 X10 Y5" },
-            GrblCommands.Outline(bounds));
-    }
-
-    [Fact]
-    public void Bounds_FollowRelativeMovesInchesAndSkipMachineCoordinates()
-    {
-        var program = GrblProgram.Parse("p", "G20 G90 G0 X1 Y1\nG91 G1 X1 F10\nG53 G0 X-300 Y-300\nG21 G90 G0 X0 Y0\n");
-        var bounds = GrblBounds.Of(program)!;
-        Assert.Equal(0, bounds.MinX, 9);
-        Assert.Equal(0, bounds.MinY, 9);
-        Assert.Equal(50.8, bounds.MaxX, 9);
-        Assert.Equal(25.4, bounds.MaxY, 9);
-        Assert.Null(GrblBounds.Of(GrblProgram.Parse("p", "G0 Z5\nM3 S1000\n")));
+        var steps = GrblMotion.Walk(GrblProgram.Parse("p", "G20 G90 G0 X1 Y1\nG91 G1 X1 F10\nG53 G0 X-300 Y-300\nG21 G90 G0 X0 Y0\n"));
+        var ends = steps.Where(s => s.HasXY).Select(s => s.End).ToList();
+        Assert.Equal(3, ends.Count);
+        Assert.Equal(25.4, ends[0].X, 9);
+        Assert.Equal(25.4, ends[0].Y, 9);
+        Assert.Equal(50.8, ends[1].X, 9);
+        Assert.Equal(25.4, ends[1].Y, 9);
+        Assert.Equal(steps[1].End, steps[2].End);
+        Assert.Equal(new GrblPoint(0, 0, 0), ends[2]);
+        Assert.DoesNotContain(GrblMotion.Walk(GrblProgram.Parse("p", "G0 Z5\nM3 S1000\n")), s => s.HasXY);
     }
 }

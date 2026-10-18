@@ -7,9 +7,6 @@ public enum MachineJobKind
     // A G-code program; it ends with G4 P0, whose ok arrives only after every move is finished.
     Program,
 
-    // The program in Grbl's check mode ($C before and after): parsed and verified, nothing moves.
-    Check,
-
     // Manual lines (console, jog, zero, probe, home); done with the ok of the last line.
     Command,
 }
@@ -19,7 +16,6 @@ public enum MachineJobKind
 public sealed class MachineJob
 {
     public const string SyncLine = "G4P0";
-    public const string CheckModeLine = "$C";
     public const int MaxDelayMs = 60_000;
 
     private MachineJob(MachineJobKind kind, string name, IReadOnlyList<string> lines, IReadOnlyList<int> sourceLines, int delayMs = 0)
@@ -47,14 +43,6 @@ public sealed class MachineJob
     {
         ArgumentNullException.ThrowIfNull(program);
         return new MachineJob(MachineJobKind.Program, program.Name, program.Lines.Append(SyncLine).ToList(), program.SourceLines.Append(0).ToList());
-    }
-
-    public static MachineJob Check(GrblProgram program)
-    {
-        ArgumentNullException.ThrowIfNull(program);
-        var lines = program.Lines.Prepend(CheckModeLine).Append(CheckModeLine).ToList();
-        var sources = program.SourceLines.Prepend(0).Append(0).ToList();
-        return new MachineJob(MachineJobKind.Check, program.Name, lines, sources);
     }
 
     public static MachineJob Commands(string name, params string[] lines) => Commands(name, 0, lines);

@@ -319,6 +319,14 @@ void mn_model_bits(const float* model, int cells, float floor, uint8_t* status);
 int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const float* stock, const float* model, float floor, const mn_profile* profile, float cutter_radius,
     float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, float* final_stock);
 
+/* The check's walk with its inputs kept (T-207): opened once, run over any segment range in place on a
+ * stock, closed when done. The grid and the profile's offsets must outlive the walker. */
+typedef struct mn_walker mn_walker;
+int mn_walker_open(const mn_grid* g, const mn_profile* profile, float cutter_radius, float cutter_length, float tolerance, int first_hit_only, mn_walker** walker);
+int mn_walker_run(mn_walker* walker, const mn_segment* segments, int first_segment, int count, float* stock, const float* model, float floor, uint8_t* status,
+    mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, double* probing_seconds, double* walking_seconds);
+void mn_walker_close(mn_walker* walker);
+
 /* Not cut (T-173): the cells whose material after the toolpath stands more than the tolerance above
  * what the plan intended, their volume above it and the highest of them. */
 typedef struct mn_uncut {

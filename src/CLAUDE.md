@@ -112,6 +112,12 @@
 - Console lines during a paused program (T-202) are not a cluster of their own: they must share the one
   send-response stream with the program, so `MachineController.Interject` sends them between program
   lines with an in-flight flag of their own. Macros (T-204) are a cluster (`Miller.Application/Macros`).
+- The simulation session (T-207) is not a cluster of its own: it is the generation's collision walk
+  (`mn_walker`, split out of `mn_check_path`) kept open for a loaded toolpath, with `NativeSimulationSession`
+  as its facade. `SimulationEngine` therefore covers whole segments through the walker when one is
+  attached (the simulation tab) and sample by sample otherwise (parts of a segment, the analysis, which
+  needs the contact of every entered cell): two implementations of one rule, kept equal by
+  `SimulationSessionTests` (stock bits and events) as T-161 kept the generation check and the engine equal.
 - The slow zones (T-155, `mn_slow.c`) and the layer marks (T-154) are not clusters of their own:
   both are stages of the native generation between the simplifier and the statistics (user request:
   all generation in the C library), and the layer stepping is part of the simulation cluster

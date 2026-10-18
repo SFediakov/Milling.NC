@@ -77,21 +77,6 @@ public static class GrblCommands
         };
     }
 
-    // The rectangle around the program in XY at the current height, rapid moves, back to the start
-    // corner, so the operator sees where the program will cut.
-    public static string[] Outline(GrblBounds bounds)
-    {
-        ArgumentNullException.ThrowIfNull(bounds);
-        return new[]
-        {
-            $"G21 G90 G0 X{Number(bounds.MinX)} Y{Number(bounds.MinY)}",
-            $"G0 X{Number(bounds.MaxX)} Y{Number(bounds.MinY)}",
-            $"G0 X{Number(bounds.MaxX)} Y{Number(bounds.MaxY)}",
-            $"G0 X{Number(bounds.MinX)} Y{Number(bounds.MaxY)}",
-            $"G0 X{Number(bounds.MinX)} Y{Number(bounds.MinY)}",
-        };
-    }
-
     private static void CheckFeed(double feed)
     {
         if (!double.IsFinite(feed) || feed <= 0 || feed > MaxFeed)

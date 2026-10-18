@@ -14,6 +14,9 @@ public sealed class FakeGrblLink : IMachineLink
 {
     public const string Banner = "Grbl 1.1h ['$' for help]";
 
+    // Grbl's check mode toggle, which a console line can still send.
+    private const string CheckModeLine = "$C";
+
     private readonly object _gate = new();
     private readonly List<(long Due, byte[] Bytes, bool IsAnswer)> _output = new();
     private readonly StringBuilder _line = new();
@@ -223,7 +226,7 @@ public sealed class FakeGrblLink : IMachineLink
             Lines.Add(line);
         }
 
-        if (line == MachineJob.CheckModeLine)
+        if (line == CheckModeLine)
         {
             var leaving = State == GrblStatus.Check;
             State = leaving ? GrblStatus.Idle : GrblStatus.Check;

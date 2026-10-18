@@ -33,10 +33,10 @@ public sealed partial class ProgramRowViewModel : ObservableObject
     public bool IsExecuting => State == ProgramRowState.Executing;
 }
 
-// The machine program row by row for the listing window. The executing row is the last line the
-// controller acknowledged; Grbl acknowledges a line once it is in its planner, which can hold several
-// moves the machine has not reached yet. A refresh changes only the rows between the old and the new
-// executing row, so a long program costs nothing while the run moves on.
+// The machine program row by row for the listing window. The executing row is the line of the move the
+// tool is on (ExecutionTracker), or the last acknowledged line before the first move and once the run
+// is done. A refresh changes only the rows between the old and the new executing row, so a long program
+// costs nothing while the run moves on.
 public sealed partial class ProgramListingViewModel : ViewModelBase
 {
     public const string NoProgramText = "No program";
@@ -61,8 +61,13 @@ public sealed partial class ProgramListingViewModel : ViewModelBase
 
     private GrblProgram? _program;
 
-    // job: the progress of this program's latest run, null when it has not run.
+    // job: the progress of this program's latest run, null when it has not run; the executing row is the
+    // last acknowledged line.
     public void Show(GrblProgram? program, JobProgress? job)
+        => Show(program, job, program is null || job is not { Acknowledged: > 0 } ? -1 : Math.Min(job.Acknowledged, program.Count) - 1);
+
+    // executingLine: index into the program's lines, -1 while nothing ran.
+    public void Show(GrblProgram? program, JobProgress? job, int executingLine)
     {
         if (!ReferenceEquals(program, _program))
         {
@@ -72,7 +77,7 @@ public sealed partial class ProgramListingViewModel : ViewModelBase
             Title = program is null ? NoProgramText : $"{program.Name}, {Rows.Count} rows";
         }
 
-        var current = program is null || job is not { Acknowledged: > 0 } ? -1 : program.SourceLines[Math.Min(job.Acknowledged, program.Count) - 1] - 1;
+        var current = program is null || job is null || executingLine < 0 ? -1 : program.SourceLines[Math.Min(executingLine, program.Count - 1)] - 1;
         Apply(current);
         Description = program is null ? NoProgramText
             : current < 0 ? NotStartedText

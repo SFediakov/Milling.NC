@@ -84,7 +84,7 @@ public sealed class MachineMacrosConsoleTests : IDisposable
     [Fact]
     public void NextMoves_AreTheTwentySegmentsAfterTheProgress_AndNothingAtTheEnd()
     {
-        Assert.Equal(20, ViewportViewModel.NextMoveCount);
+        Assert.Equal(150, ViewportViewModel.NextMoveCount);
         Assert.Equal((0, 40), ToolpathRenderer.NextRange(0, 100, 20));
         Assert.Equal((60, 40), ToolpathRenderer.NextRange(30, 100, 20));
         Assert.Equal((180, 20), ToolpathRenderer.NextRange(90, 100, 20));

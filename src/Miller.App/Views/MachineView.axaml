@@ -89,11 +89,7 @@
             <Button Name="UseToolpathButton" Content="Use toolpath" Command="{Binding UseToolpathCommand}" />
             <Button Name="OpenFileButton" Content="Open file" Command="{Binding OpenFileCommand}" />
           </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="6">
-            <Button Name="CheckButton" Content="Check" Command="{Binding CheckCommand}" />
-            <Button Name="OutlineButton" Content="Outline" Command="{Binding OutlineCommand}" />
-            <Button Name="ShowListingButton" Content="Code" Command="{Binding ShowListingCommand}" />
-          </StackPanel>
+          <Button Name="ShowListingButton" Content="Code" Command="{Binding ShowListingCommand}" />
           <StackPanel Orientation="Horizontal" Spacing="6">
             <Button Name="StartButton" Content="Start" Command="{Binding StartCommand}" />
             <Button Name="PauseButton" Content="Pause" Command="{Binding PauseCommand}" />

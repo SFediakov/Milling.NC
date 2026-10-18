@@ -209,7 +209,7 @@ public sealed class MachineController : IDisposable
             return LineInFlightMessage;
         }
 
-        return kind != MachineJobKind.Command && !status.IsReport(GrblStatus.Idle)
+        return kind == MachineJobKind.Program && !status.IsReport(GrblStatus.Idle)
             ? $"The machine is {status.State}; a program starts only when it is Idle."
             : null;
     }
@@ -577,14 +577,9 @@ public sealed class MachineController : IDisposable
         }
 
         FinishJob(JobState.Failed, message);
-        switch (_job.Kind)
+        if (_job.Kind == MachineJobKind.Program)
         {
-            case MachineJobKind.Program:
-                BeginStop();
-                break;
-            case MachineJobKind.Check:
-                SoftReset(message);
-                break;
+            BeginStop();
         }
     }
 
@@ -616,13 +611,6 @@ public sealed class MachineController : IDisposable
 
         var expected = _awaitingBanner;
         _awaitingBanner = false;
-        if (_outstanding >= 0 && _job is not null && _job.Kind == MachineJobKind.Check && _jobState == JobState.Running && _outstanding == _job.Count - 1)
-        {
-            // Leaving check mode restarts Grbl; the restart confirms the closing $C.
-            OnOk();
-            return;
-        }
-
         _outstanding = -1;
         _interjectedLine = null;
         if (!expected && IsJobActive)

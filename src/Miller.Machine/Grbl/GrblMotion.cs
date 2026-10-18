@@ -38,7 +38,7 @@ public sealed record GrblStep(
     bool KnownY,
     bool KnownZ);
 
-// The one modal walk over a prepared program, shared by the bounds, the path view and the resume file.
+// The one modal walk over a prepared program, shared by the path view and the resume file.
 // It follows what moves the tool: G90 and G91, G20 and G21, the motion mode and the feed. Lines whose
 // axis words are no target in work coordinates keep the position: G53 (machine coordinates), G10 and
 // G92 (offsets), G28 and G30 (intermediate points); the axes they move or redefine become unknown, as do

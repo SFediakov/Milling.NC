@@ -77,8 +77,6 @@ public sealed class GrblProgramTests
         var run = MachineJob.Program(program);
         Assert.Equal(new[] { "G21", "G0X1", MachineJob.SyncLine }, run.Lines);
         Assert.Equal(new[] { 1, 2, 0 }, run.SourceLines);
-        var check = MachineJob.Check(program);
-        Assert.Equal(new[] { MachineJob.CheckModeLine, "G21", "G0X1", MachineJob.CheckModeLine }, check.Lines);
         var commands = MachineJob.Commands("jog", "$J=G91 G21 X1 F500", "(comment)");
         Assert.Equal(new[] { "$J=G91G21X1F500" }, commands.Lines);
         Assert.Throws<GrblProgramException>(() => MachineJob.Commands("bad", "G0 X1 !"));

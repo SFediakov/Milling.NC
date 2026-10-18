@@ -44,6 +44,7 @@ public sealed partial class MachineViewModel : ViewModelBase
     private readonly Func<bool> _simulationPlaying;
     private readonly string _appVersion;
     private readonly MacroService _macroService;
+    private readonly ExecutionTracker _tracker = new();
     private Toolpath? _programToolpath;
     private long _logSequence;
     private object? _commandKey;
@@ -241,7 +242,7 @@ public sealed partial class MachineViewModel : ViewModelBase
         ShowJob(snapshot);
         ShowOnViewport(snapshot);
         ShowMachineView(snapshot);
-        Listing.Show(_machine.Program?.Grbl, RunJobOf(_machine.Program));
+        ShowListing(snapshot);
         var key = (snapshot?.Link, snapshot?.Status.State, snapshot?.Status.SubState, snapshot?.IsJobActive, snapshot?.LineInFlight,
             _machine.Program, _toolpath(), _connecting, _machine.RunProgram, _machine.RunJob is { IsActive: false });
         if (!Equals(key, _commandKey))
@@ -351,7 +352,6 @@ public sealed partial class MachineViewModel : ViewModelBase
             return;
         }
 
-        var kind = job.Kind == MachineJobKind.Check ? "Check" : "Program";
         Progress = job.Total > 0 ? (float)job.Acknowledged / job.Total : 0;
         ProgressText = $"{job.Acknowledged} of {job.Total} lines" + (job.SourceLine > 0 ? $", file line {job.SourceLine}" : string.Empty);
         var elapsed = job.Elapsed;
@@ -359,12 +359,12 @@ public sealed partial class MachineViewModel : ViewModelBase
             ? $", about {Duration(elapsed * ((double)(job.Total - job.Acknowledged) / job.Acknowledged))} left"
             : string.Empty;
         TimeText = $"{Duration(elapsed)} elapsed{remaining}";
-        JobText = $"{kind} {job.State.ToString().ToLowerInvariant()}" + (job.Message is null ? string.Empty : $": {job.Message}");
+        JobText = $"Program {job.State.ToString().ToLowerInvariant()}" + (job.Message is null ? string.Empty : $": {job.Message}");
         var id = job.StartTimestamp;
         if (!job.IsActive && id != _reportedJob)
         {
             _reportedJob = id;
-            StatusChanged?.Invoke(this, $"{kind} {job.Name} {job.State.ToString().ToLowerInvariant()} after {Duration(elapsed)}");
+            StatusChanged?.Invoke(this, $"Program {job.Name} {job.State.ToString().ToLowerInvariant()} after {Duration(elapsed)}");
         }
     }
 
@@ -394,8 +394,8 @@ public sealed partial class MachineViewModel : ViewModelBase
         _viewport.SetMachinePosition(index, new Vector3((float)work.X, (float)work.Y, (float)work.Z));
     }
 
-    // The loaded program's path with the part its latest run answered drawn as done; the cutter at the
-    // machine's work position, at 0, 0, 0 while that is unknown.
+    // The loaded program's path with the moves its latest run has reached drawn as done; the cutter at
+    // the machine's work position, at 0, 0, 0 while that is unknown.
     private void ShowMachineView(MachineSnapshot? snapshot)
     {
         if (!IsViewActive)
@@ -405,11 +405,43 @@ public sealed partial class MachineViewModel : ViewModelBase
         }
 
         var program = _machine.Program;
-        var job = RunJobOf(program);
         var work = snapshot is { IsReady: true } ? snapshot.Status.WorkPosition : Axes.Zero;
-        _viewport.ShowMachineView(program?.Path.Segments ?? Array.Empty<ToolpathSegment>(),
-            program is null || job is null ? 0 : program.Path.SegmentsDone(job.Acknowledged),
+        _viewport.ShowMachineView(program?.Path.Segments ?? Array.Empty<ToolpathSegment>(), Executing(snapshot),
             new Vector3((float)work.X, (float)work.Y, (float)work.Z));
+    }
+
+    // The row of the move the tool is on; the last acknowledged line before the first move and once done.
+    private void ShowListing(MachineSnapshot? snapshot)
+    {
+        var program = _machine.Program;
+        var job = RunJobOf(program);
+        if (program is null || job is null)
+        {
+            Listing.Show(program?.Grbl, null);
+            return;
+        }
+
+        var executing = Executing(snapshot);
+        var acknowledged = Math.Min(job.Acknowledged, program.Grbl.Count) - 1;
+        Listing.Show(program.Grbl, job, job.State == JobState.Done || executing >= program.Path.SegmentsDone(job.Acknowledged)
+            ? acknowledged
+            : program.Path.LineOf(executing));
+    }
+
+    // Segments of the loaded program's latest run the tool has passed (ExecutionTracker).
+    private int Executing(MachineSnapshot? snapshot)
+    {
+        var program = _machine.Program;
+        var job = RunJobOf(program);
+        if (program is null || job is null)
+        {
+            return 0;
+        }
+
+        Vector3? position = snapshot is { IsReady: true } ready
+            ? new Vector3((float)ready.Status.WorkPosition.X, (float)ready.Status.WorkPosition.Y, (float)ready.Status.WorkPosition.Z)
+            : null;
+        return _tracker.Executing(program.Path, job, position);
     }
 
     private JobProgress? RunJobOf(MachineProgram? program)

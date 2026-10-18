@@ -13,7 +13,11 @@
  * worker walks the whole batch in order over its own grid rows (every `bands`-th row), so each cell
  * meets the same removals and tests in the same order as in one walk. A batch in which no worker finds
  * a hit has recorded nothing and is done; a batch with a hit gets its stock back and runs as one walk,
- * which records the hits in their order. */
+ * which records the hits in their order.
+ *
+ * The walker (T-207) holds what the walk needs besides the stock: the footprint and annulus rows, the
+ * worker pool and the backup of the rows a batch reaches. A generation pass opens one per check; the
+ * simulation opens one per loaded toolpath (mn_sim_open) and walks with it until it is unloaded. */
 
 int mn_collisions_push(mn_collisions* list, mn_collision item)
 {
@@ -134,13 +138,18 @@ typedef struct mn_walk_state {
     int band;
     int bands;
     int probed;
+    /* The simulation's rule (T-207): a check position records its first entered cell only, which
+     * gives the kind and the heights of its event; the generation records every entered cell. */
+    int first_hit_only;
 } mn_walk_state;
 
 static void record_hit(mn_walk_state* w, int kind, mn_v3 tip, int position, int c, float standing, float surface)
 {
     float m = w->model[c];
     int model_hit = m > w->floor + MN_FLOOR_TOLERANCE && m > surface + w->tolerance;
-    w->status[c] |= MN_CELL_COLLISION;
+    if (w->status != NULL) {
+        w->status[c] |= MN_CELL_COLLISION;
+    }
     if (w->hits != NULL) {
         mn_hits* h = w->hits;
         float closing = h->closing[c];
@@ -226,6 +235,9 @@ static void check_position(mn_walk_state* w, mn_v3 tip, int rapid)
                         return;
                     }
                     record_hit(w, MN_EVENT_RAPID, tip, position, c, z, surface);
+                    if (w->first_hit_only) {
+                        return;
+                    }
                 }
             }
         }
@@ -248,6 +260,9 @@ static void check_position(mn_walk_state* w, mn_v3 tip, int rapid)
                     return;
                 }
                 record_hit(w, MN_EVENT_HEAD, tip, position, c, z, underside);
+                if (w->first_hit_only) {
+                    return;
+                }
             }
         }
     }
@@ -382,63 +397,112 @@ static void band_row(void* context, int row, void* scratch)
     job->flags[row] = (uint8_t)w.probed;
 }
 
-int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const float* stock, const float* model, float floor, const mn_profile* profile, float cutter_radius,
-    float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, float* final_stock)
+struct mn_walker {
+    const mn_grid* g;
+    mn_profile profile;
+    mn_offset_rows offset_rows;
+    mn_offset_rows annulus_rows;
+    float sweep;
+    float head_spacing;
+    float cutter_length;
+    float tolerance;
+    int first_hit_only;
+    int workers;
+    mn_pool* pool;
+    float* backup;
+};
+
+void mn_walker_close(mn_walker* walker)
 {
-    int cells = mn_cells(g);
-    float* clone = (float*)mn_alloc((size_t)(cells > 0 ? cells : 1), sizeof(float));
-    if (clone == NULL) {
-        return mn_fail(MN_ERR_MEMORY, "Out of memory for the stock clone of the collision check.");
+    if (walker == NULL) {
+        return;
     }
-    memcpy(clone, stock, (size_t)cells * sizeof(float));
-    for (int k = 0; k < cells; k++) {
-        status[k] &= (uint8_t)~MN_CELL_COLLISION;
+    mn_pool_destroy(walker->pool);
+    free(walker->backup);
+    free(walker->offset_rows.first);
+    free(walker->annulus_rows.first);
+    free(walker);
+}
+
+int mn_walker_open(const mn_grid* g, const mn_profile* profile, float cutter_radius, float cutter_length, float tolerance, int first_hit_only, mn_walker** result)
+{
+    mn_walker* walker = (mn_walker*)calloc(1, sizeof(mn_walker));
+    if (walker == NULL) {
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for the collision check.");
     }
-    mn_offset_rows offset_rows = { 0, -1, NULL };
-    mn_offset_rows annulus_rows = { 0, -1, NULL };
-    int code = offset_rows_build(profile->offsets, profile->offset_count, &offset_rows);
+    walker->g = g;
+    walker->profile = *profile;
+    walker->offset_rows.max_dy = -1;
+    walker->annulus_rows.max_dy = -1;
+    int code = offset_rows_build(profile->offsets, profile->offset_count, &walker->offset_rows);
     if (code == MN_OK) {
-        code = offset_rows_build(profile->annulus, profile->annulus_count, &annulus_rows);
+        code = offset_rows_build(profile->annulus, profile->annulus_count, &walker->annulus_rows);
+    }
+    if (code != MN_OK) {
+        mn_walker_close(walker);
+        return code;
+    }
+    walker->sweep = g->cell_size / 2.0f;
+    /* RapidSampleSpacing: at least once per cutter radius, never coarser than a cell. */
+    walker->head_spacing = mn_max(g->cell_size, cutter_radius);
+    walker->cutter_length = cutter_length;
+    walker->tolerance = tolerance;
+    walker->first_hit_only = first_hit_only;
+    walker->workers = mn_mini(mn_worker_count(), g->height);
+    *result = walker;
+    return MN_OK;
+}
+
+/* Segments [first_segment, count) over `stock` in place; the pool and the backup are made on the first
+ * walk and kept. The band probing and the walking seconds go to the caller. */
+int mn_walker_run(mn_walker* walker, const mn_segment* segments, int first_segment, int count, float* stock, const float* model, float floor, uint8_t* status,
+    mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, double* probing_seconds, double* walking_seconds)
+{
+    const mn_grid* g = walker->g;
+    int cells = mn_cells(g);
+    int code = MN_OK;
+    if (walker->workers > 1 && walker->pool == NULL) {
+        if (walker->backup == NULL) {
+            walker->backup = (float*)mn_alloc((size_t)(cells > 0 ? cells : 1), sizeof(float));
+        }
+        code = walker->backup == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the collision check.") : mn_pool_create(walker->workers, NULL, &walker->pool);
     }
     mn_walk_state w;
     memset(&w, 0, sizeof(w));
     w.g = g;
-    w.stock = clone;
+    w.stock = stock;
     w.model = model;
     w.floor = floor;
-    w.profile = profile;
-    w.offset_rows = &offset_rows;
-    w.annulus_rows = &annulus_rows;
-    w.cutter_length = cutter_length;
-    w.tolerance = tolerance;
+    w.profile = &walker->profile;
+    w.offset_rows = &walker->offset_rows;
+    w.annulus_rows = &walker->annulus_rows;
+    w.cutter_length = walker->cutter_length;
+    w.tolerance = walker->tolerance;
     w.status = status;
     w.hits = hits;
     w.events = events;
     w.status_code = MN_OK;
     w.bands = 1;
+    w.first_hit_only = walker->first_hit_only;
 
-    float sweep = g->cell_size / 2.0f;
-    /* RapidSampleSpacing: at least once per cutter radius, never coarser than a cell. */
-    float head_spacing = mn_max(g->cell_size, cutter_radius);
-    int workers = mn_mini(mn_worker_count(), g->height);
-    mn_pool* pool = NULL;
+    float sweep = walker->sweep;
+    float head_spacing = walker->head_spacing;
+    int workers = walker->workers;
+    mn_pool* pool = walker->pool;
+    const mn_offset_rows* offset_rows = &walker->offset_rows;
     uint8_t flags[MN_MAX_WORKERS];
-    float* backup = workers > 1 ? (float*)mn_alloc((size_t)(cells > 0 ? cells : 1), sizeof(float)) : NULL;
-    if (code == MN_OK && workers > 1) {
-        code = backup == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the collision check.") : mn_pool_create(workers, NULL, &pool);
-    }
     check_job job;
     job.walk = &w;
     job.segments = segments;
     job.sweep = sweep;
     job.head_spacing = head_spacing;
     job.bands = workers;
-    job.backup = backup;
+    job.backup = walker->backup;
     job.flags = flags;
 
     double probing = 0.0;
     double walking = 0.0;
-    for (int first = 0; first < count && code == MN_OK && w.status_code == MN_OK;) {
+    for (int first = first_segment; first < count && code == MN_OK && w.status_code == MN_OK;) {
         if (mn_cancelled(monitor)) {
             code = mn_fail(MN_ERR_CANCELLED, "Cancelled.");
             break;
@@ -462,8 +526,8 @@ int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const
                 low = mn_min(low, mn_min(segments[k].start_y, segments[k].end_y));
                 high = mn_max(high, mn_max(segments[k].start_y, segments[k].end_y));
             }
-            job.row_first = mn_clampi(mn_cell_j(g, low) - mn_maxi(-offset_rows.min_dy, offset_rows.max_dy) - 1, 0, g->height - 1);
-            job.row_last = mn_clampi(mn_cell_j(g, high) + mn_maxi(-offset_rows.min_dy, offset_rows.max_dy) + 1, 0, g->height - 1);
+            job.row_first = mn_clampi(mn_cell_j(g, low) - mn_maxi(-offset_rows->min_dy, offset_rows->max_dy) - 1, 0, g->height - 1);
+            job.row_last = mn_clampi(mn_cell_j(g, high) + mn_maxi(-offset_rows->min_dy, offset_rows->max_dy) + 1, 0, g->height - 1);
             mn_pool_run(pool, 0, workers, backup_row, &job);
             mn_pool_run(pool, 0, workers, band_row, &job);
             hit = 0;
@@ -484,17 +548,38 @@ int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const
         mn_report(monitor, last, count, (float)last / (float)count);
         first = last;
     }
+    *probing_seconds = probing;
+    *walking_seconds = walking;
+    return code != MN_OK ? code : w.status_code;
+}
+
+int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const float* stock, const float* model, float floor, const mn_profile* profile, float cutter_radius,
+    float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, float* final_stock)
+{
+    int cells = mn_cells(g);
+    float* clone = (float*)mn_alloc((size_t)(cells > 0 ? cells : 1), sizeof(float));
+    if (clone == NULL) {
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for the stock clone of the collision check.");
+    }
+    memcpy(clone, stock, (size_t)cells * sizeof(float));
+    for (int k = 0; k < cells; k++) {
+        status[k] &= (uint8_t)~MN_CELL_COLLISION;
+    }
+    mn_walker* walker = NULL;
+    double probing = 0.0;
+    double walking = 0.0;
+    int code = mn_walker_open(g, profile, cutter_radius, cutter_length, tolerance, 0, &walker);
+    if (code == MN_OK) {
+        code = mn_walker_run(walker, segments, 0, count, clone, model, floor, status, hits, events, monitor, &probing, &walking);
+    }
     mn_time_add(MN_TIME_CHECK_BANDS, probing);
     mn_time_add(MN_TIME_CHECK_WALK, walking);
-    mn_pool_destroy(pool);
-    free(backup);
-    free(offset_rows.first);
-    free(annulus_rows.first);
+    mn_walker_close(walker);
     if (code == MN_OK && final_stock != NULL) {
         memcpy(final_stock, clone, (size_t)cells * sizeof(float));
     }
     free(clone);
-    return code != MN_OK ? code : w.status_code;
+    return code;
 }
 
 typedef struct intended_job {

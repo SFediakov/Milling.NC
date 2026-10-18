@@ -14,13 +14,18 @@ public sealed record SimulationSnapshot(
     bool Finished);
 
 // Owns engine, clock and collision detection for the loaded pipeline result. The engine cuts a
-// clone of the pipeline stock so the result stays intact; Stop swaps in a fresh clone.
+// clone of the pipeline stock so the result stays intact; Stop swaps in a fresh clone. Whole segments
+// (Run to end, seeks, layer jumps, the whole segments of a playback step) go over the CPU workers in a
+// native session that holds the footprint, the segments and the pool for the loaded result (T-207);
+// parts of a segment are sampled by the engine. Both find one event per segment and kind.
 public sealed class SimulationService
 {
     private readonly SimulationClock _clock = new();
     private readonly List<SimulationEvent> _pending = new();
+    private readonly List<SimulationEvent> _events = new();
+    private readonly HashSet<(int Segment, SimulationEventKind Kind)> _reported = new();
     private SimulationEngine? _engine;
-    private CollisionRecorder? _collisions;
+    private NativeSimulationSession? _session;
 
     public PipelineResult? Result { get; private set; }
 
@@ -47,17 +52,19 @@ public sealed class SimulationService
         set => _clock.SpeedFactor = value;
     }
 
-    public IReadOnlyList<SimulationEvent> Events => _collisions?.Events ?? Array.Empty<SimulationEvent>();
+    public IReadOnlyList<SimulationEvent> Events => _events;
+
+    // Seconds the last Run to end took (the whole-segment walk and the parts around it).
+    public double LastRunSeconds { get; private set; }
 
     public void Load(PipelineResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
+        Unload();
         Result = result;
-        _clock.Reset();
-        _collisions = new CollisionRecorder(result.Profile, result.Profile.Tool.CutterLength, result.Model, result.Floor);
-        ClearEvents();
         Stock = result.Stock.Map.Clone();
-        _engine = new SimulationEngine(result.Toolpath, Stock, result.Profile);
+        _session = new NativeSimulationSession(result.Toolpath, Stock, result.Profile, CollisionDetector.Tolerance);
+        _engine = new SimulationEngine(result.Toolpath, Stock, result.Profile) { Walker = Walk };
         _engine.Sampled += OnSample;
     }
 
@@ -65,8 +72,9 @@ public sealed class SimulationService
     {
         _clock.Reset();
         ClearEvents();
+        _session?.Dispose();
+        _session = null;
         _engine = null;
-        _collisions = null;
         Stock = null;
         Result = null;
     }
@@ -195,7 +203,9 @@ public sealed class SimulationService
     {
         var engine = Require();
         _clock.Pause();
+        var watch = System.Diagnostics.Stopwatch.StartNew();
         var result = engine.RunToEnd();
+        LastRunSeconds = watch.Elapsed.TotalSeconds;
         _clock.Seek(engine.ElapsedSeconds);
         return Snapshot(result);
     }
@@ -230,15 +240,36 @@ public sealed class SimulationService
 
     private void ClearEvents()
     {
-        _collisions?.Clear();
+        _events.Clear();
+        _reported.Clear();
         _pending.Clear();
     }
 
-    // One event per segment and kind keeps the list readable for a rapid crossing many cells.
+    private DirtyRect Walk(HeightMap stock, int first, int last)
+    {
+        var dirty = _session!.Walk(stock, Result!.Model, Result.Floor, first, last, out var found);
+        foreach (var e in found)
+        {
+            Add(e);
+        }
+
+        return dirty;
+    }
+
     private void OnSample(SimulationSample sample)
     {
-        if (_collisions!.Record(Stock!, sample) is { } found)
+        if (CollisionDetector.Check(Stock!, Result!.Profile, Result.Profile.Tool.CutterLength, sample.Tip, sample.Kind, sample.SegmentIndex) is { } found)
         {
+            Add(found);
+        }
+    }
+
+    // One event per segment and kind keeps the list readable for a rapid crossing many cells.
+    private void Add(SimulationEvent found)
+    {
+        if (_reported.Add((found.SegmentIndex, found.Kind)))
+        {
+            _events.Add(found);
             _pending.Add(found);
         }
     }

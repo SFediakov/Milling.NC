@@ -807,6 +807,14 @@ M30
   clipped to the grid as spans, a flat tip stamps one constant. The C# rules are
   kept as the reference in `NativeSimulationTests`; the heart at 0.4 mm cells
   runs `RunToEnd` in 8 ms against 133 ms with them (`out/simulation-timing.txt`).
+- Simulation session (T-207): whole segments (Run to end, seeks, layer jumps, the whole segments of a
+  playback step) go over the collision check's banded walk (`mn_walker`, the walk of `mn_check_path`)
+  on the CPU workers, in a session (`mn_sim_open`, `NativeSimulationSession`) that takes the footprint,
+  the annulus, the segments and the worker pool once per loaded result and the backup rows on the
+  first walk; the walk records one event per check position from its first entered cell, the
+  per-sample rule, so the stock and the events equal the per-sample engine's. Parts of a segment
+  (playback frames, a seek inside a segment) are sampled by the engine as before; the analysis keeps
+  the per-sample engine because it needs the contact of every entered cell.
 - Sampling (T-161): the engine stamps the sweep samples of the whole segment
   (`MaterialRemover.SweepSamples`, `mn_sweep_samples`: cell / 2 apart, both ends,
   numbered from the segment start) and raises `Sampled` at the positions of the
@@ -870,7 +878,7 @@ M30
   characters per line. A line holding `?`, `!`, `~`, 0x18 or any byte from 0x80 is refused with its
   number, because Grbl would execute that character as a realtime command.
 - Errors: `error:N` in a program holds the machine, waits for Hold:0 and resets (position kept,
-  spindle off); in check mode it resets out of check mode; in manual commands the remaining lines
+  spindle off); in manual commands the remaining lines
   are dropped. `ALARM:N` ends the job. Codes are shown with the Grbl v1.1 texts.
 - Stop: feed hold, then the soft reset once the status shows the machine at rest (Hold:0, Idle) or
   after 5 s. A line in flight stays in flight until the welcome line after the reset.
@@ -878,8 +886,14 @@ M30
   for 3 s is closed as well. The running job fails with the reason.
 - Commands: jog `$J=G91 G21 <axis><step> F<feed>`, zero `G10 L20 P0` (active work system, kept over
   a reset), go to `G90 G0 X0 Y0`, touch-plate probe `G21 G91 G38.2 Z-<travel> F<feed>`, then
-  `G10 L20 P0 Z<plate>`, `G0 Z<lift>`, `G90`, the outline as rapids round the program's XY bounds at
-  the current height, home `$H`, unlock `$X`, check mode `$C` around the program.
+  `G10 L20 P0 Z<plate>`, `G0 Z<lift>`, `G90`, home `$H`, unlock `$X` (outline and check mode were
+  removed in T-206).
+- Executing move (T-205): Grbl acknowledges a line once it is in its planner, up to about 15 moves
+  ahead of the tool, so the machine view and the listing take the move the tool is on from the
+  reported work position: among the segments from the one found last to the end of the acknowledged
+  lines, the earliest within 0.01 mm of the nearest (`ExecutionTracker`), never moving back during a
+  run. The next moves (View > Show Next Moves) are the 150 segments from there. Save progress still
+  counts acknowledged lines minus two.
 - Console while a program is paused (Hold or Door): the line goes out before the next program
   line, its answer is logged and never counted as program progress, an `error:N` does not fail the
   program. Grbl queues a move behind the moves already in its planner; `$` commands other than `$G`

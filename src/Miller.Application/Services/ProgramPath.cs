@@ -11,11 +11,13 @@ namespace Miller.Application.Services;
 public sealed class ProgramPath
 {
     private readonly int[] _segmentsAfterLine;
+    private readonly int[] _lineOfSegment;
 
-    private ProgramPath(IReadOnlyList<ToolpathSegment> segments, int[] segmentsAfterLine)
+    private ProgramPath(IReadOnlyList<ToolpathSegment> segments, int[] segmentsAfterLine, int[] lineOfSegment)
     {
         Segments = segments;
         _segmentsAfterLine = segmentsAfterLine;
+        _lineOfSegment = lineOfSegment;
     }
 
     public IReadOnlyList<ToolpathSegment> Segments { get; }
@@ -25,6 +27,7 @@ public sealed class ProgramPath
         ArgumentNullException.ThrowIfNull(program);
         var steps = GrblMotion.Walk(program);
         var segments = new List<ToolpathSegment>();
+        var lines = new List<int>();
         var after = new int[steps.Count];
         for (var k = 0; k < steps.Count; k++)
         {
@@ -37,17 +40,21 @@ public sealed class ProgramPath
                     : start.X == end.X && start.Y == end.Y && end.Z < start.Z ? MoveKind.Plunge
                     : MoveKind.Feed;
                 segments.Add(new ToolpathSegment(start, end, kind, (float)step.Feed));
+                lines.Add(k);
             }
 
             after[k] = segments.Count;
         }
 
-        return new ProgramPath(segments, after);
+        return new ProgramPath(segments, after, lines.ToArray());
     }
 
     // Segments behind the first `executedLines` program lines.
     public int SegmentsDone(int executedLines)
         => executedLines <= 0 || _segmentsAfterLine.Length == 0 ? 0 : _segmentsAfterLine[Math.Min(executedLines, _segmentsAfterLine.Length) - 1];
+
+    // The program line (index into GrblProgram.Lines) a segment comes from.
+    public int LineOf(int segment) => _lineOfSegment[segment];
 
     private static Vector3 Point(GrblPoint point) => new((float)point.X, (float)point.Y, (float)point.Z);
 }
