@@ -101,6 +101,14 @@
   unreached in 2 sweeps in both); the closing and the route floor give the CPU's bits.
 - The not-cut report (T-173) is part of the generation cluster: it compares the stock the check's walk
   leaves with the plan, inside the pass; `UncutReport` only formats it.
+- The program path view and the resume program (T-199, T-200) are not clusters of their own: `GrblMotion`
+  (the one modal G-code walk, also behind `GrblBounds`) and `GrblResume` live in the machine cluster's
+  `Grbl` folder, gated by `MachineService`; a separate cluster would need the modal walk twice.
+- Save progress deviates from the literal request where the literal file would mill wrongly: "executed" is
+  the lines Grbl acknowledged (accepted into its planner, which can run several moves ahead of the
+  tool), a resume line without a Z word gets its Z written in (else it runs at the retract height), and
+  an arc, G91, probe or G28/G30/G53 line at the resume point, an unknown position, or an executed G92,
+  G10 L20, G28.1 or G30.1 is refused with the line instead of written.
 - The slow zones (T-155, `mn_slow.c`) and the layer marks (T-154) are not clusters of their own:
   both are stages of the native generation between the simplifier and the statistics (user request:
   all generation in the C library), and the layer stepping is part of the simulation cluster

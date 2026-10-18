@@ -17,7 +17,8 @@ namespace Miller.App.ViewModels;
 // second from the application timer, directly from tests) copies its snapshot and the new console
 // entries into the properties and re-evaluates the commands, so the enable rules (nothing that moves
 // the machine while a job runs, a program only from Idle) follow the machine rather than the clicks.
-// Commands are in MachineViewModel.Commands.cs.
+// While the tab is open (IsViewActive) the viewport shows the loaded program's path and the cutter at
+// the machine, and Listing follows the run row by row. Commands are in MachineViewModel.Commands.cs.
 public sealed partial class MachineViewModel : ViewModelBase
 {
     public const int RefreshMs = 100;
@@ -149,6 +150,20 @@ public sealed partial class MachineViewModel : ViewModelBase
     [ObservableProperty]
     private string _consoleInput = string.Empty;
 
+    // The work coordinates the current position should read as (Set X, Set Y, Set Z, Set all).
+    [ObservableProperty]
+    private float _workValueX;
+
+    [ObservableProperty]
+    private float _workValueY;
+
+    [ObservableProperty]
+    private float _workValueZ;
+
+    // The machine tab is the selected tab.
+    [ObservableProperty]
+    private bool _isViewActive;
+
     public MachineViewModel(
         MachineService machine,
         SettingsService settings,
@@ -187,6 +202,11 @@ public sealed partial class MachineViewModel : ViewModelBase
     // A program run ended; the main window shows the text in its status bar.
     public event EventHandler<string>? StatusChanged;
 
+    // The listing window should open (or come to the front).
+    public event EventHandler? ListingRequested;
+
+    public ProgramListingViewModel Listing { get; } = new();
+
     public static IReadOnlyList<int> BaudRates => SerialLink.BaudRates;
 
     public ObservableCollection<string> ConsoleLines { get; } = new();
@@ -216,8 +236,10 @@ public sealed partial class MachineViewModel : ViewModelBase
         ShowConnection(snapshot);
         ShowJob(snapshot);
         ShowOnViewport(snapshot);
+        ShowMachineView(snapshot);
+        Listing.Show(_machine.Program?.Grbl, RunJobOf(_machine.Program));
         var key = (snapshot?.Link, snapshot?.Status.State, snapshot?.Status.SubState, snapshot?.IsJobActive, snapshot?.LineInFlight,
-            _machine.Program, _toolpath(), _connecting);
+            _machine.Program, _toolpath(), _connecting, _machine.RunProgram, _machine.RunJob is { IsActive: false });
         if (!Equals(key, _commandKey))
         {
             _commandKey = key;
@@ -367,6 +389,29 @@ public sealed partial class MachineViewModel : ViewModelBase
 
         _viewport.SetMachinePosition(index, new Vector3((float)work.X, (float)work.Y, (float)work.Z));
     }
+
+    // The loaded program's path with the part its latest run answered drawn as done; the cutter at the
+    // machine's work position, at 0, 0, 0 while that is unknown.
+    private void ShowMachineView(MachineSnapshot? snapshot)
+    {
+        if (!IsViewActive)
+        {
+            _viewport.HideMachineView();
+            return;
+        }
+
+        var program = _machine.Program;
+        var job = RunJobOf(program);
+        var work = snapshot is { IsReady: true } ? snapshot.Status.WorkPosition : Axes.Zero;
+        _viewport.ShowMachineView(program?.Path.Segments ?? Array.Empty<ToolpathSegment>(),
+            program is null || job is null ? 0 : program.Path.SegmentsDone(job.Acknowledged),
+            new Vector3((float)work.X, (float)work.Y, (float)work.Z));
+    }
+
+    private JobProgress? RunJobOf(MachineProgram? program)
+        => program is not null && ReferenceEquals(program, _machine.RunProgram) ? _machine.RunJob : null;
+
+    partial void OnIsViewActiveChanged(bool value) => ShowMachineView(Snapshot);
 
     private static string Format(double value) => value.ToString(PositionFormat, CultureInfo.InvariantCulture);
 

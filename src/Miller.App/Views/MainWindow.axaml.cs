@@ -6,6 +6,7 @@ namespace Miller.App.Views;
 public partial class MainWindow : Window
 {
     private MainWindowViewModel? _viewModel;
+    private ProgramListingWindow? _listing;
 
     public MainWindow()
     {
@@ -19,6 +20,7 @@ public partial class MainWindow : Window
         {
             _viewModel.ExitRequested -= OnExitRequested;
             _viewModel.AboutRequested -= OnAboutRequested;
+            _viewModel.Machine.ListingRequested -= OnListingRequested;
         }
 
         _viewModel = viewModel;
@@ -26,6 +28,7 @@ public partial class MainWindow : Window
         {
             _viewModel.ExitRequested += OnExitRequested;
             _viewModel.AboutRequested += OnAboutRequested;
+            _viewModel.Machine.ListingRequested += OnListingRequested;
         }
     }
 
@@ -35,6 +38,20 @@ public partial class MainWindow : Window
     {
         var about = new AboutWindow { DataContext = new AboutViewModel(_viewModel!.AppVersion) };
         await about.ShowDialog(this);
+    }
+
+    // One listing window at a time, owned by this window so it closes with it.
+    private void OnListingRequested(object? sender, EventArgs e)
+    {
+        if (_listing is not null)
+        {
+            _listing.Activate();
+            return;
+        }
+
+        _listing = new ProgramListingWindow { DataContext = _viewModel!.Machine.Listing };
+        _listing.Closed += (_, _) => _listing = null;
+        _listing.Show(this);
     }
 
     // The window size is user state, stored with the other preferences. ClientSize is the size

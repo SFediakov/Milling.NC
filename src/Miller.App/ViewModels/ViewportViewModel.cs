@@ -11,7 +11,9 @@ using Miller.Core.Toolpaths;
 namespace Miller.App.ViewModels;
 
 // What the viewport shows. Data is versioned so the renderer uploads only what changed; every
-// change raises RequestRender.
+// change raises RequestRender. The machine view (machine tab open) shows the machine program's path
+// and the cutter at the machine instead, with the model and the stock hidden; it has fields of its
+// own, so the generated toolpath, the simulation progress and the camera's last fit are kept.
 public sealed partial class ViewportViewModel : ViewModelBase
 {
     [ObservableProperty]
@@ -85,6 +87,51 @@ public sealed partial class ViewportViewModel : ViewModelBase
     public DirtyRect StockDirty { get; private set; } = DirtyRect.Empty;
 
     public bool FitPending { get; private set; }
+
+    public bool MachineView { get; private set; }
+
+    public IReadOnlyList<ToolpathSegment> MachinePath { get; private set; } = Array.Empty<ToolpathSegment>();
+
+    public int MachineProgressIndex { get; private set; }
+
+    public Vector3 MachineToolPosition { get; private set; }
+
+    // What the renderer draws in the current mode.
+    public IReadOnlyList<ToolpathSegment> DisplayedSegments
+        => MachineView ? MachinePath : Toolpath?.Segments ?? (IReadOnlyList<ToolpathSegment>)Array.Empty<ToolpathSegment>();
+
+    public int DisplayedProgressIndex => MachineView ? MachineProgressIndex : ToolpathProgressIndex;
+
+    public Vector3 DisplayedToolPosition => MachineView ? MachineToolPosition : ToolPosition;
+
+    public bool DisplayModel => ShowModel && !MachineView;
+
+    public bool DisplayStock => ShowStock && !MachineView;
+
+    // The machine view always has a cutter to show (at the machine, or at 0, 0, 0 while unknown).
+    public bool DisplayTool => ShowTool && (MachineView || MachineLive || Toolpath is { Count: > 0 });
+
+    // What a camera fit frames: the machine path in the machine view, else the models or the stock.
+    public BoundingBox? FitBounds
+    {
+        get
+        {
+            if (MachineView && MachinePath.Count > 0)
+            {
+                var bounds = BoundingBox.Empty;
+                foreach (var segment in MachinePath)
+                {
+                    bounds = bounds.Include(segment.Start).Include(segment.End);
+                }
+
+                return bounds;
+            }
+
+            return Meshes.Count > 0 ? MeshBounds : StockBounds;
+        }
+    }
+
+    private IReadOnlyList<ToolpathSegment>? _fittedMachinePath;
 
     // Placed bounds of every model the viewport shows, in machine space; the selection indexes it.
     public IReadOnlyList<BoundingBox> ModelBounds { get; private set; } = Array.Empty<BoundingBox>();
@@ -175,7 +222,7 @@ public sealed partial class ViewportViewModel : ViewModelBase
     {
         var best = -1;
         var bestDistance = float.MaxValue;
-        if (!ShowModel)
+        if (!DisplayModel)
         {
             return (best, bestDistance);
         }
@@ -314,6 +361,45 @@ public sealed partial class ViewportViewModel : ViewModelBase
 
         MachineLive = true;
         SetToolProgress(progressIndex, toolPosition);
+    }
+
+    // A path not shown before is framed once; showing the same path again keeps the camera.
+    public void ShowMachineView(IReadOnlyList<ToolpathSegment> path, int progressIndex, Vector3 toolPosition)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        var pathChanged = !MachineView || !ReferenceEquals(path, MachinePath);
+        if (!pathChanged && progressIndex == MachineProgressIndex && toolPosition == MachineToolPosition)
+        {
+            return;
+        }
+
+        if (pathChanged)
+        {
+            MachineView = true;
+            MachinePath = path;
+            ToolpathVersion++;
+            if (path.Count > 0 && !ReferenceEquals(path, _fittedMachinePath))
+            {
+                _fittedMachinePath = path;
+                FitPending = true;
+            }
+        }
+
+        MachineProgressIndex = progressIndex;
+        MachineToolPosition = toolPosition;
+        Invalidate();
+    }
+
+    public void HideMachineView()
+    {
+        if (!MachineView)
+        {
+            return;
+        }
+
+        MachineView = false;
+        ToolpathVersion++;
+        Invalidate();
     }
 
     public void ClearMachine()

@@ -13,6 +13,8 @@ public sealed partial class MachineViewModel
     public const string ChoosePortMessage = "Choose or type a serial port.";
     public const string EnterHostMessage = "Enter the host name or address of the controller.";
     public const string NetworkPortMessage = "The network port must be a whole number from 1 to 65535.";
+    public const string SaveProgressTitle = "Save progress as";
+    public const string ResumeSuffix = "_resume";
     public static readonly IReadOnlyList<string> NcExtensions = new[] { "nc", "gcode", "ngc", "tap", "txt" };
 
     private bool CanConnect => !IsConnected && !_connecting;
@@ -39,13 +41,15 @@ public sealed partial class MachineViewModel
 
     private bool CanRunIdle => CanRunNow && State == GrblStatus.Idle;
 
+    private bool CanSaveProgress => _machine.RunJob is { IsActive: false };
+
     private void NotifyCommands()
     {
         foreach (var command in new IRelayCommand[]
         {
             ConnectCommand, DisconnectCommand, UseToolpathCommand, OpenFileCommand, CheckCommand, StartCommand, OutlineCommand,
             PauseCommand, ResumeCommand, StopCommand, ResetCommand, HomeCommand, UnlockCommand, JogCommand, CancelJogCommand,
-            ZeroCommand, GoToZeroCommand, ProbeCommand, OverrideCommand, SendCommand,
+            ZeroCommand, GoToZeroCommand, ProbeCommand, OverrideCommand, SendCommand, SetWorkCommand, ReadWorkCommand, SaveProgressCommand,
         })
         {
             command.NotifyCanExecuteChanged();
@@ -209,6 +213,49 @@ public sealed partial class MachineViewModel
 
     [RelayCommand(CanExecute = nameof(CanRunIdle))]
     private void GoToZero() => Try(_machine.GoToXyZero);
+
+    // "X", "Y", "Z" or "XYZ": the current position reads as the work coordinate fields.
+    [RelayCommand(CanExecute = nameof(CanRunIdle))]
+    private void SetWork(string axes)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(axes);
+        Try(() => _machine.SetWork(
+            axes.Contains('X', StringComparison.Ordinal) ? WorkValueX : null,
+            axes.Contains('Y', StringComparison.Ordinal) ? WorkValueY : null,
+            axes.Contains('Z', StringComparison.Ordinal) ? WorkValueZ : null));
+    }
+
+    // Copies the current work position into the work coordinate fields.
+    [RelayCommand(CanExecute = nameof(IsReady))]
+    private void ReadWork()
+    {
+        var work = Snapshot!.Status.WorkPosition;
+        WorkValueX = (float)work.X;
+        WorkValueY = (float)work.Y;
+        WorkValueZ = (float)work.Z;
+    }
+
+    [RelayCommand]
+    private void ShowListing() => ListingRequested?.Invoke(this, EventArgs.Empty);
+
+    // The interrupted run as a new program (MachineService.SaveProgress); the program file stays.
+    [RelayCommand(CanExecute = nameof(CanSaveProgress))]
+    private async Task SaveProgressAsync()
+    {
+        var program = _machine.RunProgram!;
+        var name = Path.GetFileNameWithoutExtension(program.Grbl.Name) + ResumeSuffix + "." + NcExtensions[0];
+        var path = await _dialogs.SaveFileAsync(SaveProgressTitle, name, NcExtensions, _settings.LastExportDirectory);
+        if (path is null)
+        {
+            return;
+        }
+
+        Try(() =>
+        {
+            _machine.SaveProgress(path);
+            StatusChanged?.Invoke(this, $"Progress saved to {path}");
+        });
+    }
 
     [RelayCommand(CanExecute = nameof(CanRunIdle))]
     private void Probe()

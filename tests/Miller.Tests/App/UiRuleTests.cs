@@ -14,7 +14,7 @@ public sealed partial class UiRuleTests
 
     private static readonly string[] ExemptFromTextRule = { "AboutWindow.axaml" };
 
-    [GeneratedRegex(@"<TextBlock\b[^>]*\bText=""(?<text>[^""{}]*)""[^>]*/?>")]
+    [GeneratedRegex(@"<(?:Selectable)?TextBlock\b[^>]*\bText=""(?<text>[^""{}]*)""[^>]*/?>")]
     private static partial Regex StaticTextBlock();
 
     [GeneratedRegex(@"Classes=""(?<classes>[^""]*)""")]

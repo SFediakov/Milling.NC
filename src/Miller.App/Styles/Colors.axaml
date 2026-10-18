@@ -27,6 +27,8 @@
   <Color x:Key="AxisXColor">#FFE5484D</Color>
   <Color x:Key="AxisYColor">#FF3DDC84</Color>
   <Color x:Key="AxisZColor">#FF3D8BFD</Color>
+  <Color x:Key="ListingExecutedColor">#FF243A2E</Color>
+  <Color x:Key="ListingExecutingColor">#FF1F4E8C</Color>
 
   <SolidColorBrush x:Key="WindowBackgroundBrush" Color="{StaticResource WindowBackgroundColor}" />
   <SolidColorBrush x:Key="PanelBackgroundBrush" Color="{StaticResource PanelBackgroundColor}" />
@@ -53,4 +55,6 @@
   <SolidColorBrush x:Key="AxisXBrush" Color="{StaticResource AxisXColor}" />
   <SolidColorBrush x:Key="AxisYBrush" Color="{StaticResource AxisYColor}" />
   <SolidColorBrush x:Key="AxisZBrush" Color="{StaticResource AxisZColor}" />
+  <SolidColorBrush x:Key="ListingExecutedBrush" Color="{StaticResource ListingExecutedColor}" />
+  <SolidColorBrush x:Key="ListingExecutingBrush" Color="{StaticResource ListingExecutingColor}" />
 </ResourceDictionary>

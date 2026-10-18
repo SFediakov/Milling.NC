@@ -28,9 +28,9 @@ public sealed class ToolpathRenderer : IDisposable
 
     public int SegmentCount { get; private set; }
 
-    public void Upload(Toolpath? toolpath)
+    public void Upload(IReadOnlyList<ToolpathSegment> segments)
     {
-        var (bright, dim) = Build(toolpath, _colors, _background);
+        var (bright, dim) = BuildSegments(segments, _colors, _background);
         SegmentCount = bright.Length / (2 * FloatsPerVertex);
         _bright.Upload(bright, bright.Length, GlConsts.GL_STATIC_DRAW);
         _dim.Upload(dim, dim.Length, GlConsts.GL_STATIC_DRAW);
@@ -49,18 +49,22 @@ public sealed class ToolpathRenderer : IDisposable
         _dim.Dispose();
     }
 
-    // Two vertices per segment: position and color, bright and dimmed variants.
     public static (float[] Bright, float[] Dim) Build(Toolpath? toolpath, IReadOnlyDictionary<MoveKind, Vector4> colors, Vector4 background)
+        => BuildSegments(toolpath?.Segments ?? Array.Empty<ToolpathSegment>(), colors, background);
+
+    // Two vertices per segment: position and color, bright and dimmed variants.
+    public static (float[] Bright, float[] Dim) BuildSegments(IReadOnlyList<ToolpathSegment> segments, IReadOnlyDictionary<MoveKind, Vector4> colors, Vector4 background)
     {
-        if (toolpath is null || toolpath.Count == 0)
+        ArgumentNullException.ThrowIfNull(segments);
+        if (segments.Count == 0)
         {
             return (Array.Empty<float>(), Array.Empty<float>());
         }
 
-        var bright = new float[toolpath.Count * 2 * FloatsPerVertex];
+        var bright = new float[segments.Count * 2 * FloatsPerVertex];
         var dim = new float[bright.Length];
         var k = 0;
-        foreach (var s in toolpath.Segments)
+        foreach (var s in segments)
         {
             var color = colors[s.Kind];
             var dimmed = Dim(color, background);

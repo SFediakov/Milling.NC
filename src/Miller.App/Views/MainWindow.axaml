@@ -70,7 +70,7 @@
       <TabItem Header="Analysis" Name="AnalysisTab">
         <views:AnalysisView DataContext="{Binding Analysis}" />
       </TabItem>
-      <TabItem Header="Machine" Name="MachineTab">
+      <TabItem Header="Machine" Name="MachineTab" IsSelected="{Binding Machine.IsViewActive, Mode=OneWayToSource}">
         <views:MachineView DataContext="{Binding Machine}" />
       </TabItem>
     </TabControl>

@@ -48,6 +48,7 @@ public sealed class MachineController : IDisposable
     private string? _error;
     private GrblStatus _status = GrblStatus.Unknown;
     private MachineJob? _job;
+    private JobProgress? _lastProgram;
     private JobState _jobState;
     private int _sent;
     private int _acknowledged;
@@ -563,7 +564,12 @@ public sealed class MachineController : IDisposable
         JobProgress? job = _job is null
             ? null
             : new JobProgress(_job.Kind, _job.Name, _jobState, _job.Count, _sent, _acknowledged, _sourceLine, _jobStart, _jobEnd, _jobMessage);
-        var next = new MachineSnapshot(_linkState, _link.Name, _version, _status, job, _outstanding >= 0 || _awaitingBanner, _error);
+        if (job is { Kind: MachineJobKind.Program })
+        {
+            _lastProgram = job;
+        }
+
+        var next = new MachineSnapshot(_linkState, _link.Name, _version, _status, job, _outstanding >= 0 || _awaitingBanner, _error, _lastProgram);
         if (!next.Equals(_snapshot))
         {
             Volatile.Write(ref _snapshot, next);

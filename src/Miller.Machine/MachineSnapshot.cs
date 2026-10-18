@@ -44,7 +44,8 @@ public sealed record JobProgress(
         : System.Diagnostics.Stopwatch.GetElapsedTime(StartTimestamp);
 }
 
-// What the controller thread knows at one moment; immutable, replaced as a whole.
+// What the controller thread knows at one moment; immutable, replaced as a whole. LastProgram is the
+// progress of the latest program job, kept while later commands (jog, zero) replace Job.
 public sealed record MachineSnapshot(
     LinkState Link,
     string LinkName,
@@ -52,7 +53,8 @@ public sealed record MachineSnapshot(
     GrblStatus Status,
     JobProgress? Job,
     bool LineInFlight,
-    string? Error)
+    string? Error,
+    JobProgress? LastProgram = null)
 {
     public bool IsReady => Link == LinkState.Ready;
 

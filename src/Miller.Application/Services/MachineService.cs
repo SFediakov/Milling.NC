@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using Miller.Core.GCode;
 using Miller.Core.Setup;
@@ -18,10 +19,12 @@ public sealed record MachineConnectionSettings(MachineConnectionKind Kind, strin
 
 // A program ready for the machine. SegmentsAfterLine maps the answered lines of a program made from
 // the generated toolpath to the toolpath segments behind them, so the viewport can show the
-// progress; it is null for a file from disk.
+// progress; it is null for a file from disk. Path is the program's own moves for the machine view.
 public sealed record MachineProgram(GrblProgram Grbl, string Source, IReadOnlyList<int>? SegmentsAfterLine, GrblBounds? Bounds)
 {
     public bool FromToolpath => SegmentsAfterLine is not null;
+
+    public ProgramPath Path { get; } = ProgramPath.Of(Grbl);
 
     // Segments behind the first `acknowledged` lines of the job (the job adds G4 P0 at the end).
     public int SegmentsDone(int acknowledged)
@@ -38,10 +41,15 @@ public sealed class MachineService : IDisposable
     public const string GeneratedProgramName = "Generated toolpath";
     public const string NoProgramMessage = "No program is loaded.";
     public const string NoOutlineMessage = "The program has no XY moves to outline.";
+    public const string NoRunMessage = "No program has run on the machine yet.";
+    public const string RunActiveMessage = "The program is still running; stop it before saving its progress.";
+    public const string SameFileMessage = "Choose a new file; the program file itself stays as it is.";
 
     private readonly Func<MachineConnectionSettings, IMachineLink> _openLink;
     private readonly MachineTiming _timing;
     private MachineController? _controller;
+    private long _runStart;
+    private JobProgress? _keptRun;
 
     public MachineService()
         : this(OpenLink, MachineTiming.Default)
@@ -57,6 +65,12 @@ public sealed class MachineService : IDisposable
     public MachineLog Log { get; } = new();
 
     public MachineProgram? Program { get; private set; }
+
+    // The program of the latest Start, which may differ from Program once another one is loaded.
+    public MachineProgram? RunProgram { get; private set; }
+
+    // The progress of RunProgram's job, also after later commands and after a reconnection.
+    public JobProgress? RunJob => Matching(_controller?.Snapshot.LastProgram) ?? _keptRun;
 
     // Null before the first connection.
     public MachineSnapshot? Snapshot => _controller?.Snapshot;
@@ -82,6 +96,7 @@ public sealed class MachineService : IDisposable
             throw new InvalidOperationException("The machine is already connected.");
         }
 
+        _keptRun = Matching(_controller?.Snapshot.LastProgram) ?? _keptRun;
         _controller?.Dispose();
         _controller = null;
         var link = await Task.Run(() => _openLink(settings));
@@ -121,7 +136,36 @@ public sealed class MachineService : IDisposable
 
     public void ClearProgram() => Program = null;
 
-    public void StartProgram() => Controller.Run(MachineJob.Program(RequireProgram().Grbl));
+    // The job takes its start time on the controller thread, after the one taken here.
+    public void StartProgram()
+    {
+        var program = RequireProgram();
+        var start = Stopwatch.GetTimestamp();
+        Controller.Run(MachineJob.Program(program.Grbl));
+        RunProgram = program;
+        _runStart = start;
+        _keptRun = null;
+    }
+
+    // Writes the program that finishes the interrupted run (GrblResume) to a new file.
+    public void SaveProgress(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        var program = RunProgram ?? throw new InvalidOperationException(NoRunMessage);
+        var job = RunJob ?? throw new InvalidOperationException(NoRunMessage);
+        if (job.IsActive)
+        {
+            throw new InvalidOperationException(RunActiveMessage);
+        }
+
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!program.FromToolpath && string.Equals(System.IO.Path.GetFullPath(path), System.IO.Path.GetFullPath(program.Source), comparison))
+        {
+            throw new InvalidOperationException(SameFileMessage);
+        }
+
+        File.WriteAllText(path, GrblResume.Build(program.Grbl, Math.Min(job.Acknowledged, program.Grbl.Count)));
+    }
 
     public void CheckProgram() => Controller.Run(MachineJob.Check(RequireProgram().Grbl));
 
@@ -151,6 +195,8 @@ public sealed class MachineService : IDisposable
     public void CancelJog() => Controller.Realtime(GrblRealtime.JogCancel);
 
     public void Zero(bool x, bool y, bool z) => Controller.Run(MachineJob.Commands("Zero", GrblCommands.Zero(x, y, z)));
+
+    public void SetWork(double? x, double? y, double? z) => Controller.Run(MachineJob.Commands("Set work", GrblCommands.SetWork(x, y, z)));
 
     public void GoToXyZero() => Controller.Run(MachineJob.Commands("Go to zero", GrblCommands.GoToXyZero));
 
@@ -183,6 +229,8 @@ public sealed class MachineService : IDisposable
         => _controller is { Snapshot.Link: LinkState.Ready } controller ? controller : throw new InvalidOperationException(MachineController.NotConnectedMessage);
 
     private MachineProgram RequireProgram() => Program ?? throw new InvalidOperationException(NoProgramMessage);
+
+    private JobProgress? Matching(JobProgress? job) => RunProgram is not null && job is not null && job.StartTimestamp >= _runStart ? job : null;
 
     // The post-processor writes one motion line per toolpath segment, after the moves that bring the
     // tool to the start; those lead-in moves are the motion lines beyond the segment count.
