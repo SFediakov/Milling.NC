@@ -432,6 +432,15 @@ Uncuttable classification (`UncuttableRegions`):
   whatever the visiting order; a wider stepover relies on the straight strips
   between consecutive nodes. "3 axis freedom" adds every cell where the level
   map `max(tip, level)` steps by more than `Tolerance` to a neighbour.
+  The Z layer's caves (T-210) take the lattice as rows at the stepover with a
+  node every `mn_lattice_column_step` cells along a row (the largest step whose
+  footprints alone cover the cells between two rows; the square lattice up to
+  r x sqrt(2)), and keep a lattice node only where its whole footprint lies in
+  the region (at least r from every wall): nearer nodes cut what the outline
+  nodes cut and made the route leave the wall pass for a detour, and a wider
+  stepover filled every lattice square with a gap node the route zigzagged
+  through (the user's heart at stepover 1.1 with a 1.2 mm cutter: 5,474 gap
+  nodes). The far block and One run keep the square lattice with every node.
 - Route (`Miller.Solver`): the cost of a move is `XY / 3 + Z` (XY moves three
   times faster than Z), the Z part being the vertical travel of the surface
   polyline between the two nodes (`SurfacePath`: every cell-edge crossing lifted
@@ -442,9 +451,11 @@ Uncuttable classification (`UncuttableRegions`):
   step together with the cheapest step after it, fine included, and the sweeps
   along X and along Y, which run the nodes grid row by grid row (or column by
   column) end to end and turn only between lines (T-153). It
-  improves with 2-opt and Or-opt until nothing improves or the program's budget
-  of 40,000,000 evaluated candidate moves (`RouteBudget.MaxEvaluations`, shared
-  in proportion to node counts) is spent; the fine of every move is exact.
+  improves with 2-opt and Or-opt until nothing improves or its allowance of
+  1,000 evaluated candidate moves per node (`MN_EVALUATIONS_PER_NODE`, T-211;
+  the former program budget of 40,000,000 stopped 268 of the 320 routes of the
+  user's heart, where convergence takes 73 per node) is spent; the fine of
+  every move is exact.
   Going around an obstacle is not a separate search: the tour through the
   intermediate nodes is the way around, and the cost of a move over an
   obstacle is its climb.

@@ -55,7 +55,14 @@ int mn_lattice(const uint8_t* inside, int width, int height, int step, mn_ints* 
 
 int mn_lattice_in(const uint8_t* inside, int width, int height, int step, mn_box box, mn_ints* nodes)
 {
-    if (step < 1) {
+    return mn_lattice_rows_in(inside, width, height, step, step, box, nodes);
+}
+
+/* The region's cells on rows `row_step` cells apart with a node every `column_step` cells along a row,
+ * plus its outline cells, in row-major order; the square lattice has both steps equal. */
+int mn_lattice_rows_in(const uint8_t* inside, int width, int height, int row_step, int column_step, mn_box box, mn_ints* nodes)
+{
+    if (row_step < 1 || column_step < 1) {
         return mn_fail(MN_ERR_OUT_OF_RANGE, "Lattice step must be at least one cell.");
     }
     for (int j = box.j0; j <= box.j1; j++) {
@@ -63,13 +70,45 @@ int mn_lattice_in(const uint8_t* inside, int width, int height, int step, mn_box
             if (!inside[j * width + i]) {
                 continue;
             }
-            if ((on_lattice(i, width, step) && on_lattice(j, height, step)) || mn_outline(inside, width, height, i, j)) {
+            if ((on_lattice(i, width, column_step) && on_lattice(j, height, row_step)) || mn_outline(inside, width, height, i, j)) {
                 MN_CHECK(mn_ints_push(nodes, j * width + i));
             }
         }
     }
     return MN_OK;
 }
+
+/* Whether nodes on rows `a` cells apart, `b` cells apart along a row, reach every cell between them:
+ * the cell farthest from the four nodes of a rectangle, by the footprint's rule (mn_profile_build). */
+static int rows_covered(int a, int b, float radius, float cell_size)
+{
+    for (int y = 0; y <= a; y++) {
+        for (int x = 0; x <= b; x++) {
+            int dx = mn_mini(x, b - x);
+            int dy = mn_mini(y, a - y);
+            if (cell_size * sqrtf((float)(dx * dx + dy * dy)) > radius + MN_RADIUS_TOLERANCE) {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+/* The node step along a row (T-210): the largest step up to the row step whose node footprints alone
+ * cover the cells between two rows. A square lattice up to r * sqrt(2) apart covers and keeps its
+ * step; wider rows get their nodes closer along the row, so no cell between the rows waits for a gap
+ * node off the row and a route runs straight along the rows, turning at their ends. */
+int mn_lattice_column_step(int row_step, float cutter_radius, float cell_size)
+{
+    for (int b = row_step; b > 1; b--) {
+        if (rows_covered(row_step, b, cutter_radius, cell_size)) {
+            return b;
+        }
+    }
+    return 1;
+}
+
+MN_API int32_t mn_column_step(int32_t row_step, float cutter_radius, float cell_size) { return mn_lattice_column_step(row_step, cutter_radius, cell_size); }
 
 MN_API int32_t mn_lattice_nodes(const uint8_t* inside, int32_t width, int32_t height, int32_t step, int32_t** nodes, int32_t* count)
 {
@@ -1162,6 +1201,7 @@ typedef struct mn_z_state {
     int pass;
     int pass_count;
     int step;
+    int column_step;
 } mn_z_state;
 
 /* One step of the far block: its plan level, the far positions cut to it in one step, their nodes
@@ -1263,24 +1303,58 @@ static int far_cells_of(const mn_context* context, const uint8_t* mask, float le
     return status;
 }
 
-/* The nodes of a region: the lattice at the stepover plus every cell no footprint covers. The region
- * (`inside`) lies in `box` and `inside` is zero around it. */
-static int region_nodes(mn_z_state* s, const uint8_t* inside, mn_box box, mn_ints* nodes)
+/* Whether the whole footprint of a position lies in the region: the position stands at least the
+ * cutter radius from every wall. */
+static int footprint_inside(const uint8_t* inside, const mn_grid* g, const mn_profile* profile, int cell)
+{
+    int ci = cell % g->width;
+    int cj = cell / g->width;
+    for (int o = 0; o < profile->offset_count; o++) {
+        int i = ci + profile->offsets[o].dx;
+        int j = cj + profile->offsets[o].dy;
+        if (!mn_in_bounds(g, i, j) || !inside[j * g->width + i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* The nodes of a region: its outline cells, which trace the walls, the lattice at the stepover and every
+ * cell no footprint covers. A cave's routes (`rows`, T-210) take the lattice as rows
+ * (mn_lattice_column_step) and only where a node stands at least the cutter radius from every wall: a
+ * nearer node cuts what the outline nodes cut and was the reason of a detour out to it and back from the
+ * wall pass, and a band no wider than the cutter keeps its wall passes only. The far block keeps the
+ * square lattice, whose positions its step rules were measured with (T-157, T-162), and so does One
+ * run, whose guard orders nodes by precedence pairs that turned cyclic on the row nodes of two
+ * fixtures (the known weakness of its pairs, src/CLAUDE.md). The region (`inside`) lies in `box` and
+ * `inside` is zero around it. */
+static int region_nodes(mn_z_state* s, const uint8_t* inside, mn_box box, int rows, mn_ints* nodes)
 {
     const mn_grid* g = &s->context->grid;
-    MN_CHECK(mn_lattice_in(inside, g->width, g->height, s->step, box, nodes));
+    int first = nodes->count;
+    MN_CHECK(mn_lattice_rows_in(inside, g->width, g->height, s->step, rows ? s->column_step : s->step, box, nodes));
+    if (rows) {
+        int kept = first;
+        for (int n = first; n < nodes->count; n++) {
+            int c = nodes->items[n];
+            if (mn_outline(inside, g->width, g->height, c % g->width, c / g->width) || footprint_inside(inside, g, s->profile, c)) {
+                nodes->items[kept++] = c;
+            }
+        }
+        nodes->count = kept;
+    }
     return cover_gaps(inside, g, s->profile, box, nodes, s->covered);
 }
 
 /* The nodes of the listed cells: marked in s->inside, which is zero outside a marking and zero again
  * afterwards (T-185), so the lattice reads the box of the cells only. */
-static int list_nodes(mn_z_state* s, const int* cells, int count, mn_ints* nodes)
+static int list_nodes(mn_z_state* s, const int* cells, int count, int rows, mn_ints* nodes)
 {
     const mn_grid* g = &s->context->grid;
     for (int m = 0; m < count; m++) {
         s->inside[cells[m]] = 1;
     }
-    int status = region_nodes(s, s->inside, mn_box_of_cells(g, cells, count), nodes);
+    int status = region_nodes(s, s->inside, mn_box_of_cells(g, cells, count), rows, nodes);
     for (int m = 0; m < count; m++) {
         s->inside[cells[m]] = 0;
     }
@@ -1429,7 +1503,7 @@ static int far_steps_of(mn_z_state* s, mn_z_group* group, const mn_ints* far, co
         if (step->cells.count == 0) {
             continue;
         }
-        status = list_nodes(s, step->cells.items, step->cells.count, &step->nodes);
+        status = list_nodes(s, step->cells.items, step->cells.count, 0, &step->nodes);
         if (status != MN_OK) {
             break;
         }
@@ -1613,7 +1687,7 @@ static int z_group_prepare(mn_z_state* s, int first, int last, int own_plan, con
     }
     for (int c = 0; c < caves; c++) {
         const mn_cave* cave = &group->tree.caves[c];
-        MN_CHECK(list_nodes(s, group->tree.cells.items + cave->cells_first, cave->cells_count, &group->nodes[c]));
+        MN_CHECK(list_nodes(s, group->tree.cells.items + cave->cells_first, cave->cells_count, s->context->collision_mode != MN_COLLISION_ONE_RUN, &group->nodes[c]));
         count_pass(s, &group->nodes[c], max_nodes);
         if (context->should_cut != NULL) {
             const int* cave_cells = group->tree.cells.items + cave->cells_first;
@@ -2657,7 +2731,7 @@ static int z_layer_route(const mn_context* context, const mn_monitor* monitor, i
     s.monitor = monitor;
     s.guard = &guard;
     s.step = mn_lattice_step(context->parameters.stepover, g->cell_size);
-    s.budget.total = MN_BUDGET_MAX_EVALUATIONS;
+    s.column_step = mn_lattice_column_step(s.step, context->tool.cutter_diameter / 2.0f, g->cell_size);
     mn_profile profile = { 0 };
     s.profile = &profile;
     mn_z_group* groups = NULL;
@@ -2722,6 +2796,7 @@ static int z_layer_route(const mn_context* context, const mn_monitor* monitor, i
     }
 
     s.total = s.nodes_left;
+    s.budget.total = s.total * MN_EVALUATIONS_PER_NODE;
     float* model_distance = NULL;
     status = model_distance_of(&s, &model_distance);
     if (status == MN_OK) {
@@ -2966,7 +3041,7 @@ int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, 
             status = mn_fail(MN_ERR_MEMORY, "Out of memory for the 3 axis strategy.");
             goto done;
         }
-        mn_budget budget = { MN_BUDGET_MAX_EVALUATIONS, 0 };
+        mn_budget budget = { nodes_left * MN_EVALUATIONS_PER_NODE, 0 };
         int64_t total = nodes_left;
         int pass_count = 0;
         for (int l = 0; l < levels; l++) {

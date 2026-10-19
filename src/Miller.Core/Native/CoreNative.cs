@@ -245,6 +245,7 @@ internal static unsafe class CoreNative
 
     [DllImport(Library)] public static extern int mn_step_cells(float spacing, float cellSize);
     [DllImport(Library)] public static extern int mn_on_lattice(int index, int count, int step);
+    [DllImport(Library)] public static extern int mn_column_step(int rowStep, float cutterRadius, float cellSize);
     [DllImport(Library)] public static extern int mn_lattice_nodes(byte* inside, int width, int height, int step, int** nodes, int* count);
     [DllImport(Library)] public static extern int mn_is_outline(byte* inside, int width, int height, int i, int j);
 

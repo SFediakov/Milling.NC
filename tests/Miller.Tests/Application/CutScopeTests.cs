@@ -254,7 +254,10 @@ public sealed class CutScopeTests
     }
 
     [Fact]
-    public void HeartFixture_SeparationHasNoCollisionsAndLessFeed()
+    // T-210 changed the measure from the feed length to the material removed: the row nodes away from the
+    // walls shortened Everything's feed (3,214 to 2,531 mm) more than Separation's (3,005 to 2,840 mm), so
+    // the feed no longer orders the scopes, while Separation still leaves the stock around the cut standing.
+    public void HeartFixture_SeparationHasNoCollisionsAndRemovesLessMaterial()
     {
         var project = MillingProject.Default();
         project.Stock.SizeX = 30;
@@ -265,7 +268,7 @@ public sealed class CutScopeTests
         var import = new MeshImportService();
         import.Import(TestMeshes.FixturePath());
 
-        var results = new Dictionary<CutScope, PipelineResult>();
+        var remaining = new Dictionary<CutScope, double>();
         foreach (var scope in new[] { CutScope.Everything, CutScope.Separation })
         {
             project.CutScope = scope;
@@ -275,10 +278,10 @@ public sealed class CutScopeTests
             simulation.Load(result);
             simulation.RunToEnd();
             Assert.Empty(simulation.Events);
-            results[scope] = result;
+            remaining[scope] = simulation.Stock!.Z.Where(z => !float.IsNaN(z)).Sum(z => (double)z);
         }
 
-        Assert.True(results[CutScope.Separation].Statistics.FeedLength < results[CutScope.Everything].Statistics.FeedLength);
+        Assert.True(remaining[CutScope.Separation] > remaining[CutScope.Everything]);
     }
 
     [Fact]

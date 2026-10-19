@@ -118,6 +118,13 @@
   attached (the simulation tab) and sample by sample otherwise (parts of a segment, the analysis, which
   needs the contact of every entered cell): two implementations of one rule, kept equal by
   `SimulationSessionTests` (stock bits and events) as T-161 kept the generation check and the engine equal.
+- The Z layer has two node rules since T-210 (an intended dual path): its caves take rows and drop lattice nodes
+  nearer than the cutter radius to a wall, while the far block and One run keep the square lattice with every
+  node. The far block's step rules (T-157, T-162) were measured with the square positions and left material above
+  the flutes on the tall wall fixture with rows; One run's precedence pairs turned cyclic on two fixtures.
+  `HeartFixture_SeparationHasNoCollisionsAndRemovesLessMaterial` compares removed material instead of feed
+  length: the rows shortened Everything's feed more than Separation's. The heart golden was regenerated (feed
+  3,052 to 2,363 mm, 10.8 to 9.5 min).
 - The slow zones (T-155, `mn_slow.c`) and the layer marks (T-154) are not clusters of their own:
   both are stages of the native generation between the simplifier and the statistics (user request:
   all generation in the C library), and the layer stepping is part of the simulation cluster

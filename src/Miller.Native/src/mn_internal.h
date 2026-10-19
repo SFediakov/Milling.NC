@@ -134,6 +134,8 @@ int mn_lattice(const uint8_t* inside, int width, int height, int step, mn_ints* 
 /* mn_lattice over the cells of `box` only: the same nodes in the same order when every cell of the
  * region lies in the box and `inside` is zero around it. */
 int mn_lattice_in(const uint8_t* inside, int width, int height, int step, mn_box box, mn_ints* nodes);
+int mn_lattice_rows_in(const uint8_t* inside, int width, int height, int row_step, int column_step, mn_box box, mn_ints* nodes);
+int mn_lattice_column_step(int row_step, float cutter_radius, float cell_size);
 int mn_outline(const uint8_t* inside, int width, int height, int i, int j);
 
 /* `floor` is what a move through a cell stays above, `touch` what a point on a cell's edge or corner
@@ -161,7 +163,12 @@ float mn_cost_exact(const mn_route_grid* grid, mn_v3 a, mn_v3 b);
 
 #define MN_XY_SPEED_FACTOR 3.0f
 #define MN_Z_SPEED_FACTOR 1.0f
-#define MN_BUDGET_MAX_EVALUATIONS 40000000LL
+/* The move evaluations a route's local search may spend per node (T-211). The former fixed total of
+ * 40,000,000 for a whole generation stopped 268 of the 320 routes of the user's heart (914,248 nodes,
+ * 44 evaluations each) before the search had found its gains; without the cap every route converged at
+ * 73 evaluations per node on average and the estimated machining fell from 966.5 to 711.6 minutes. The
+ * allowance only stops a search that keeps finding gains far beyond that. */
+#define MN_EVALUATIONS_PER_NODE 1000LL
 
 /* Precedence pairs (T-150): before[k] is visited ahead of after[k]. pair_count 0 means none. */
 typedef struct mn_problem {

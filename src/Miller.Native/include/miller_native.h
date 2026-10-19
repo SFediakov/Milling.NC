@@ -202,6 +202,9 @@ MN_API int32_t mn_islands_remove_below(const int32_t* island_cells, const int32_
 MN_API int32_t mn_caves(const uint8_t* masks, int32_t level_count, int32_t width, int32_t height, int32_t* labels, int32_t** cave_levels, int32_t** cave_ids, int32_t** cave_cells, int32_t** cave_cell_offsets, int32_t** cave_children, int32_t** cave_child_offsets, int32_t** roots, int32_t* cave_count, int32_t* root_count);
 
 /* ---- routing ---- */
+/* The node step along a row of a Z layer lattice (T-210): the largest step up to the row step whose node
+ * footprints alone cover the cells between two rows. */
+MN_API int32_t mn_column_step(int32_t row_step, float cutter_radius, float cell_size);
 MN_API int32_t mn_step_cells(float spacing, float cell_size);
 MN_API int32_t mn_on_lattice(int32_t index, int32_t count, int32_t step);
 MN_API int32_t mn_lattice_nodes(const uint8_t* inside, int32_t width, int32_t height, int32_t step, int32_t** nodes, int32_t* count);
