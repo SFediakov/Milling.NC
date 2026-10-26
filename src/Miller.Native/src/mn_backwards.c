@@ -19,7 +19,7 @@
  * Once settled the check gives the Z layer its input (T-193): the reached plan, each level's mask without
  * the positions that do not reach it, and the strategy tip with those positions raised to the deepest
  * level they reach. Both are written in one pass over the masks, which also counts the unreached
- * positions; the Z layer then routes them by its own rules, as it routes a pass of the recursion. */
+ * positions; the Z layer then routes them by its own rules. */
 
 #define MN_BACKWARDS_ERROR 512
 

@@ -7,13 +7,16 @@ namespace Miller.Tests.Core.Toolpaths;
 
 public sealed class ToolpathStatisticsTests
 {
-    private static readonly CuttingParameters Parameters = new() { FeedRate = 800, PlungeRate = 200, RapidRate = 3000 };
+    private static readonly CuttingParameters Parameters = new() { FeedRate = 800, RapidRate = 3000 };
+
+    // The statistics take every segment's own rate; this plunge runs slower than the feed.
+    private const float PlungeRate = 200f;
 
     private static Toolpath ThreeSegments()
     {
         var path = new Toolpath();
         path.Add(new ToolpathSegment(new Vector3(0, 0, 5), new Vector3(30, 40, 5), MoveKind.Rapid, Parameters.RapidRate)); // 50
-        path.Add(new ToolpathSegment(new Vector3(30, 40, 5), new Vector3(30, 40, -5), MoveKind.Plunge, Parameters.PlungeRate)); // 10
+        path.Add(new ToolpathSegment(new Vector3(30, 40, 5), new Vector3(30, 40, -5), MoveKind.Plunge, PlungeRate)); // 10
         path.Add(new ToolpathSegment(new Vector3(30, 40, -5), new Vector3(110, 40, -5), MoveKind.Feed, Parameters.FeedRate)); // 80
         return path;
     }

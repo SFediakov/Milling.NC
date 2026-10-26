@@ -11,8 +11,8 @@ using Miller.Core.Toolpaths;
 namespace Miller.App.ViewModels;
 
 // Routing strategy and post-processor choice from the registries, the cut scope, the reach rule,
-// the collision mode with its ratio (X for recursion, Y for one run), the generate and cancel
-// commands of the main view model, and the statistics of the last run.
+// the collision mode (Backwards on the CPU or the GPU), the generate and cancel commands of the main
+// view model, and the statistics of the last run.
 public sealed class StrategySelectionViewModel : SettingsViewModelBase
 {
     public const string NoToolpathText = "No toolpath yet.";
@@ -100,27 +100,10 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
     public CollisionMode CollisionMode
     {
         get => Current.CollisionMode;
-        set
-        {
-            Edit(p => p.CollisionMode = value);
-            OnPropertyChanged(nameof(IsRecursion));
-            OnPropertyChanged(nameof(IsOneRun));
-        }
+        set => Edit(p => p.CollisionMode = value);
     }
 
     public string? CollisionModeError => ErrorFor("Strategy.CollisionMode");
-
-    public bool IsRecursion => Current.CollisionMode == CollisionMode.Recursion;
-
-    public bool IsOneRun => Current.CollisionMode == CollisionMode.OneRun;
-
-    public float RecursionRatio { get => Current.RecursionRatio; set => Edit(p => p.RecursionRatio = value); }
-
-    public string? RecursionRatioError => ErrorFor("Strategy.RecursionRatio");
-
-    public float OneRunRatio { get => Current.OneRunRatio; set => Edit(p => p.OneRunRatio = value); }
-
-    public string? OneRunRatioError => ErrorFor("Strategy.OneRunRatio");
 
     public ToolpathStatistics? Statistics { get; private set; }
 
@@ -241,12 +224,6 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         OnPropertyChanged(nameof(ReachPercentError));
         OnPropertyChanged(nameof(CollisionMode));
         OnPropertyChanged(nameof(CollisionModeError));
-        OnPropertyChanged(nameof(IsRecursion));
-        OnPropertyChanged(nameof(IsOneRun));
-        OnPropertyChanged(nameof(RecursionRatio));
-        OnPropertyChanged(nameof(RecursionRatioError));
-        OnPropertyChanged(nameof(OneRunRatio));
-        OnPropertyChanged(nameof(OneRunRatioError));
     }
 
     protected override void OnErrorsChanged()
@@ -259,8 +236,6 @@ public sealed class StrategySelectionViewModel : SettingsViewModelBase
         OnPropertyChanged(nameof(BridgeHeightError));
         OnPropertyChanged(nameof(ReachPercentError));
         OnPropertyChanged(nameof(CollisionModeError));
-        OnPropertyChanged(nameof(RecursionRatioError));
-        OnPropertyChanged(nameof(OneRunRatioError));
     }
 
     private void RaiseStatistics()

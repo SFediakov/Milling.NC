@@ -184,15 +184,16 @@ public sealed class SettingsViewModelsTests : IDisposable
         Assert.Null(_vm.Cutting.FarStepdownWarning);
     }
 
+    // T-214: Z layer by layer is the one strategy left.
     [Fact]
     public void Strategy_ListsTheRegistriesAndWritesIds()
     {
-        Assert.Equal(new[] { "z-layer-by-layer", "three-axis-freedom" }, StrategySelectionViewModel.Strategies.Select(s => s.Id));
+        Assert.Equal(new[] { "z-layer-by-layer" }, StrategySelectionViewModel.Strategies.Select(s => s.Id));
         Assert.Equal(new[] { "grbl" }, _vm.Strategy.PostProcessors.Select(p => p.Id));
         Assert.Equal("z-layer-by-layer", _vm.Strategy.Strategy!.Id);
 
-        _vm.Strategy.Strategy = StrategyRegistry.GetById("three-axis-freedom");
-        Assert.Equal("three-axis-freedom", _vm.Project.Current.RoutingStrategyId);
+        _vm.Strategy.Strategy = StrategyRegistry.GetById("z-layer-by-layer");
+        Assert.Equal("z-layer-by-layer", _vm.Project.Current.RoutingStrategyId);
         Assert.True(_vm.Project.IsDirty);
         Assert.Equal(StrategySelectionViewModel.NoToolpathText, _vm.Strategy.StatisticsText);
         Assert.Same(_vm.GenerateCommand, _vm.Strategy.GenerateCommand);
@@ -296,7 +297,8 @@ public sealed class SettingsViewModelsTests : IDisposable
     }
 
     // T-164: with a far stepdown the statistics name the far area of every pass and what the collisions
-    // withdrew from it, in square millimetres; without one the line is absent.
+    // withdrew from it, in square millimetres (nothing on this fixture since T-214: Backwards keeps the head
+    // clear in the first pass); without one the line is absent.
     [Fact]
     public void Statistics_NameTheFarStepdownAreas_OnlyWithAFarStepdown()
     {
@@ -318,8 +320,8 @@ public sealed class SettingsViewModelsTests : IDisposable
         var result = new Miller.Application.Services.PipelineService().Run(project, meshes, null, CancellationToken.None);
         _vm.Strategy.ShowResult(result);
         var milled = string.Join(", ", result.PassCollisions.Select(p => (p.FarCells * 0.25f).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)));
-        Assert.Contains($"Far stepdown area per pass: {milled} mm2, withdrawn around collisions: ", _vm.Strategy.StatisticsText);
-        Assert.True(result.PassCollisions[0].WithdrawnCells > 0);
+        Assert.Contains($"Far stepdown area per pass: {milled} mm2, withdrawn around collisions: 0.0 mm2", _vm.Strategy.StatisticsText);
+        Assert.True(result.PassCollisions[0].FarCells > 0);
 
         project.Parameters.FarStepdown = 0f;
         _vm.Strategy.ShowResult(new Miller.Application.Services.PipelineService().Run(project, meshes, null, CancellationToken.None));
@@ -349,69 +351,30 @@ public sealed class SettingsViewModelsTests : IDisposable
         Assert.Contains("Route units: 1\n", _vm.Strategy.StatisticsText);
     }
 
-    // T-151: the collision mode enables its own ratio, both ratios validate, a new project resets them.
+    // T-214: the combo box offers Backwards and Backwards_GPU only, Backwards by default; a choice writes the
+    // project and a new project resets it.
     [Fact]
-    public void Strategy_CollisionMode_EnablesItsRatioAndValidates()
+    public void Strategy_CollisionMode_OffersTheTwoBackwardsModes()
     {
-        Assert.Equal(new[] { CollisionMode.Recursion, CollisionMode.OneRun, CollisionMode.Backwards, CollisionMode.Backwards_GPU }, StrategySelectionViewModel.CollisionModes);
-        Assert.Equal(CollisionMode.Recursion, _vm.Strategy.CollisionMode);
-        Assert.True(_vm.Strategy.IsRecursion);
-        Assert.False(_vm.Strategy.IsOneRun);
-        Assert.Equal(MillingProject.DefaultCollisionRatio, _vm.Strategy.RecursionRatio);
-        Assert.Equal(MillingProject.DefaultCollisionRatio, _vm.Strategy.OneRunRatio);
+        Assert.Equal(new[] { CollisionMode.Backwards, CollisionMode.Backwards_GPU }, StrategySelectionViewModel.CollisionModes);
+        Assert.Equal(CollisionMode.Backwards, _vm.Strategy.CollisionMode);
+        Assert.Null(_vm.Strategy.CollisionModeError);
 
         var raised = new List<string?>();
         _vm.Strategy.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
-        _vm.Strategy.CollisionMode = CollisionMode.OneRun;
-        Assert.Equal(CollisionMode.OneRun, _vm.Project.Current.CollisionMode);
+        _vm.Strategy.CollisionMode = CollisionMode.Backwards_GPU;
+        Assert.Equal(CollisionMode.Backwards_GPU, _vm.Project.Current.CollisionMode);
         Assert.True(_vm.Project.IsDirty);
-        Assert.False(_vm.Strategy.IsRecursion);
-        Assert.True(_vm.Strategy.IsOneRun);
-        Assert.Contains(nameof(StrategySelectionViewModel.IsRecursion), raised);
-        Assert.Contains(nameof(StrategySelectionViewModel.IsOneRun), raised);
-
-        _vm.Strategy.RecursionRatio = 4f;
-        Assert.Equal(4f, _vm.Project.Current.RecursionRatio);
-        Assert.Null(_vm.Strategy.RecursionRatioError);
-        _vm.Strategy.RecursionRatio = -1f;
-        Assert.NotNull(_vm.Strategy.RecursionRatioError);
-        Assert.Contains(nameof(StrategySelectionViewModel.RecursionRatioError), raised);
-        _vm.Strategy.OneRunRatio = float.NaN;
-        Assert.NotNull(_vm.Strategy.OneRunRatioError);
-        _vm.Strategy.OneRunRatio = 0f;
-        Assert.Null(_vm.Strategy.OneRunRatioError);
+        Assert.Contains(nameof(StrategySelectionViewModel.CollisionMode), raised);
+        Assert.Equal(Miller.Core.Native.GpuDevice.Available, _vm.Strategy.CollisionModeError is null);
 
         _vm.NewProjectCommand.Execute(null);
-        Assert.Equal(CollisionMode.Recursion, _vm.Strategy.CollisionMode);
-        Assert.True(_vm.Strategy.IsRecursion);
-        Assert.Equal(MillingProject.DefaultCollisionRatio, _vm.Strategy.RecursionRatio);
-        Assert.Equal(MillingProject.DefaultCollisionRatio, _vm.Strategy.OneRunRatio);
-        Assert.Null(_vm.Strategy.RecursionRatioError);
-        Assert.Null(_vm.Strategy.OneRunRatioError);
-    }
-
-    // T-169: Backwards takes neither ratio and is offered with every strategy, but only the Z layer accepts
-    // it; the error names the strategy under the collision mode and goes once the strategy fits.
-    [Fact]
-    public void Strategy_Backwards_IsAnErrorOutsideTheZLayer()
-    {
-        _vm.Strategy.CollisionMode = CollisionMode.Backwards;
-        Assert.Equal(CollisionMode.Backwards, _vm.Project.Current.CollisionMode);
-        Assert.False(_vm.Strategy.IsRecursion);
-        Assert.False(_vm.Strategy.IsOneRun);
-        Assert.Null(_vm.Strategy.CollisionModeError);
-
-        var raised = new List<string?>();
-        _vm.Strategy.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
-        _vm.Strategy.Strategy = StrategySelectionViewModel.Strategies.First(s => s.Id == ThreeAxisFreedomStrategy.StrategyId);
-        Assert.Contains("Z layer by layer", _vm.Strategy.CollisionModeError);
-        Assert.Contains(nameof(StrategySelectionViewModel.CollisionModeError), raised);
-        _vm.Strategy.Strategy = StrategySelectionViewModel.Strategies.First(s => s.Id == ZLayerByLayerStrategy.StrategyId);
+        Assert.Equal(CollisionMode.Backwards, _vm.Strategy.CollisionMode);
         Assert.Null(_vm.Strategy.CollisionModeError);
     }
 
-    // T-172: after a Backwards run the statistics name the unreached positions against the model cells; the
-    // other modes have no such line.
+    // T-172: after a Backwards run the statistics name the unreached positions against the model cells; a
+    // cleared result has no such line.
     [Fact]
     public void Statistics_NameTheUnreachedCells_OfBackwards()
     {
@@ -439,9 +402,6 @@ public sealed class SettingsViewModelsTests : IDisposable
         Assert.Contains("\nProcess times (s): ", _vm.Strategy.StatisticsText);
         Assert.DoesNotContain("GPU:", _vm.Strategy.StatisticsText);
 
-        project.CollisionMode = CollisionMode.Recursion;
-        _vm.Strategy.ShowResult(new Miller.Application.Services.PipelineService().Run(project, meshes, null, CancellationToken.None));
-        Assert.DoesNotContain("Unreached", _vm.Strategy.StatisticsText);
         if (Miller.Core.Native.GpuDevice.Available)
         {
             project.CollisionMode = CollisionMode.Backwards_GPU;
@@ -451,6 +411,7 @@ public sealed class SettingsViewModelsTests : IDisposable
 
         _vm.Strategy.Clear();
         Assert.Equal(StrategySelectionViewModel.NoToolpathText, _vm.Strategy.StatisticsText);
+        Assert.DoesNotContain("Unreached", _vm.Strategy.StatisticsText);
     }
 
     [Fact]

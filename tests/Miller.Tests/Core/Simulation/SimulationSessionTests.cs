@@ -5,6 +5,7 @@ using Miller.Application.Services;
 using Miller.Core.HeightMaps;
 using Miller.Core.Setup;
 using Miller.Core.Simulation;
+using Miller.Core.Toolpaths;
 using Miller.Core.Toolpaths.Strategies;
 using Miller.Tests.Fixtures;
 using Xunit;
@@ -34,8 +35,8 @@ public sealed class SimulationSessionTests
         return new PipelineService().Run(project, import.Meshes, null, CancellationToken.None);
     }
 
-    // The slotted plate under a cutter shorter than the slot with a zero ratio: head events are kept.
-    private static PipelineResult SlottedPlate(CollisionMode mode)
+    // The slotted plate under a cutter shorter than the slot.
+    private static PipelineResult SlottedPlate()
     {
         var project = MillingProject.Default();
         project.Tool.CutterDiameter = 3;
@@ -47,11 +48,38 @@ public sealed class SimulationSessionTests
         project.Stock.SizeY = TestMeshes.SlottedPlateSize;
         project.Stock.SizeZ = TestMeshes.SlottedPlateHeight;
         project.Parameters.CellSize = 0.5f;
-        project.CollisionMode = mode;
-        project.RecursionRatio = 0;
-        project.OneRunRatio = 0;
         project.Models.Add(new ModelPlacement { StlPath = "plate.stl" });
         return new PipelineService().Run(project, new[] { TestMeshes.SlottedPlate() }, null, CancellationToken.None);
+    }
+
+    // The slotted plate's result with its toolpath replaced by a zigzag 4 mm above the floor of the 12 mm
+    // stock under the 6 mm cutter: the head enters the stock along every row. Since T-214 the generation
+    // keeps no head event on its own fixtures (Backwards leaves those positions out), so the events come
+    // from this path and the generation's check routine run on it (NativeCollisionCheck, mn_check_path).
+    private static (PipelineResult Result, CollisionReport Check) DeepZigzag()
+    {
+        var plate = SlottedPlate();
+        var path = new Toolpath();
+        var at = new Vector3(1, 2, 18);
+        path.Add(new ToolpathSegment(at, new Vector3(1, 2, 4), MoveKind.Plunge, plate.Parameters.FeedRate));
+        at = new Vector3(1, 2, 4);
+        for (var row = 0; row < 5; row++)
+        {
+            var across = new Vector3(row % 2 == 0 ? 19 : 1, at.Y, 4);
+            path.Add(new ToolpathSegment(at, across, MoveKind.Feed, plate.Parameters.FeedRate));
+            at = across;
+            if (row < 4)
+            {
+                var up = new Vector3(at.X, at.Y + 4, 4);
+                path.Add(new ToolpathSegment(at, up, MoveKind.Feed, plate.Parameters.FeedRate));
+                at = up;
+            }
+        }
+
+        path.Add(new ToolpathSegment(at, new Vector3(at.X, at.Y, 18), MoveKind.Rapid, plate.Parameters.RapidRate));
+        var result = plate with { Toolpath = path, Layers = new[] { new ToolpathLayer(0, 4f) } };
+        var check = NativeCollisionCheck.Run(path, plate.Stock.Map, plate.Model, plate.Floor, plate.Profile.Tool, CollisionDetector.Tolerance, out _);
+        return (result, check);
     }
 
     private static (float[] Stock, List<(SimulationEventKind Kind, int Segment, Vector3 Tip, string Message)> Events) PerSample(PipelineResult result)
@@ -87,7 +115,9 @@ public sealed class SimulationSessionTests
         }
     }
 
-    private static void AssertSameAsPerSample(PipelineResult result)
+    private static void AssertSameAsPerSample(PipelineResult result) => AssertSameAsPerSample(result, result.Collisions.Report!);
+
+    private static void AssertSameAsPerSample(PipelineResult result, CollisionReport check)
     {
         var reference = PerSample(result);
         var runs = new Dictionary<string, (float[] Stock, List<(SimulationEventKind, int, Vector3, string)> Events)>
@@ -129,32 +159,28 @@ public sealed class SimulationSessionTests
             Assert.Equal(reference.Events, run.Events);
         }
 
-        var generation = result.Collisions.Report!.Events.Select(e => (e.Kind, e.SegmentIndex, e.Position, e.Message)).ToList();
+        var generation = check.Events.Select(e => (e.Kind, e.SegmentIndex, e.Position, e.Message)).ToList();
         Assert.Equal(generation, reference.Events);
     }
 
-    [Theory]
-    [InlineData(ZLayerByLayerStrategy.StrategyId)]
-    [InlineData(ThreeAxisFreedomStrategy.StrategyId)]
-    public void Heart_TheSessionGivesThePerSampleStockAndEvents(string strategy)
+    [Fact]
+    public void Heart_TheSessionGivesThePerSampleStockAndEvents()
     {
-        AssertSameAsPerSample(Heart(strategy, 0.4f));
+        AssertSameAsPerSample(Heart(ZLayerByLayerStrategy.StrategyId, 0.4f));
     }
 
-    [Theory]
-    [InlineData(CollisionMode.Recursion)]
-    [InlineData(CollisionMode.OneRun)]
-    public void SlottedPlate_WithKeptHeadEvents_TheSessionGivesThePerSampleStockAndEvents(CollisionMode mode)
+    [Fact]
+    public void ACollidingPath_TheSessionGivesThePerSampleStockAndEvents()
     {
-        var result = SlottedPlate(mode);
-        Assert.NotEmpty(result.Collisions.Report!.Events);
-        AssertSameAsPerSample(result);
+        var (result, check) = DeepZigzag();
+        Assert.NotEmpty(check.Events);
+        AssertSameAsPerSample(result, check);
     }
 
     [Fact]
     public void Walk_OutsideTheToolpath_IsRefusedWithAMessage()
     {
-        var result = SlottedPlate(CollisionMode.Recursion);
+        var result = SlottedPlate();
         var stock = result.Stock.Map.Clone();
         using var session = new NativeSimulationSession(result.Toolpath, stock, result.Profile, CollisionDetector.Tolerance);
         Assert.Equal(result.Toolpath.Count, session.Count);

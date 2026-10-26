@@ -1,10 +1,13 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Numerics;
 using Miller.Application.Progress;
 using Miller.Application.Services;
 using Miller.Core.Native;
 using Miller.Core.Setup;
+using Miller.Core.HeightMaps;
 using Miller.Core.Simulation;
+using Miller.Core.Toolpaths;
 using Miller.Core.Toolpaths.Strategies;
 using Miller.Tests.Fixtures;
 using Xunit;
@@ -113,18 +116,50 @@ public sealed class ParallelGenerationTests
         Assert.Equal(one.Uncut, all.Uncut);
     }
 
-    // T-187: a check that finds hits (3 axis freedom in the separation scope under the frustum head):
-    // the batches with a hit run as one walk, the others in bands of rows, and the events, the cell
-    // status and the not-cut cells are the one walk's.
+    // T-187: a check that finds hits (a zigzag fed 6 mm deep into a 9 mm stock under a 2 mm cutter of 2 mm
+    // length, so the head enters the stock beside every row): the batches with a hit run as one walk, the
+    // others in bands of rows, and the events and the cell status are the one walk's.
     [Fact]
     public void CheckWithHits_OneWorkerAndAllWorkers_GiveTheSameEvents()
     {
-        var one = Frustum(CollisionMode.Recursion, ThreeAxisFreedomStrategy.StrategyId, CutScope.Separation, 0f, 1);
-        var all = Frustum(CollisionMode.Recursion, ThreeAxisFreedomStrategy.StrategyId, CutScope.Separation, 0f, 0);
-        Assert.NotEmpty(one.Collisions.Report!.Events);
-        AssertIdentical(one, all);
-        Assert.Equal(one.Uncut, all.Uncut);
-        Assert.Equal(one.PassCollisions, all.PassCollisions);
+        var stock = new HeightMap(0, 0, 0.5f, 80, 80, 9f);
+        var model = new HeightMap(0, 0, 0.5f, 80, 80, 0f);
+        var tool = new ToolDefinition { CutterDiameter = 2f, CutterLength = 2f, HeadDiameter = 7f };
+        var path = new Toolpath();
+        path.Add(new ToolpathSegment(new Vector3(5, 5, 14), new Vector3(5, 5, 3), MoveKind.Plunge, 200f));
+        var at = new Vector3(5, 5, 3);
+        for (var row = 0; row < 7; row++)
+        {
+            var across = new Vector3(row % 2 == 0 ? 35 : 5, at.Y, 3);
+            path.Add(new ToolpathSegment(at, across, MoveKind.Feed, 800f));
+            at = across;
+            if (row < 6)
+            {
+                var up = new Vector3(at.X, at.Y + 5, 3);
+                path.Add(new ToolpathSegment(at, up, MoveKind.Feed, 800f));
+                at = up;
+            }
+        }
+
+        CollisionReport Check(int workers, out CellStatus[] status)
+        {
+            NativeWorkers.Limit(workers);
+            try
+            {
+                return NativeCollisionCheck.Run(path, stock, model, 0f, tool, CollisionDetector.Tolerance, out status);
+            }
+            finally
+            {
+                NativeWorkers.Limit(0);
+            }
+        }
+
+        var one = Check(1, out var oneStatus);
+        var all = Check(0, out var allStatus);
+        Assert.NotEmpty(one.Events);
+        Assert.Equal(one.Events.Select(e => (e.Kind, e.SegmentIndex, e.Position)), all.Events.Select(e => (e.Kind, e.SegmentIndex, e.Position)));
+        Assert.Equal(oneStatus, allStatus);
+        Assert.Contains(oneStatus, s => (s & CellStatus.Collision) != 0);
     }
 
     [Fact]
@@ -153,18 +188,15 @@ public sealed class ParallelGenerationTests
     [Theory]
     [InlineData(ZLayerByLayerStrategy.StrategyId, CutScope.Everything)]
     [InlineData(ZLayerByLayerStrategy.StrategyId, CutScope.Separation)]
-    [InlineData(ThreeAxisFreedomStrategy.StrategyId, CutScope.Everything)]
     public void Box_OneWorkerAndAllWorkers_GiveTheSameGeneration(string strategy, CutScope scope)
     {
         AssertIdentical(Box(strategy, scope, 1), Box(strategy, scope, 0));
     }
 
-    [Theory]
-    [InlineData(ZLayerByLayerStrategy.StrategyId)]
-    [InlineData(ThreeAxisFreedomStrategy.StrategyId)]
-    public void Heart_OneWorkerAndAllWorkers_GiveTheSameGeneration(string strategy)
+    [Fact]
+    public void Heart_OneWorkerAndAllWorkers_GiveTheSameGeneration()
     {
-        var (project, meshes) = Heart(0.4f, strategy);
+        var (project, meshes) = Heart(0.4f, ZLayerByLayerStrategy.StrategyId);
         AssertIdentical(Run(project, meshes, 1, null), Run(project, meshes, 0, null));
     }
 
@@ -175,7 +207,7 @@ public sealed class ParallelGenerationTests
     {
         var lines = new List<string>();
         var slower = new List<string>();
-        foreach (var strategy in new[] { ZLayerByLayerStrategy.StrategyId, ThreeAxisFreedomStrategy.StrategyId })
+        foreach (var strategy in new[] { ZLayerByLayerStrategy.StrategyId })
         {
             var (project, meshes) = Heart(0.2f, strategy);
             var totals = new Dictionary<int, double>();

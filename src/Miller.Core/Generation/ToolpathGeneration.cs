@@ -12,9 +12,8 @@ using Miller.Core.Toolpaths.Strategies;
 namespace Miller.Core.Generation;
 
 // Everything one generation produced. HeadLimitedMask marks the positions the collision handling
-// raised (the head, not the cutter, decides the depth there); ShouldCut the stock the dynamic check
-// found in the way of the head; Status the native status byte per cell; Collisions the check of the
-// kept pass with the rule of the simulation panel; Passes how many passes ran; Layers the layers of
+// raised (the head, not the cutter, decides the depth there); Status the native status byte per cell;
+// Collisions the check of the kept pass with the rule of the simulation panel; Passes how many passes ran; Layers the layers of
 // the toolpath (ToolpathLayer); FarStepdown the far positions of the first and the kept pass and those
 // withdrawn around collisions (T-164); RouteUnitEntries where every route unit after the first begins and
 // the one before it ends (T-166); Unreached the counts of the backward check, null unless the collision
@@ -27,7 +26,6 @@ public sealed record GenerationResult(
     HeightMap EffectiveTip,
     HeightMap HeadLimit,
     bool[,] HeadLimitedMask,
-    bool[,] ShouldCut,
     SlicePlan Plan,
     HeightMap Standing,
     Toolpath Toolpath,
@@ -88,10 +86,10 @@ public sealed record FarStepdownAreas(bool[,] FirstArea, bool[,] Milled, bool[,]
 public readonly record struct BridgeReport(int Parts, int Wanted, int Placed);
 
 // The whole toolpath generation in one call of the native library (mn_generate): transform, stock,
-// model map, reach map, then per pass the raised tips, slicing and cut scope, the holding bridges of
-// the separation scope, routing, simplification, statistics and the dynamic collision check; recursion mode repeats the pass
-// while the collisions decrease. The placement of the models (machine matrices) and the stock box
-// come from the setup classes, which the viewport shares; the progress reports carry the pass and
+// model map, reach map, then per pass slicing and cut scope, the holding bridges of the separation
+// scope, the backward check, routing, simplification, statistics and the dynamic collision check; with a
+// far stepdown the pass repeats while the far withdrawal takes positions and the collisions decrease.
+// The placement of the models (machine matrices) and the stock box come from the setup classes, which the viewport shares; the progress reports carry the pass and
 // the stage index of the pipeline table (1 transform .. 10 collision check).
 public static class ToolpathGeneration
 {
@@ -102,7 +100,6 @@ public static class ToolpathGeneration
         var strategy = project.RoutingStrategyId switch
         {
             ZLayerByLayerStrategy.StrategyId => NativeStrategy.ZLayer,
-            ThreeAxisFreedomStrategy.StrategyId => NativeStrategy.ThreeAxisFreedom,
             _ => throw new ArgumentException($"Strategy '{project.RoutingStrategyId}' has no native implementation.", nameof(project)),
         };
 
@@ -173,8 +170,6 @@ public static class ToolpathGeneration
                 MinIslandVolume = project.MinIslandVolume,
                 ReachPercent = project.ReachPercent,
                 CollisionMode = (int)project.CollisionMode,
-                RecursionRatio = project.RecursionRatio,
-                OneRunRatio = project.OneRunRatio,
                 BridgeCount = (int)project.BridgeCount,
                 BridgeWidth = project.BridgeWidth,
                 BridgeHeight = project.BridgeHeight,
@@ -293,7 +288,6 @@ public static class ToolpathGeneration
 
         var stock = new StockGeometry(Map(0), top, bottom, stockBounds);
         var headLimited = Mask(CoreNative.MaskHeadLimited);
-        var shouldCut = Mask(CoreNative.MaskShouldCut);
         Fill(CoreNative.MaskStatus);
         var status = new CellStatus[cells];
         for (var k = 0; k < cells; k++)
@@ -381,7 +375,6 @@ public static class ToolpathGeneration
             Map(3),
             Map(4),
             headLimited,
-            shouldCut,
             CoreNative.PlanOf(CoreNative.mn_result_plan(result), grid.Width, grid.Height),
             Map(5),
             toolpath,

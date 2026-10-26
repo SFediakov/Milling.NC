@@ -47,7 +47,6 @@ public sealed class RouteUnitsTests
         project.Tool.CutterDiameter = 0.8f;
         project.Tool.HeadDiameter = 2f;
         project.Parameters.Stepover = 0.4f;
-        project.Parameters.FinishingStepover = 0.4f;
         project.Parameters.FarStepdown = 4f;
         project.Stock.SizeX = 20;
         project.Stock.SizeY = 20;
@@ -97,12 +96,10 @@ public sealed class RouteUnitsTests
         return -1;
     }
 
-    [Theory]
-    [InlineData(CollisionMode.Recursion)]
-    [InlineData(CollisionMode.OneRun)]
-    public void Wall_EachPocketIsCutWholeWithinItsSlab_AndTheUnitsChainAtTheirEntries(CollisionMode mode)
+    [Fact]
+    public void Wall_EachPocketIsCutWholeWithinItsSlab_AndTheUnitsChainAtTheirEntries()
     {
-        var result = Wall(mode);
+        var result = Wall(CollisionMode.Backwards);
         AssertContinuous(result.Toolpath);
         Assert.Empty(GougeChecker.Verify(result.Toolpath, result.EffectiveTip, result.Tolerance));
         var entries = result.RouteUnitEntries;
@@ -177,7 +174,7 @@ public sealed class RouteUnitsTests
         PipelineResult one;
         try
         {
-            one = Wall(CollisionMode.Recursion);
+            one = Wall(CollisionMode.Backwards);
         }
         finally
         {
@@ -188,14 +185,14 @@ public sealed class RouteUnitsTests
         PipelineResult two;
         try
         {
-            two = Wall(CollisionMode.Recursion);
+            two = Wall(CollisionMode.Backwards);
         }
         finally
         {
             NativeWorkers.Limit(0);
         }
 
-        var all = Wall(CollisionMode.Recursion);
+        var all = Wall(CollisionMode.Backwards);
         foreach (var other in new[] { two, all })
         {
             Assert.Equal(one.Toolpath.Count, other.Toolpath.Count);

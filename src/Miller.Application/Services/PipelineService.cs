@@ -38,16 +38,13 @@ public sealed record PipelineResult(
     // cut, the terrace level over trench cells, NaN where only the model constrains the tool.
     public HeightMap Standing { get; init; } = new(0, 0, 1, 1, 1, float.NaN);
 
-    // Stock the dynamic collision check found in the way of the head and turned from may-cut into must-cut.
-    public bool[,] ShouldCut { get; init; } = new bool[0, 0];
-
     // The native status byte per cell, indexed like the model grid.
     public CellStatus[] Status { get; init; } = Array.Empty<CellStatus>();
 
     // The dynamic check of the kept pass (the last stage of the generation).
     public CollisionCheck Collisions { get; init; } = CollisionService.Of(new CollisionReport(Array.Empty<SimulationEvent>(), Array.Empty<CollisionContact>(), 0));
 
-    // How many generation passes ran (recursion mode repeats while the collisions decrease) and what
+    // How many generation passes ran (the far withdrawal repeats while the collisions decrease) and what
     // the check of each one found.
     public int Passes { get; init; } = 1;
 
@@ -115,7 +112,7 @@ public sealed class PipelineService
     // (one pixel of a 200 px bar), so a row-by-row producer does not flood the UI thread.
     public const float MinVisibleDelta = 0.005f;
 
-    // Recursion passes never exceed this number (the native pipeline uses the same number).
+    // Generation passes never exceed this number (the native pipeline uses the same number).
     public const int MaxPasses = 8;
 
     public Task<PipelineResult> RunAsync(MillingProject project, IReadOnlyList<Mesh> meshes, IProgress<ProgressReport>? progress, CancellationToken cancellation)
@@ -151,7 +148,6 @@ public sealed class PipelineService
         {
             Parameters = project.Parameters,
             Standing = generated.Standing,
-            ShouldCut = generated.ShouldCut,
             Status = generated.Status,
             Collisions = CollisionService.Of(generated.Collisions),
             Passes = generated.Passes,

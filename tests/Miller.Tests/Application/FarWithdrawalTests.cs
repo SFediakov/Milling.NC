@@ -92,72 +92,35 @@ public sealed class FarWithdrawalTests
         return n;
     }
 
-    // Recursion on a 4 mm box (stepover 1, far stepdown 4) ends at no collision in a later pass; one run on a
-    // 6 mm box (stepover 2, far stepdown 8) withdraws after its first pass, and with the route units of
-    // T-166 its first pass stays the one with the fewest entered cells.
+    // T-214: with Backwards the only collision handling, the frustum fixtures that collided in Recursion and One
+    // run (4 mm box, stepover 1, far stepdown 4; 6 mm box, stepover 2, far stepdown 8) end without a collision
+    // in their first pass, so nothing is withdrawn and no second pass runs: the far area milled is the first
+    // pass's whole far area. The withdrawal itself is covered by the two tests above.
     [Theory]
-    [InlineData(CollisionMode.Recursion, 4f, 4f, 1f, true)]
-    [InlineData(CollisionMode.OneRun, 8f, 6f, 2f, false)]
-    public void CollisionsWithdrawTheFarStepdown_AndTheFarAreaNeverGrows(CollisionMode mode, float farStepdown, float boxHeight, float stepover, bool keptAfterWithdrawal)
+    [InlineData(4f, 4f, 1f)]
+    [InlineData(8f, 6f, 2f)]
+    public void WithoutCollisions_NothingIsWithdrawn_AndTheFirstPassIsKept(float farStepdown, float boxHeight, float stepover)
     {
-        var result = Run(mode, farStepdown, boxHeight, stepover);
-        var passes = result.PassCollisions;
-        var areas = result.FarStepdown;
-        Assert.Equal(result.Passes, passes.Count);
-        Assert.True(passes[0].EnteredCells > 0, "the fixture must collide in its first pass");
-        Assert.True(passes[0].FarCells > 0, "the first pass must mill a far region");
-        Assert.True(passes[0].WithdrawnCells > 0, $"no far position within {WithdrawRadius} mm of the first pass's collisions");
-        Assert.True(result.Passes >= 2, "a withdrawal must start another pass");
-        Assert.Equal(passes[0].FarCells, Count(areas.FirstArea));
-
-        // Every later pass mills at most the first pass's far area less what was withdrawn before it.
-        var withdrawnBefore = 0;
-        for (var k = 1; k < passes.Count; k++)
-        {
-            withdrawnBefore += passes[k - 1].WithdrawnCells;
-            Assert.True(passes[k].FarCells <= passes[0].FarCells - withdrawnBefore, $"pass {k + 1}: {passes[k].FarCells} far positions, {passes[0].FarCells - withdrawnBefore} allowed");
-        }
-
-        // The kept pass (fewest entered cells, the first of equals) ran without everything withdrawn before it.
-        var kept = 0;
-        for (var k = 1; k < passes.Count; k++)
-        {
-            if (passes[k].EnteredCells < passes[kept].EnteredCells)
-            {
-                kept = k;
-            }
-        }
-
-        Assert.Equal(passes[kept].FarCells, Count(areas.Milled));
-        Assert.Equal(passes.Take(kept).Sum(p => p.WithdrawnCells), Count(areas.Withdrawn));
-        var width = areas.FirstArea.GetLength(0);
-        var height = areas.FirstArea.GetLength(1);
-        for (var j = 0; j < height; j++)
-        {
-            for (var i = 0; i < width; i++)
-            {
-                Assert.False(areas.Milled[i, j] && areas.Withdrawn[i, j], $"({i}, {j}) is withdrawn and milled with the far stepdown");
-                Assert.True(!areas.Milled[i, j] || areas.FirstArea[i, j], $"({i}, {j}) is milled with the far stepdown outside the first pass's area");
-                Assert.True(!areas.Withdrawn[i, j] || areas.FirstArea[i, j], $"({i}, {j}) is withdrawn outside the first pass's area");
-            }
-        }
-
-        Assert.Equal(keptAfterWithdrawal, kept > 0 && Count(areas.Withdrawn) > 0);
+        var result = Run(CollisionMode.Backwards, farStepdown, boxHeight, stepover);
+        var pass = Assert.Single(result.PassCollisions);
+        Assert.Equal(1, result.Passes);
+        Assert.Equal(0, pass.EnteredCells);
+        Assert.Equal(0, pass.WithdrawnCells);
+        Assert.True(pass.FarCells > 0, "the pass must mill a far region");
+        Assert.Equal(pass.FarCells, Count(result.FarStepdown.FirstArea));
+        Assert.Equal(pass.FarCells, Count(result.FarStepdown.Milled));
+        Assert.Equal(0, Count(result.FarStepdown.Withdrawn));
+        Assert.True(result.Unreached!.Value.Unreached > 0, "the frustum head must leave positions unreached beside the box");
         Assert.Empty(GougeChecker.Verify(result.Toolpath, result.EffectiveTip, result.Tolerance));
     }
 
-    // Without a far stepdown nothing is withdrawn and one run stays one pass.
-    [Theory]
-    [InlineData(CollisionMode.Recursion)]
-    [InlineData(CollisionMode.OneRun)]
-    public void WithoutAFarStepdown_NothingIsWithdrawn(CollisionMode mode)
+    // Without a far stepdown nothing is withdrawn and the generation is one pass.
+    [Fact]
+    public void WithoutAFarStepdown_NothingIsWithdrawn_InOnePass()
     {
-        var result = Run(mode, 0f, 6f, 2f);
+        var result = Run(CollisionMode.Backwards, 0f, 6f, 2f);
         Assert.All(result.PassCollisions, p => Assert.Equal((0, 0), (p.FarCells, p.WithdrawnCells)));
         Assert.Equal(0, Count(result.FarStepdown.FirstArea) + Count(result.FarStepdown.Milled) + Count(result.FarStepdown.Withdrawn));
-        if (mode == CollisionMode.OneRun)
-        {
-            Assert.Equal(1, result.Passes);
-        }
+        Assert.Equal(1, result.Passes);
     }
 }

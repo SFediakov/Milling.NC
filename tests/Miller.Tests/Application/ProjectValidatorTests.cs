@@ -44,7 +44,7 @@ public sealed class ProjectValidatorTests
     {
         AssertSingleError(p => p.Tool.CutterDiameter = 0, "Tool.CutterDiameter",
             // stepover rules also fail against a zero cutter diameter
-            "Parameters.Stepover", "Parameters.FinishingStepover");
+            "Parameters.Stepover");
     }
 
     [Fact]
@@ -56,16 +56,12 @@ public sealed class ProjectValidatorTests
         AssertSingleError(p => p.MinIslandVolume = float.NaN, "Strategy.MinIslandVolume");
     }
 
+    // T-214: only Backwards and Backwards_GPU exist; a number outside them is an error.
     [Fact]
-    public void CollisionRatios_MustBeFiniteAndNotNegative()
+    public void CollisionMode_MustBeOneOfTheTwo()
     {
-        AssertSingleError(p => p.RecursionRatio = -1f, "Strategy.RecursionRatio");
-        AssertSingleError(p => p.RecursionRatio = float.NaN, "Strategy.RecursionRatio");
-        AssertSingleError(p => p.RecursionRatio = float.PositiveInfinity, "Strategy.RecursionRatio");
-        AssertSingleError(p => p.OneRunRatio = -0.5f, "Strategy.OneRunRatio");
-        AssertSingleError(p => p.OneRunRatio = float.NaN, "Strategy.OneRunRatio");
-        Assert.True(Validate(p => p.RecursionRatio = 0f).IsValid);
-        Assert.True(Validate(p => p.OneRunRatio = 1e6f).IsValid);
+        Assert.True(Validate(p => p.CollisionMode = CollisionMode.Backwards).IsValid);
+        AssertSingleError(p => p.CollisionMode = (CollisionMode)2, "Strategy.CollisionMode");
         AssertSingleError(p => p.CollisionMode = (CollisionMode)7, "Strategy.CollisionMode");
     }
 
@@ -118,13 +114,6 @@ public sealed class ProjectValidatorTests
         AssertSingleError(p => p.Parameters.Stepover = 0, "Parameters.Stepover");
         AssertSingleError(p => p.Parameters.Stepover = 6.01f, "Parameters.Stepover");
         AssertValid(p => p.Parameters.Stepover = 6);
-    }
-
-    [Fact]
-    public void FinishingStepover_MustBeInZeroToCutterDiameter()
-    {
-        AssertSingleError(p => p.Parameters.FinishingStepover = -0.5f, "Parameters.FinishingStepover");
-        AssertSingleError(p => p.Parameters.FinishingStepover = 7, "Parameters.FinishingStepover");
     }
 
     [Fact]
@@ -184,12 +173,8 @@ public sealed class ProjectValidatorTests
 
     // T-196: the stepdown as far stepdown is accepted with every strategy and collision mode.
     [Theory]
-    [InlineData("z-layer-by-layer", CollisionMode.Recursion)]
-    [InlineData("z-layer-by-layer", CollisionMode.OneRun)]
     [InlineData("z-layer-by-layer", CollisionMode.Backwards)]
     [InlineData("z-layer-by-layer", CollisionMode.Backwards_GPU)]
-    [InlineData("three-axis-freedom", CollisionMode.Recursion)]
-    [InlineData("three-axis-freedom", CollisionMode.OneRun)]
     public void FarStepdown_EqualToTheStepdown_IsAcceptedForEveryStrategyAndMode(string strategy, CollisionMode mode)
     {
         var result = Validate(p => { p.RoutingStrategyId = strategy; p.CollisionMode = mode; p.Parameters.FarStepdown = p.Parameters.Stepdown; });
@@ -239,7 +224,6 @@ public sealed class ProjectValidatorTests
     public void FeedRates_MustBePositive()
     {
         AssertSingleError(p => p.Parameters.FeedRate = 0, "Parameters.FeedRate");
-        AssertSingleError(p => p.Parameters.PlungeRate = -5, "Parameters.PlungeRate");
         AssertSingleError(p => p.Parameters.RapidRate = 0, "Parameters.RapidRate");
     }
 
