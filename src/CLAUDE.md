@@ -118,6 +118,13 @@
   attached (the simulation tab) and sample by sample otherwise (parts of a segment, the analysis, which
   needs the contact of every entered cell): two implementations of one rule, kept equal by
   `SimulationSessionTests` (stock bits and events) as T-161 kept the generation check and the engine equal.
+- The Z layer has two node rules since T-210 (an intended dual path): its caves take rows and drop lattice nodes
+  nearer than the cutter radius to a wall, while the far block keeps the square lattice with every node (One run
+  did too until T-214 removed it). The far block's step rules (T-157, T-162) were measured with the square
+  positions and left material above the flutes on the tall wall fixture with rows.
+  `HeartFixture_SeparationHasNoCollisionsAndRemovesLessMaterial` compares removed material instead of feed
+  length: the rows shortened Everything's feed more than Separation's. The heart golden was regenerated (feed
+  3,052 to 2,363 mm, 10.8 to 9.5 min).
 - The slow zones (T-155, `mn_slow.c`) and the layer marks (T-154) are not clusters of their own:
   both are stages of the native generation between the simplifier and the statistics (user request:
   all generation in the C library), and the layer stepping is part of the simulation cluster
@@ -818,3 +825,28 @@
   against wrong material wherever the far go is deeper than the cutter and the closing stood above the
   batch top. No fixture and not the heart hit that case (their toolpaths were the same before and after);
   the GPU sweeps now return the closing (T-185).
+- T-214 (user request) removed "3 axis freedom", Recursion and One run; the lessons above that name them
+  are history. Old project and preset files map those ids and modes to `z-layer-by-layer` and Backwards
+  (`ProjectSerializer.CurrentStrategyId`, `CollisionModeConverter`) and drop their settings on write: a
+  migration of stored values like the schema 1 and 2 ones, not a fallback, because the removed code no
+  longer exists. `HeadLimit`, `HeadLimitedMask` and the analysis category HeadLimited stay as outputs but are
+  always empty: Backwards raises its positions in the plan it hands the Z layer, not in the head limit map.
+- Removing a mode was verified as "the kept modes change nothing": a probe hashed every segment, layer,
+  unit entry, pass, event, unreached and not-cut count of Backwards and Backwards_GPU on the fixtures, the
+  heart sample and the user's heart at 0.05 mm cells, before and after (21 of 21 equal). Capture the
+  baseline in the main checkout before the first edit (the user does not want worktrees or repo copies).
+- Without the recursion some fixtures end differently, by design: the frustum withdrawal fixtures no longer
+  collide, so they run one pass and withdraw nothing; the deep-stock separation with a 12 mm cutter keeps its
+  trench 10 mm above the floor (the recursion had moved the trench beyond a collar and cut it to the floor);
+  the strategy alone now runs the backward check, so the tall wall's far block leaves cells beside the raised
+  positions to the walk. The affected tests were changed under the user's standing approval, each with the
+  numbers in its comment.
+- T-215 (user request, plunge decision by the user): every feed and plunge runs at `FeedRate` and the Grbl file
+  sets `F` once in its header. The writer chooses retract or surface travel by time, so a faster plunge makes
+  the retract win more often (the split cave of `ZLayerByLayerStrategyTests` now retracts between its
+  sub-caves). The post-processor refuses a feed or plunge at another rate instead of writing it.
+- `GrblResume` joins its output with the line ending of the program it resumes; a generated program uses LF,
+  a file saved on Windows CRLF. Split resume text on `'\n'` in tests.
+- `ParallelGenerationTests.Heart_StageTimes_AreReported_AndParallelIsNotSlower` compares wall times and failed
+  once in three full runs on 2026-10-26 (route stage 950 ms with all workers under the load of the other tests,
+  294 ms alone); it passed alone three times. Rerun before suspecting the code.

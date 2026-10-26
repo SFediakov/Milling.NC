@@ -336,41 +336,24 @@ effectiveTip[i,j] = max(tip[i,j], limit[i,j])
 headLimited[i,j] = limit[i,j] > tip[i,j] + Tolerance
 ```
 
-The pipeline applies no head limit before the first pass (T-147 to T-150): the
-first toolpath is generated from the reach tip alone, then checked dynamically
-against the stock as the path leaves it (section 6.6), and the check decides
-what the head keeps up. Every cell carries a status byte (`CellStatus`,
-`MN_CELL_*`): Model (shouldn't be removed: the model stands above the floor),
-ShouldRemove (stock the head met that the next pass cuts to its closing first),
-Collision (an entered cell the kept pass could not resolve) and Forbidden (a
-tool position raised until its head clears). The head limit map of the result is
-that raise (NaN where none), `effectiveTip = max(tip, raise)`, and
-`headLimited = raise > tip + Tolerance`.
-
-Recursion mode (`CollisionMode.Recursion`, T-148): after every pass the check's
-hits are resolved. A hit cell is removable when its closing (`min over the
-footprint of the strategy tip + dz`, standing stock included) plus `Tolerance`
-lies below the tool surface that met it; such stock becomes ShouldRemove and
-loses Collision. A position whose head met unremovable cells (the model, or
-stock only the model's removal would free) is forbidden unless the X rule keeps
-it: `finished > X * damaged`, with `finished` the model cells the cutter
-finishes at that position (its bottom reaches their surface) and `damaged` the
-unremovable cells its head meets. A forbidden position's tip is lifted to
-`stays - dz - CutterLength + Tolerance + CollisionDetector.Tolerance` over the
-worst cell (`stays` = its closing, never below the model). Stock that was
-already ShouldRemove and still stood in the way forbids the position as well.
-The lift then propagates: every position whose head meets the closing of the
-lifted tip map (model only, the standing stock of the cut scope is drawn again
-every pass) is decided by the same rule, up to 8 rounds, so a wall is cleared
-in one pass instead of one ring of positions per pass. The pass repeats while
-the entered cells or the unremovable ones among them still decrease and the
-resolution added a mark, at most `MN_MAX_PASSES` (8) times; the pass with the
-fewest entered cells is kept and reported. With a far stepdown under the Z
-layer the passes also withdraw the far stepdown around collisions (T-164,
-section 6.4). The strategies cut every
-ShouldRemove cell to its closing before the tool goes deeper beside it
-(section 6.4). One run mode (`CollisionMode.OneRun`, T-150) decides inside the
-strategies instead (section 6.4) and runs one pass.
+The pipeline applies no head limit before the backward check (T-147, T-169):
+the plan is sliced from the reach tip alone, the backward check (Backwards,
+section 6.4) leaves out every position whose head would meet material only
+cutting the model frees, and the toolpath is then checked dynamically against
+the stock as the path leaves it (section 6.6) for the report. Every cell carries
+a status byte (`CellStatus`, `MN_CELL_*`): Model (shouldn't be removed: the
+model stands above the floor), Collision (a cell the kept pass's check entered)
+and Bridge (section 6.4). The head limit map of the result holds no raise since
+T-214 (NaN everywhere, `effectiveTip = tip`, no head-limited cell): the backward
+check raises its positions in the plan it gives the Z layer, not in this map.
+With a far stepdown the passes withdraw the far stepdown around collisions
+(T-164, section 6.4) and repeat while the entered cells or the unremovable ones
+among them still decrease, at most `MN_MAX_PASSES` (8) times; the pass with the
+fewest entered cells is kept and reported. Recursion (T-148: forbidding
+positions by the X ratio between passes, with should-remove stock and its
+should-cut routes) and One run (T-150: every node decided inside the strategies
+by the Y ratio, with precedence pairs in the route solver) were removed in
+T-214 (user request).
 
 Material removal (`MaterialRemover`), one sample of the tool at tip `(x, y, z)`:
 
@@ -394,16 +377,17 @@ Uncuttable classification (`UncuttableRegions`):
 
 - Overhang: a downward-facing triangle (normal Z < 0) whose Z at the cell is
   below `model[i,j] - Tolerance` and above the floor.
-- HeadLimited: `headLimited[i,j]` from the head limit.
+- HeadLimited: `headLimited[i,j]` from the head limit (empty since T-214, see above).
 - CornerLimited: `effectiveTip[i,j] - model[i,j] > Tolerance` and not HeadLimited
   (the cutter radius is larger than the local concave radius).
 
 ### 6.4 Slicing and routing parameters
 
 - One routing strategy (`MillingProject.RoutingStrategyId`) produces the whole
-  program: `z-layer-by-layer` (default) or `three-axis-freedom` (files naming
-  the former id `three-axis-precise` load as `three-axis-freedom`).
-- `Stepdown`: Z distance between the levels of both strategies; no pass cuts
+  program: `z-layer-by-layer`, the only one since T-214 (user request; files
+  naming `three-axis-freedom` or its former id `three-axis-precise` load as
+  `z-layer-by-layer`).
+- `Stepdown`: Z distance between the levels; no pass cuts
   deeper than one Stepdown. Levels: `z_k = stockTop - k * Stepdown` for k = 1.. until
   `z_k <= min(effectiveTip)`; the last level is clamped to `min(effectiveTip)`.
 - Level mask at level z: cells where `effectiveTip[i,j] <= z + LevelTolerance`
@@ -414,9 +398,8 @@ Uncuttable classification (`UncuttableRegions`):
   a trench next to that level's obstacles, widened by
   `HeadRadius - CutterRadius + margin` around every tool position of the deepest
   level whose head (CutterLength above it) enters the slab, and everything cut
-  at the level below. The coverage of "3 axis freedom" is the model region and
-  the innermost trench; the standing stock is part of the tip map the strategies
-  stay above.
+  at the level below. The standing stock is part of the tip map the strategy
+  stays above.
 - Material islands (`MillingProject.MinIslandVolume`, separation only): standing
   stock the trench encloses on all sides (it touches neither the stock border
   nor the outside of a cylinder) is an island; its volume is what milling it
@@ -425,13 +408,20 @@ Uncuttable classification (`UncuttableRegions`):
   would; 0 keeps every island; the outer frame is never removed. The heart
   pendant's loop encloses 51 mm3.
 - Nodes (`NodeLattice`): the tool positions a route visits are the region's
-  cells on a square lattice spaced by the stepover (`Stepover` for the levels,
-  `FinishingStepover` for "3 axis freedom"; the first and last grid line always
-  count) plus the region's outline cells, so walls are cut at the outline. Discs
-  of radius r at a lattice spacing of at most r x sqrt(2) cover the region
-  whatever the visiting order; a wider stepover relies on the straight strips
-  between consecutive nodes. "3 axis freedom" adds every cell where the level
-  map `max(tip, level)` steps by more than `Tolerance` to a neighbour.
+  cells on a square lattice spaced by the `Stepover` (the first and last grid
+  line always count) plus the region's outline cells, so walls are cut at the
+  outline. Discs of radius r at a lattice spacing of at most r x sqrt(2) cover
+  the region whatever the visiting order; a wider stepover relies on the
+  straight strips between consecutive nodes.
+  The Z layer's caves (T-210) take the lattice as rows at the stepover with a
+  node every `mn_lattice_column_step` cells along a row (the largest step whose
+  footprints alone cover the cells between two rows; the square lattice up to
+  r x sqrt(2)), and keep a lattice node only where its whole footprint lies in
+  the region (at least r from every wall): nearer nodes cut what the outline
+  nodes cut and made the route leave the wall pass for a detour, and a wider
+  stepover filled every lattice square with a gap node the route zigzagged
+  through (the user's heart at stepover 1.1 with a 1.2 mm cutter: 5,474 gap
+  nodes). The far block keeps the square lattice with every node.
 - Route (`Miller.Solver`): the cost of a move is `XY / 3 + Z` (XY moves three
   times faster than Z), the Z part being the vertical travel of the surface
   polyline between the two nodes (`SurfacePath`: every cell-edge crossing lifted
@@ -442,9 +432,11 @@ Uncuttable classification (`UncuttableRegions`):
   step together with the cheapest step after it, fine included, and the sweeps
   along X and along Y, which run the nodes grid row by grid row (or column by
   column) end to end and turn only between lines (T-153). It
-  improves with 2-opt and Or-opt until nothing improves or the program's budget
-  of 40,000,000 evaluated candidate moves (`RouteBudget.MaxEvaluations`, shared
-  in proportion to node counts) is spent; the fine of every move is exact.
+  improves with 2-opt and Or-opt until nothing improves or its allowance of
+  1,000 evaluated candidate moves per node (`MN_EVALUATIONS_PER_NODE`, T-211;
+  the former program budget of 40,000,000 stopped 268 of the 320 routes of the
+  user's heart, where convergence takes 73 per node) is spent; the fine of
+  every move is exact.
   Going around an obstacle is not a separate search: the tour through the
   intermediate nodes is the way around, and the cost of a move over an
   obstacle is its climb.
@@ -453,9 +445,10 @@ Uncuttable classification (`UncuttableRegions`):
   changes starts a new coordinate set and so a new movement, whatever the angle,
   on circles as on corners; a node is straight on when the sine of the change is
   within 0.001 (float noise of the node coordinates) and the direction does not
-  reverse. The first and last 5 mm of every movement run at a third of the
-  speed (`TurnFine.SlowSpeedFactor`, three times slower, T-155): a fined node
-  slows the 5 mm before and after it, a millimetre is slow once where zones
+  reverse. The route solver prices the first and last 5 mm of every movement
+  at a third of the speed (`TurnFine.SlowSpeedFactor`, three times slower,
+  T-155; since T-215 only the price: the toolpath and the .nc file run at the
+  feed rate, user request): a fined node slows the 5 mm before and after it, a millimetre is slow once where zones
   overlap (a movement shorter than 10 mm is slow over its whole length) and
   route ends clip the zones. Short steps therefore run slow along their whole
   length and the solver keeps long straight moves. The fine is charged on XY
@@ -470,21 +463,18 @@ Uncuttable classification (`UncuttableRegions`):
   and the change is exact. The local search cannot turn a spiral into rows, so
   the start walk decides the turn structure; that is why the sweeps are among the
   start walks.
-- Slow zones (`SlowZones`, `mn_slow.c`, T-155): the fine is written into the
-  toolpath right after the simplifier. A movement is a run of feed segments
-  straight on in XY by the rule above (a feed junction with the same XY
-  direction continues it, whatever the Z slope); rapids, plunges, feeds without
-  XY travel and every direction change end a movement. The first and last 5 mm
-  of XY travel of every movement run at a third of the feed rate, a movement up
-  to 10 mm wholly, at route ends as well (the solver leaves those zones out of
-  its cost because every order of a route pays them). The chords are split at
-  the zone boundaries, the original vertices stay, and the statistics, the
-  simulation and the .nc file carry the slow rates. The layer marks are
-  rewritten for the split as for the simplification.
+- One speed (T-215, user request): the slow zones of T-155, which split the
+  chords at the zone boundaries and gave the toolpath and the .nc file a third
+  of the feed rate there, are gone with `mn_slow.c` and `SlowZones`; the turn
+  fine above only prices the routes. Every feed and plunge runs at `FeedRate`
+  (the plunge rate went too, so a travel weighs the retract against the
+  polyline at the feed rate), the statistics, the simulation and the .nc file
+  carry that one rate, and the machine's planner slows at the corners by its
+  own acceleration settings.
 - Layers (`ToolpathLayer`, `mn_result_layers`, T-154): the strategies mark the
-  first segment of every run of consecutive routes at one plan level (the top
-  band route and every cave block in "Z layer by layer", every level in "3 axis
-  freedom"); a mark at the level of the previous one joins it. The simplifier
+  first segment of every run of consecutive routes at one plan level (every
+  far block step and every cave block); a mark at the level of the previous one
+  joins it. The simplifier
   ends a feed run at a mark, so the layer starts at a real segment, and rewrites
   the index. The Z layer strategy visits caves depth first, so a level can come
   back as a later layer; consecutive layers always differ in level.
@@ -494,13 +484,8 @@ Uncuttable classification (`UncuttableRegions`):
   solved over the material as it stands at that moment (the cave's cells at the
   level, everything else at what the previous routes left), so a move that
   leaves the cave climbs the standing material instead of slotting through it.
-  Should-cut passes (T-136): after the level route of a cave, one route visits
-  every cave cell whose footprint holds a should-cut cell and whose tip lies
-  between this level and the next at its tip; the band between the stock top and
-  the first level, which is in no cave, gets such a route before the first cave.
-  Every such cell is a node (a lattice at the finishing stepover left the stock
-  higher than the head limit counts on). Without should-cut cells the strategy is
-  unchanged.
+  The should-cut routes of T-136 (stock the recursion marked) went with the
+  recursion in T-214.
 - Far stepdown (`FarStepdown`, T-156, "Z layer by layer" only): 0 or the
   Stepdown itself for none (T-196: nothing goes deeper than one Stepdown, and
   every strategy and collision mode mills exactly as with 0, `mn_far_levels`),
@@ -509,8 +494,8 @@ Uncuttable classification (`UncuttableRegions`):
   region of its bottom level, the positions of that level's mask at least the
   Stepover away from every cell whose strategy tip stands above the level (the
   model, the standing stock, the raised positions), is routed first at the bottom
-  level in one step down from where the material stands, with its should-cut
-  route; the footprints of those positions cover exactly the material at least
+  level in one step down from where the material stands; the footprints of
+  those positions cover exactly the material at least
   the Stepover away from what stays. Then the caves of the group's levels run as
   above over the masks without the far cells (the band nearer than the Stepover
   and whatever is reachable only above the bottom level), and the next group
@@ -546,9 +531,9 @@ Uncuttable classification (`UncuttableRegions`):
   is the T-157 rule with thresholds delta_t = max(R(D_t - c) + m, max over
   steps u with D_t - D_u > c of delta_(u+1) - r + R(D_t - D_u - c) + m), D_t the
   depth of step t below that top, c the cutter length, r the cutter radius; T-157
-  added r in the chain instead of subtracting it and stopped one step early. Both
-  collision modes see nothing to fix in the far block; beside the model they
-  decide as without a far stepdown. Under a head narrower than the cutter the
+  added r in the chain instead of subtracting it and stopped one step early. The
+  backward check sees nothing to fix in the far block; beside the model it
+  decides as without a far stepdown. Under a head narrower than the cutter the
   disk radius is `max(R(H), r)` (T-165, section 6.2).
 - Far stepdown withdrawn around collisions (T-164, user request): after every
   pass whose check found collisions, each collision's place (every cell the
@@ -558,11 +543,9 @@ Uncuttable classification (`UncuttableRegions`):
   the group masks and are milled with the normal Stepdown. The far positions a
   later pass may take are the first pass's far area less every withdrawal
   (`far_allowed`, filtered in `far_cells_of`), so the far area never grows. A
-  withdrawal that removed at least one position starts another pass in either
-  collision mode (one run then runs more than one pass), under the same rules
-  as the recursion: only while the entered cells or the unremovable ones still
-  decrease, at most `MN_MAX_PASSES`, the pass with the fewest entered cells
-  kept. The result carries the first pass's far area, the kept pass's far
+  withdrawal that removed at least one position starts another pass, only while
+  the entered cells or the unremovable ones still decrease, at most
+  `MN_MAX_PASSES`, the pass with the fewest entered cells kept. The result carries the first pass's far area, the kept pass's far
   area and the positions withdrawn before the kept pass, and per pass the far
   positions and the withdrawn ones; the statistics show both in mm2 per pass.
 - Route units (T-166, T-167, user request): before any route is solved, the Z
@@ -585,42 +568,22 @@ Uncuttable classification (`UncuttableRegions`):
   is short. The units are solved on up to min(`MN_MAX_WORKERS` (64), processors) workers,
   each taking the next unit in order as soon as it is free (T-195, no wave waits
   for its longest unit), from its own copy of the planned heights the units
-  before it leave (replayed region by region: the routes write only regions
-  while the guard is off) and with its own writer placed at its entry; with the
-  guard on (one run, one worker) a unit starts from the heights and the position
-  the unit before actually left. The groups are prepared at once as well (T-195:
+  before it leave (replayed region by region: the routes write only regions)
+  and with its own writer placed at its entry. The groups are prepared at once as well (T-195:
   the standing maps folded per group and combined as running minima, then one
   group per worker). The
   paths and layer marks are appended in unit order and the established stages
-  (simplifier, slow zones, statistics, check) continue. The evaluation budget
-  is shared by node count in unit order. One run decides every node against the
-  material the earlier routes actually left, so its waves hold one unit. The
-  result is the same for every worker count. With one unit (no far stepdown,
+  (simplifier, statistics, check) continue. The evaluation budget
+  is shared by node count in unit order. The result is the same for every
+  worker count. With one unit (no far stepdown,
   one cave at the top) the path is the established one bit for bit; with
   several, the fixed unit boundaries change the routes there, and with them the
   collision count: the user's heart at 0.025 mm cells kept 61 events against 63
   of Build_1.0.118 (34 segments touching the model in both, 229.5 against 228.8
   estimated minutes), its route stage took 345 s against 687 s.
-- One run (`CollisionMode.OneRun`, T-150): both strategies keep the material as
-  their routes leave it (the footprint of every visited node stamped into a copy
-  of the stock) and evaluate every node of a route against it before the route
-  is solved. A cell in the head ring standing above the underside is an internal
-  blocker when another node of the route cuts it low enough (a precedence pair
-  orders that node first), a clearing blocker when a position at its tip, not
-  below the route's level, cuts it low enough (those cells are lowered by a
-  clearing route before the route: every position whose footprint holds one, at
-  `max(tip, level)`), and impossible otherwise (the model, or stock only the
-  model's removal would free). A node with impossible blockers is achieved when
-  `finished > Y * damaged` (the same counts as X), otherwise dropped and its cell
-  lifted until the head clears; the other cells of the route's region are lifted
-  the same way so the chords between the nodes climb over what their head would
-  meet, and a travel between routes takes the retract when its polyline's head
-  would meet the standing material. Cyclic pairs drop the nodes on the cycle.
-  The route solver takes the pairs (`RouteProblem.Before`/`After`): the walks
-  visit a node once its predecessors are visited and 2-opt or Or-opt applies a
-  move only when the route it produces keeps every pair.
-- Backwards (`CollisionMode.Backwards`, T-169 to T-172, user request; Z layer
-  only, the validator refuses it with 3 axis freedom): a check from the lowest
+- Backwards (`CollisionMode.Backwards`, T-169 to T-172, user request; with
+  Backwards_GPU the only collision handling since T-214, and the default; the
+  strategy on its own runs it as well, `mn_strategy_generate`): a check from the lowest
   level up (`mn_backwards.c`) on a thread of its own with half the workers
   (max(1, W / 2), its rows split over them), the route solver on the other half.
   Every cell of a level's mask is a tool position (one cell apart, at most the
@@ -641,19 +604,18 @@ Uncuttable classification (`UncuttableRegions`):
   user request: Backwards routes by the rules of "Z layer by layer"): the
   reached plan, each level's mask without the positions that do not reach it,
   and the strategy tip with those positions raised to the deepest level they
-  reach (the stock top where they reach none), as the recursion raises a
-  position. The Z layer then routes that plan exactly as it routes a pass: far
+  reach (the stock top where they reach none). The Z layer then routes that plan exactly as it routes a pass: far
   stepdown slabs whose far block takes only positions at least the stepover
   from every obstacle, the raised positions included, in steps within the
   cutter length where the head clears what stands (T-156, T-157, T-162, T-164),
   everything else at every level cave by cave, in route units ending where the
-  next begins, priced with the turn fine. Where nothing is unreached the
-  toolpath is the Z layer's (Recursion's first pass) bit for bit. The far go of
+  next begins, priced with the turn fine. Where nothing is unreached the plan
+  and the tip are the pass's own. The far go of
   T-171 (every position reached on all levels of a batch, cut in one step at
   its bottom level) is gone: it cut the band beside the walls a far stepdown
   deep (on the user's heart at 0.05 mm 22 percent of the depth steps were one
   stepdown, 70 percent after T-193, 69 percent in Recursion). The established
-  stages follow (simplifier, slow zones, statistics, check; the far withdrawal
+  stages follow (simplifier, statistics, check; the far withdrawal
   of T-164 may start another pass). Statistics: "Unreached cells
   (Backwards): U of M model cells, P %", U the unreached positions summed over
   the levels, M the cells whose model stands above a level summed over the
@@ -692,15 +654,6 @@ Uncuttable classification (`UncuttableRegions`):
   T-187). The validator refuses the mode without an OpenCL GPU; there is no CPU
   path behind a GPU call. The statistics name the GPU and every process time
   (`ProcessTimes`, `mn_result_timings`).
-- "3 axis freedom": one free route per level of the plan. At level L the nodes
-  are the coverage cells whose tip lies below the previous level (the stock top
-  for the first), each at `max(tip, L)`, and the moves follow the surface
-  polyline over the level map `max(tip, L)`, so the tool cuts at most one
-  `Stepdown` into the material the previous level left and a wall is descended
-  level by level. A cell whose tip lies between two levels is visited last at its
-  tip, so the surface is followed without level quantization. The program starts
-  with a plunge from safe Z at the first node. It needs no should-cut pass
-  (T-136) for the same reason.
 - Segments (`RouteWriter`): level, rising and gently descending parts of the
   polyline are feeds; a descent steeper than `MaxRampSlope` (2, about 63
   degrees) is a feed over the lower point and a plunge. A travel between two
@@ -720,10 +673,10 @@ Uncuttable classification (`UncuttableRegions`):
   one cell inside the simplifier was tried and rejected: a chord along one
   corner family shifts the cutter a cell off the closing, which leaves a strip
   of wall at full level height and brings the head onto standing stock.
-- `Stepover`, `FinishingStepover`: valid range `(0, CutterDiameter]`.
+- `Stepover`: valid range `(0, CutterDiameter]`.
 - `SafeHeight`: clearance above the stock top for rapid moves. The absolute rapid Z is
   stock top + `SafeHeight`; the value must be > 0 and does not depend on the origin mode.
-- Feed kinds: `Feed` uses `FeedRate`, `Plunge` uses `PlungeRate`, `Rapid` uses
+- Feed kinds: `Feed` and `Plunge` use `FeedRate` (T-215), `Rapid` uses
   `RapidRate` (only for time estimation and simulation; G-code emits `G0`).
 
 ### 6.5 G-code (Grbl post-processor)
@@ -734,10 +687,11 @@ Uncuttable classification (`UncuttableRegions`):
 ( stock: box 100x60x20 )
 G21 G90 G94 G17
 S12000 M3
+F<FeedRate>
 G0 Z<stock top + SafeHeight>
 G0 X.. Y..
-G1 Z.. F<PlungeRate>
-G1 X.. Y.. Z.. F<FeedRate>
+G1 Z..
+G1 X.. Y.. Z..
 ...
 G0 Z<stock top + SafeHeight>
 M5
@@ -745,10 +699,10 @@ M30
 ```
 
 - Numbers: invariant culture, 3 decimals, trailing zeros trimmed (`12.5`, `0`).
-- `F` is emitted only when the feed rate changes. The slow zones of section 6.4
-  appear as `F` at a third of the feed rate (`F266.667` for 800) on the first
-  and last 5 mm of every movement, so a long straight movement is three `G1`
-  lines.
+- `F` is written once, on its own line after the spindle (T-215, user request:
+  the speed is configured at the start and never changed); no `G1` carries `F`.
+  A toolpath with a feed or plunge at another rate than `FeedRate` is refused
+  by the post-processor instead of being written with a wrong speed.
 - Only `G0`, `G1`, `G17`, `G21`, `G90`, `G94`, `M3`, `M5`, `M30`, `F`, `S`, `X`,
   `Y`, `Z`. No arcs, no tool changes, no cutter compensation.
 - Line endings `\n`. File extension `.nc`.
@@ -839,20 +793,17 @@ M30
 | Frustum only: `HeadTopDiameter > CutterDiameter`, finite | Tool.HeadTopDiameter |
 | Frustum only: `HeadLength > 0`, finite | Tool.HeadLength |
 | `0 < Stepover <= CutterDiameter` | Parameters.Stepover |
-| `0 < FinishingStepover <= CutterDiameter` | Parameters.FinishingStepover |
 | `Stepdown > 0` | Parameters.Stepdown |
 | `FarStepdown == 0`, `FarStepdown == Stepdown` (both none, T-196) or a whole multiple of `Stepdown` of at least `2 * Stepdown` (within `Slicer.LevelTolerance`) | Parameters.FarStepdown |
 | `FarStepdown <= CutterLength` (warning, not error: the far block then steps by the cutter length; every collision mode, Backwards too since T-193) | Parameters.FarStepdown |
 | `SafeHeight > 0` (clearance above the stock top) | Parameters.SafeHeight |
 | `0.01 <= CellSize <= 5` | Parameters.CellSize |
-| `FeedRate, PlungeRate, RapidRate > 0` | Parameters.* |
+| `FeedRate, RapidRate > 0` | Parameters.* |
 | `SpindleRpm > 0` | Parameters.SpindleRpm |
 | `0 < ReachPercent <= 100` | Strategy.ReachPercent |
 | `MinIslandVolume >= 0` | Strategy.MinIslandVolume |
-| `CollisionMode` is `Recursion`, `OneRun`, `Backwards` or `Backwards_GPU` | Strategy.CollisionMode |
-| `Backwards` and `Backwards_GPU` only with the Z layer by layer strategy | Strategy.CollisionMode |
+| `CollisionMode` is `Backwards` or `Backwards_GPU` (T-214) | Strategy.CollisionMode |
 | `Backwards_GPU` only with an OpenCL GPU (`GpuDevice.Available`) | Strategy.CollisionMode |
-| `RecursionRatio`, `OneRunRatio` finite and `>= 0` | Strategy.RecursionRatio, Strategy.OneRunRatio |
 | Stock dimensions > 0 | Stock.* |
 | Model bounds inside the stock box, both from the stock corner in the global frame (`ModelLayout.ModelBoundsInStock`, independent of the origin mode; warning, not error) | Stock.Placement |
 | Grid size `Width * Height <= 4_000_000` cells | Parameters.CellSize |
@@ -2530,6 +2481,30 @@ check that decides done.
 - Input: user request (for all options the far stepdown may equal the normal stepdown; the far stepdown is then off and all milling uses the normal stepdown as its deepest cut; define the existing milling strategies and implement it)
 - Output: `mn_far_levels` (k >= 2 on, 1 off for 0 or the stepdown, 0 invalid) decides the Z layer's groups and the far withdrawal's passes; `ProjectValidator.IsFarStepdownOff`, the error text and the Cutting tab label name the new value; the cutter length warning only for a far stepdown that is on. The options: strategies "Z layer by layer" (collision modes Recursion, One run, Backwards, Backwards_GPU; the far stepdown applies) and "3 axis freedom" (Recursion, One run; it never reads the far stepdown), cut scopes Everything and Separation
 - Acceptance: 0, the stepdown (2 and 2.00005 over 2, 0.2 over 0.2), 4, 6 and 0.6 over 0.2 accepted, 1, 3, 2.001, negative, NaN and infinite refused, no cutter length warning for the stepdown itself, the stepdown accepted with every strategy and mode; for every strategy, every mode it takes and both scopes the stepdown as far stepdown gives the toolpath, layers, passes, unit entries, unreached and not-cut counts and events of 0 bit for bit and no far area; 910 tests pass
+- Status: done
+
+#### T-213 The cutter in the viewport from the start
+- Depends on: T-140, T-199
+- Files: `src/Miller.App/ViewModels/MainWindowViewModel.cs`, `tests/Miller.Tests/App/MainWindowViewModelTests.cs`
+- Input: user request (the tool is not drawn while the machine runs until a project is loaded)
+- Output: the main view model fills the viewport scene once at construction, so the viewport holds the project's tool before any project event; the machine view and a connected machine draw it at once
+- Acceptance: a fresh window model has the default tool in the viewport, no meshes and no pending fit; the machine view and a machine position show it; a Tool tab edit and a new project replace it
+- Status: done
+
+#### T-214 Z layer by layer with Backwards as the only generation
+- Depends on: T-169 to T-177, T-193
+- Files: `src/Miller.Native/src/mn_strategies.c`, `mn_pipeline.c`, `mn_collision.c`, `mn_solver.c`, `mn_writer.c`, `mn_maps.c`, `mn_internal.h`, `include/miller_native.h`, `src/Miller.Core/Setup/*` (`CollisionModeConverter.cs` new), `src/Miller.Core/Toolpath/*`, `src/Miller.Core/Native/CoreNative.cs`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Solver/*`, `src/Miller.Application/*`, `src/Miller.App/ViewModels/*`, `src/Miller.App/Views/*`, tests
+- Input: user request (for path generation exclude all strategies except Z layer by layer with Backwards on the GPU and the CPU)
+- Output: `CollisionMode` is Backwards (0, the default) and Backwards_GPU (1), the native numbers renumbered alike; removed end to end: "3 axis freedom", Recursion (resolve, propagation, should-cut routes), One run (guard, clearing routes, writer guard, solver precedence pairs), the ratio and finishing stepover settings; old project and preset files load with the removed ids and modes mapped to `z-layer-by-layer` and Backwards and their settings dropped on write; the native library refuses any other mode or strategy number
+- Acceptance: Backwards and Backwards_GPU toolpaths, layers, unit entries, passes, events, unreached and not-cut counts and statistics bit for bit equal to Build_1.0.131 on the wall and frustum fixtures (far stepdown 0 and 4), the heart sample in both scopes and the user's heart at 0.05 mm cells (21 of 21 hashes); the user's Build_1.0.131 project loads unchanged apart from the dropped fields; tests of the removed modes deleted, the others moved to Backwards with the impact noted in `src/CLAUDE.md`
+- Status: done
+
+#### T-215 One feed rate, set once in the program header
+- Depends on: T-155, T-214
+- Files: `src/Miller.Native/src/mn_pipeline.c`, `mn_writer.c`, `mn_slow.c` (removed), `src/Miller.Core/GCode/GrblPostProcessor.cs`, `src/Miller.Core/Toolpath/SlowZones.cs` (removed), `src/Miller.Core/Setup/CuttingParameters.cs`, the Cutting tab, tests, `tests/Miller.Tests/Golden/*.nc`
+- Input: user request (the speed reduction is for path evaluation only and must not be saved as F commands in the .nc; the speed is set only at the beginning of the file); user decision: one F, plunges at the feed rate, the plunge rate removed
+- Output: the slow zones price the routes only; every feed and plunge runs at `FeedRate`; the Grbl file writes `F<FeedRate>` once after the spindle and no `G1` carries `F`; a toolpath with another feed rate is refused by the post-processor; old files drop `PlungeRate` on load
+- Acceptance: the box fixture's feeds and plunges all at the feed rate, its estimated time equal to length over rate and to the simulated time, its .nc with one `F` before the first move, a resume program keeping it; the solver tests unchanged; the heart golden regenerated (Backwards, 1,878 segments, 2.1 min); the user's heart at 0.05 mm cells 575.0 to 174.9 estimated minutes with zero events and the same 1,061 unreached cells; 922 tests pass
 - Status: done
 
 #### T-165 Head bottom down to half the cutter diameter

@@ -10,14 +10,14 @@ public sealed class CuttingParametersViewModel : SettingsViewModelBase
 {
     private static readonly string[] BoundProperties =
     {
-        nameof(FeedRate), nameof(PlungeRate), nameof(RapidRate), nameof(SpindleRpm), nameof(Stepover), nameof(FinishingStepover),
+        nameof(FeedRate), nameof(RapidRate), nameof(SpindleRpm), nameof(Stepover),
         nameof(Stepdown), nameof(FarStepdown), nameof(SafeHeight), nameof(CellSize), nameof(Tolerance), nameof(GridSizeText),
     };
 
     private static readonly string[] ErrorProperties =
     {
-        nameof(FeedRateError), nameof(PlungeRateError), nameof(RapidRateError), nameof(SpindleRpmError), nameof(StepoverError),
-        nameof(FinishingStepoverError), nameof(StepdownError), nameof(FarStepdownError), nameof(FarStepdownWarning), nameof(SafeHeightError), nameof(CellSizeError), nameof(CellSizeWarning),
+        nameof(FeedRateError), nameof(RapidRateError), nameof(SpindleRpmError), nameof(StepoverError),
+        nameof(StepdownError), nameof(FarStepdownError), nameof(FarStepdownWarning), nameof(SafeHeightError), nameof(CellSizeError), nameof(CellSizeWarning),
     };
 
     public CuttingParametersViewModel(ProjectService project)
@@ -28,15 +28,11 @@ public sealed class CuttingParametersViewModel : SettingsViewModelBase
 
     public float FeedRate { get => Current.Parameters.FeedRate; set => Edit(p => p.Parameters.FeedRate = value); }
 
-    public float PlungeRate { get => Current.Parameters.PlungeRate; set => Edit(p => p.Parameters.PlungeRate = value); }
-
     public float RapidRate { get => Current.Parameters.RapidRate; set => Edit(p => p.Parameters.RapidRate = value); }
 
     public float SpindleRpm { get => Current.Parameters.SpindleRpm; set => Edit(p => p.Parameters.SpindleRpm = value); }
 
     public float Stepover { get => Current.Parameters.Stepover; set => Edit(p => p.Parameters.Stepover = value); }
-
-    public float FinishingStepover { get => Current.Parameters.FinishingStepover; set => Edit(p => p.Parameters.FinishingStepover = value); }
 
     public float Stepdown { get => Current.Parameters.Stepdown; set => Edit(p => p.Parameters.Stepdown = value); }
 
@@ -58,15 +54,11 @@ public sealed class CuttingParametersViewModel : SettingsViewModelBase
 
     public string? FeedRateError => ErrorFor("Parameters.FeedRate");
 
-    public string? PlungeRateError => ErrorFor("Parameters.PlungeRate");
-
     public string? RapidRateError => ErrorFor("Parameters.RapidRate");
 
     public string? SpindleRpmError => ErrorFor("Parameters.SpindleRpm");
 
     public string? StepoverError => ErrorFor("Parameters.Stepover");
-
-    public string? FinishingStepoverError => ErrorFor("Parameters.FinishingStepover");
 
     public string? StepdownError => ErrorFor("Parameters.Stepdown");
 

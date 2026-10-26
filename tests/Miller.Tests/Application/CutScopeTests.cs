@@ -67,26 +67,6 @@ public sealed class CutScopeTests
     }
 
     [Fact]
-    public void Separation_WithThreeAxisFreedom_LeavesTheCornersAndHasNoEvents()
-    {
-        var project = BoxProject(CutScope.Separation);
-        project.RoutingStrategyId = "three-axis-freedom";
-        var result = Run(project);
-        Assert.Empty(GougeChecker.Verify(result.Toolpath, result.EffectiveTip, result.Tolerance));
-        var simulation = new SimulationService();
-        simulation.Load(result);
-        simulation.RunToEnd();
-        Assert.Empty(simulation.Events);
-        var stock = simulation.Stock!;
-        Assert.Equal(result.Stock.StockTop, stock[0, 0], 3);
-        // y = 23: the +X holding bridge lies on y = 20.
-        var (bi, bj) = stock.CellOf(20f + 5f + 0.75f, 23f);
-        Assert.Equal(result.Floor, stock[bi, bj], 3);
-        var (mi, mj) = stock.CellOf(20f, 20f);
-        Assert.Equal(5f, stock[mi, mj], 2);
-    }
-
-    [Fact]
     public void Separation_MillsOutTheHoleIslandBelowTheVolume_EndToEnd()
     {
         var project = MillingProject.Default();
@@ -160,10 +140,14 @@ public sealed class CutScopeTests
         Assert.Empty(simulation.Events);
         var stock = simulation.Stock!;
         Assert.Equal(result.Stock.StockTop, stock[0, 0], 3);
-        // The trench reaches the floor beyond the collar the head limit keeps beside the box (y = 23:
-        // the +X holding bridge lies on y = 20).
+        // T-214: the recursion moved the trench beyond a collar beside the box and cut it to the floor there;
+        // Backwards keeps the trench of the plan and leaves the positions the 12 mm cutter cannot reach under
+        // its head unreached, so the trench stops 10 mm above the floor (x 27.5 to 33.5 at y = 23, the +X
+        // holding bridge lies on y = 20) and the not-cut report names what stays.
         var (ti, tj) = stock.CellOf(20f + 5f + 5f + 0.75f, 23f);
-        Assert.Equal(result.Floor, stock[ti, tj], 3);
+        Assert.Equal(10f, stock[ti, tj], 3);
+        Assert.True(result.Unreached!.Value.Unreached > 0, "the short cutter must leave positions unreached");
+        Assert.True(result.Uncut.Cells > 0, "the not-cut report must name the material the trench leaves");
         // Terrace: at half depth the trench is wider than at the floor.
         int TrenchCells(float z)
         {
@@ -254,7 +238,10 @@ public sealed class CutScopeTests
     }
 
     [Fact]
-    public void HeartFixture_SeparationHasNoCollisionsAndLessFeed()
+    // T-210 changed the measure from the feed length to the material removed: the row nodes away from the
+    // walls shortened Everything's feed (3,214 to 2,531 mm) more than Separation's (3,005 to 2,840 mm), so
+    // the feed no longer orders the scopes, while Separation still leaves the stock around the cut standing.
+    public void HeartFixture_SeparationHasNoCollisionsAndRemovesLessMaterial()
     {
         var project = MillingProject.Default();
         project.Stock.SizeX = 30;
@@ -265,7 +252,7 @@ public sealed class CutScopeTests
         var import = new MeshImportService();
         import.Import(TestMeshes.FixturePath());
 
-        var results = new Dictionary<CutScope, PipelineResult>();
+        var remaining = new Dictionary<CutScope, double>();
         foreach (var scope in new[] { CutScope.Everything, CutScope.Separation })
         {
             project.CutScope = scope;
@@ -275,10 +262,10 @@ public sealed class CutScopeTests
             simulation.Load(result);
             simulation.RunToEnd();
             Assert.Empty(simulation.Events);
-            results[scope] = result;
+            remaining[scope] = simulation.Stock!.Z.Where(z => !float.IsNaN(z)).Sum(z => (double)z);
         }
 
-        Assert.True(results[CutScope.Separation].Statistics.FeedLength < results[CutScope.Everything].Statistics.FeedLength);
+        Assert.True(remaining[CutScope.Separation] > remaining[CutScope.Everything]);
     }
 
     [Fact]

@@ -228,12 +228,10 @@ public sealed class GpuTests
     }
 
     [Fact]
-    public void BackwardsGpu_NeedsTheZLayer_AndRoundTripsByName()
+    public void BackwardsGpu_NeedsAGpu_AndRoundTripsByName()
     {
         var project = Frustum(CollisionMode.Backwards_GPU, 0f);
         Assert.Equal(GpuDevice.Available, !ProjectValidator.Validate(project, null).Errors.Any(e => e.Field == "Strategy.CollisionMode"));
-        project.RoutingStrategyId = ThreeAxisFreedomStrategy.StrategyId;
-        Assert.Contains(ProjectValidator.Validate(project, null).Errors, e => e.Field == "Strategy.CollisionMode" && e.Message.Contains("Z layer", StringComparison.Ordinal));
         var json = ProjectSerializer.Serialize(project);
         Assert.Contains("\"CollisionMode\": \"Backwards_GPU\"", json);
         Assert.Equal(CollisionMode.Backwards_GPU, ProjectSerializer.Deserialize(json).CollisionMode);

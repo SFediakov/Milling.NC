@@ -68,10 +68,8 @@ internal static unsafe class CoreNative
     public struct Parameters
     {
         public float FeedRate;
-        public float PlungeRate;
         public float RapidRate;
         public float Stepover;
-        public float FinishingStepover;
         public float Stepdown;
         public float SafeHeight;
         public float CellSize;
@@ -108,15 +106,12 @@ internal static unsafe class CoreNative
         public float* EffectiveTip;
         public float* HeadLimit;
         public float* Stock;
-        public byte* ShouldCut;
         public IntPtr Plan;
         public Tool Tool;
         public Parameters Parameters;
         public float StockTop;
         public float Floor;
         public int CollisionMode;
-        public float Ratio;
-        public float* Raised;
         public byte* FarAllowed;
         public byte* FarArea;
         public IntPtr Gpu;
@@ -141,7 +136,6 @@ internal static unsafe class CoreNative
     public const int EventRapid = 1;
 
     public const int MaskHeadLimited = 0;
-    public const int MaskShouldCut = 1;
     public const int MaskStatus = 2;
     public const int MaskContacts = 3;
     public const int MaskFarFirst = 4;
@@ -171,8 +165,6 @@ internal static unsafe class CoreNative
         public float MinIslandVolume;
         public float ReachPercent;
         public int CollisionMode;
-        public float RecursionRatio;
-        public float OneRunRatio;
         public int BridgeCount;
         public float BridgeWidth;
         public float BridgeHeight;
@@ -245,6 +237,7 @@ internal static unsafe class CoreNative
 
     [DllImport(Library)] public static extern int mn_step_cells(float spacing, float cellSize);
     [DllImport(Library)] public static extern int mn_on_lattice(int index, int count, int step);
+    [DllImport(Library)] public static extern int mn_column_step(int rowStep, float cutterRadius, float cellSize);
     [DllImport(Library)] public static extern int mn_lattice_nodes(byte* inside, int width, int height, int step, int** nodes, int* count);
     [DllImport(Library)] public static extern int mn_is_outline(byte* inside, int width, int height, int i, int j);
 
@@ -256,14 +249,11 @@ internal static unsafe class CoreNative
     [DllImport(Library)] public static extern int mn_writer_finish(IntPtr writer, Segment** segments, int* count);
     [DllImport(Library)] public static extern void mn_writer_free(IntPtr writer);
 
-    [DllImport(Library)] public static extern void mn_level_map(float* tip, int cells, float level, float* result);
-    [DllImport(Library)] public static extern int mn_is_step(Grid* grid, float* map, int i, int j, float tolerance);
     [DllImport(Library)] public static extern int mn_strategy_generate(int strategy, Context* context, IntPtr progress, IntPtr progressContext, int* cancel, Segment** segments, int* count);
     [DllImport(Library)] public static extern int mn_gouge_verify(Segment* segments, int count, Grid* grid, float* effectiveTip, float tolerance, int** segmentIndex, float** positions, float** depths, int* violationCount);
     [DllImport(Library)] public static extern int mn_gouge_is_clear(Segment* segment, Grid* grid, float* effectiveTip, float tolerance);
     [DllImport(Library)] public static extern int mn_simplify(Segment* segments, int count, Grid* grid, float* effectiveTip, float tolerance, Segment** result, int* resultCount);
     [DllImport(Library)] public static extern int mn_kept_indices(float* points, int count, Grid* grid, float* effectiveTip, float tolerance, float feedRate, int** kept, int* keptCount);
-    [DllImport(Library)] public static extern int mn_slow_zones_apply(Segment* segments, int count, Segment** result, int* resultCount);
     [DllImport(Library)] public static extern float mn_distance_to_segment(float* p, float* a, float* b);
     [DllImport(Library)] public static extern int mn_statistics_compute(Segment* segments, int count, float rapidRate, Statistics* statistics);
     [DllImport(Library)] public static extern int mn_collision_check(Segment* segments, int count, Grid* grid, float* stock, float* model, float floor, Tool* tool, float tolerance, byte* status, Collision** events, int* eventCount);
@@ -393,10 +383,8 @@ internal static unsafe class CoreNative
     public static Parameters ParametersOf(CuttingParameters p) => new()
     {
         FeedRate = p.FeedRate,
-        PlungeRate = p.PlungeRate,
         RapidRate = p.RapidRate,
         Stepover = p.Stepover,
-        FinishingStepover = p.FinishingStepover,
         Stepdown = p.Stepdown,
         SafeHeight = p.SafeHeight,
         CellSize = p.CellSize,

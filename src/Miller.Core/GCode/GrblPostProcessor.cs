@@ -4,8 +4,11 @@ using Miller.Core.Toolpaths;
 namespace Miller.Core.GCode;
 
 // Grbl v1.1 subset, template in docs/DEVELOPMENT_GUIDE.md 6.5: header comments, G21 G90 G94 G17,
-// spindle on, G0 to safe Z and the start point, then one line per segment end (G0 for rapids, G1
-// with F only when the rate changes), spindle off, M30. Line endings are LF regardless of the OS.
+// spindle on, the feed rate once (T-215, user request: the speed is set at the start and never changed;
+// the slow zones of the turn fine only price the routes), G0 to safe Z and the start point, then one line
+// per segment end (G0 for rapids, G1 for feeds and plunges, without F), spindle off, M30. Line endings are
+// LF regardless of the OS. A toolpath whose feeds or plunges carry another rate than the project's feed
+// rate cannot be written as one feed and is refused.
 public sealed class GrblPostProcessor : IPostProcessor
 {
     public const string ProcessorId = "grbl";
@@ -25,6 +28,18 @@ public sealed class GrblPostProcessor : IPostProcessor
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentException.ThrowIfNullOrWhiteSpace(appVersion);
 
+        var feed = project.Parameters.FeedRate;
+        for (var k = 0; k < toolpath.Count; k++)
+        {
+            var s = toolpath.Segments[k];
+            if (s.Kind != MoveKind.Rapid && s.FeedRate != feed)
+            {
+                throw new ArgumentException(
+                    $"Segment {k} ({s.Kind}) runs at {GCodeFormatter.Format(s.FeedRate)} mm/min, but the program sets one feed rate, {GCodeFormatter.Format(feed)} mm/min.",
+                    nameof(toolpath));
+            }
+        }
+
         var tool = project.Tool;
         var stock = project.Stock;
         Line(writer, $"( Miller {Comment(appVersion)} )");
@@ -34,31 +49,17 @@ public sealed class GrblPostProcessor : IPostProcessor
             : $"( stock: box {GCodeFormatter.Format(stock.SizeX)}x{GCodeFormatter.Format(stock.SizeY)}x{GCodeFormatter.Format(stock.SizeZ)} )");
         Line(writer, "G21 G90 G94 G17");
         Line(writer, $"{GCodeFormatter.Word('S', project.Parameters.SpindleRpm)} M3");
+        Line(writer, GCodeFormatter.Word('F', feed));
 
         if (toolpath.Count > 0)
         {
             var start = toolpath.Segments[0].Start;
             Line(writer, $"G0 {GCodeFormatter.Word('Z', start.Z)}");
             Line(writer, $"G0 {GCodeFormatter.Word('X', start.X)} {GCodeFormatter.Word('Y', start.Y)}");
-            float? lastFeed = null;
             foreach (var s in toolpath.Segments)
             {
                 var xyz = $"{GCodeFormatter.Word('X', s.End.X)} {GCodeFormatter.Word('Y', s.End.Y)} {GCodeFormatter.Word('Z', s.End.Z)}";
-                if (s.Kind == MoveKind.Rapid)
-                {
-                    Line(writer, $"G0 {xyz}");
-                    continue;
-                }
-
-                if (lastFeed != s.FeedRate)
-                {
-                    lastFeed = s.FeedRate;
-                    Line(writer, $"G1 {xyz} {GCodeFormatter.Word('F', s.FeedRate)}");
-                }
-                else
-                {
-                    Line(writer, $"G1 {xyz}");
-                }
+                Line(writer, s.Kind == MoveKind.Rapid ? $"G0 {xyz}" : $"G1 {xyz}");
             }
         }
 

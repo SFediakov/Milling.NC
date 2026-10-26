@@ -12,8 +12,14 @@ public static class ProjectSerializer
         WriteIndented = true,
         IncludeFields = true,
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-        Converters = { new JsonStringEnumConverter() },
+        Converters = { new CollisionModeConverter(), new JsonStringEnumConverter() },
     };
+
+    // Strategies removed in T-214 ("three-axis-precise" is the id "3 axis freedom" had before): files naming
+    // them load with "Z layer by layer", the one strategy left.
+    public static readonly IReadOnlyList<string> RemovedStrategyIds = new[] { "three-axis-freedom", "three-axis-precise" };
+
+    public static string CurrentStrategyId(string id) => RemovedStrategyIds.Contains(id, StringComparer.Ordinal) ? MillingProject.DefaultRoutingStrategyId : id;
 
     public static string Serialize(MillingProject project)
     {
@@ -45,11 +51,13 @@ public static class ProjectSerializer
         project.FinishingStrategyId = null;
         project.Parameters.Direction = null;
 
-        // "3 axis precise" became "3 axis freedom" (one stepdown per pass) under a new id.
-        if (project.RoutingStrategyId == Toolpaths.Strategies.ThreeAxisFreedomStrategy.LegacyStrategyId)
-        {
-            project.RoutingStrategyId = Toolpaths.Strategies.ThreeAxisFreedomStrategy.StrategyId;
-        }
+        // T-214: the removed strategy and collision modes and their settings are dropped (the collision
+        // mode by CollisionModeConverter); T-215: the plunge rate is dropped.
+        project.RoutingStrategyId = CurrentStrategyId(project.RoutingStrategyId);
+        project.RecursionRatio = null;
+        project.OneRunRatio = null;
+        project.Parameters.FinishingStepover = null;
+        project.Parameters.PlungeRate = null;
 
         project.SchemaVersion = MillingProject.CurrentSchemaVersion;
         return project;

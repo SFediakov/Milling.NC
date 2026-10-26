@@ -13,6 +13,10 @@ public static class NodeLattice
 
     public static bool OnLattice(int index, int count, int step) => CoreNative.mn_on_lattice(index, count, step) != 0;
 
+    // The node step along a row of the Z layer lattice (T-210, mn_column_step): the largest step up to the
+    // row step whose node footprints alone cover the cells between two rows.
+    public static int ColumnStep(int rowStep, float cutterRadius, float cellSize) => CoreNative.mn_column_step(rowStep, cutterRadius, cellSize);
+
     // Flat indices (j * width + i) of the nodes of the region given by `inside`, in row-major order.
     // A cell is an outline cell when one of its eight neighbours lies in the grid but outside the
     // region.

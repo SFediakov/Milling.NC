@@ -28,7 +28,6 @@ public sealed class UncutStockTravelTests
 
     [Theory]
     [InlineData(ZLayerByLayerStrategy.StrategyId)]
-    [InlineData(ThreeAxisFreedomStrategy.StrategyId)]
     public void CrossingTheUncutWall_UsesTheSafePlane(string strategy)
     {
         var result = Run(strategy);
@@ -74,8 +73,7 @@ public sealed class UncutStockTravelTests
 
     [Theory]
     [InlineData(ZLayerByLayerStrategy.StrategyId, 5f)]
-    [InlineData(ThreeAxisFreedomStrategy.StrategyId, 5f)]
-    [InlineData(ThreeAxisFreedomStrategy.StrategyId, 2f)]
+    [InlineData(ZLayerByLayerStrategy.StrategyId, 2f)]
     public void FlushModelTop_NoMoveRunsBetweenTheStockTopAndTheSafePlane(string strategy, float safeHeight)
     {
         var result = RunFlushPyramid(strategy, safeHeight);

@@ -28,9 +28,9 @@ public sealed class RouteWriter
     public unsafe RouteWriter(CuttingParameters parameters, float safeZ)
     {
         ArgumentNullException.ThrowIfNull(parameters);
-        if (!(parameters.FeedRate > 0) || !(parameters.PlungeRate > 0) || !(parameters.RapidRate > 0))
+        if (!(parameters.FeedRate > 0) || !(parameters.RapidRate > 0))
         {
-            throw new ArgumentException("Feed, plunge and rapid rates must be positive.", nameof(parameters));
+            throw new ArgumentException("Feed and rapid rates must be positive.", nameof(parameters));
         }
 
         var native = CoreNative.ParametersOf(parameters);

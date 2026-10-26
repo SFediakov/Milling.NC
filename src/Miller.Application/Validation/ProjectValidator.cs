@@ -5,7 +5,6 @@ using Miller.Core.Native;
 using Miller.Core.HeightMaps;
 using Miller.Core.Setup;
 using Miller.Core.Slicing;
-using Miller.Core.Toolpaths.Strategies;
 
 namespace Miller.Application.Validation;
 
@@ -67,7 +66,6 @@ public static class ProjectValidator
         }
 
         InRange(errors, "Parameters.Stepover", p.Stepover, tool.CutterDiameter);
-        InRange(errors, "Parameters.FinishingStepover", p.FinishingStepover, tool.CutterDiameter);
         Positive(errors, "Parameters.Stepdown", p.Stepdown);
         if (p.Stepdown > 0 && !IsFarStepdownOff(p.FarStepdown, p.Stepdown) && !IsFarStepdown(p.FarStepdown, p.Stepdown))
         {
@@ -104,7 +102,6 @@ public static class ProjectValidator
         }
 
         Positive(errors, "Parameters.FeedRate", p.FeedRate);
-        Positive(errors, "Parameters.PlungeRate", p.PlungeRate);
         Positive(errors, "Parameters.RapidRate", p.RapidRate);
         Positive(errors, "Parameters.SpindleRpm", p.SpindleRpm);
         NonNegative(errors, "Strategy.MinIslandVolume", project.MinIslandVolume);
@@ -135,17 +132,11 @@ public static class ProjectValidator
         {
             errors.Add(new ValidationMessage("Strategy.CollisionMode", $"Unknown collision mode {project.CollisionMode}."));
         }
-        else if (project.CollisionMode is CollisionMode.Backwards or CollisionMode.Backwards_GPU && project.RoutingStrategyId != ZLayerByLayerStrategy.StrategyId)
-        {
-            errors.Add(new ValidationMessage("Strategy.CollisionMode", $"{project.CollisionMode} collision handling works with the Z layer by layer strategy only."));
-        }
         else if (project.CollisionMode == CollisionMode.Backwards_GPU && !GpuDevice.Available)
         {
             errors.Add(new ValidationMessage("Strategy.CollisionMode", $"Backwards_GPU needs an OpenCL GPU: {GpuDevice.Description}"));
         }
 
-        Finite(errors, "Strategy.RecursionRatio", project.RecursionRatio);
-        Finite(errors, "Strategy.OneRunRatio", project.OneRunRatio);
         if (!(project.ReachPercent > ReachMap.MinPercent && project.ReachPercent <= ReachMap.MaxPercent))
         {
             errors.Add(new ValidationMessage("Strategy.ReachPercent",
@@ -253,14 +244,6 @@ public static class ProjectValidator
         if (!(value >= 0))
         {
             errors.Add(new ValidationMessage(field, $"{field} must be 0 or greater, got {F(value)}."));
-        }
-    }
-
-    private static void Finite(List<ValidationMessage> errors, string field, float value)
-    {
-        if (!(float.IsFinite(value) && value >= 0))
-        {
-            errors.Add(new ValidationMessage(field, $"{field} must be a finite number of 0 or greater, got {F(value)}."));
         }
     }
 

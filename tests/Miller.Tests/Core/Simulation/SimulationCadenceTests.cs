@@ -50,9 +50,8 @@ public sealed class SimulationCadenceTests
         return new PipelineService().Run(project, new[] { TestMeshes.Box(10, 10, 2) }, null, CancellationToken.None);
     }
 
-    // The slotted plate under a cutter shorter than the slot with a zero ratio (CollisionModesTests):
-    // the slot floor is finished and the head contacts with the plate top are kept as events.
-    private static PipelineResult SlottedPlate(CollisionMode mode)
+    // The slotted plate under a cutter shorter than the slot.
+    private static PipelineResult SlottedPlate()
     {
         var project = MillingProject.Default();
         project.Tool.CutterDiameter = 3;
@@ -64,11 +63,38 @@ public sealed class SimulationCadenceTests
         project.Stock.SizeY = TestMeshes.SlottedPlateSize;
         project.Stock.SizeZ = TestMeshes.SlottedPlateHeight;
         project.Parameters.CellSize = 0.5f;
-        project.CollisionMode = mode;
-        project.RecursionRatio = 0;
-        project.OneRunRatio = 0;
         project.Models.Add(new ModelPlacement { StlPath = "plate.stl" });
         return new PipelineService().Run(project, new[] { TestMeshes.SlottedPlate() }, null, CancellationToken.None);
+    }
+
+    // The slotted plate's result with its toolpath replaced by a zigzag 4 mm above the floor of the 12 mm
+    // stock under the 6 mm cutter: the head enters the stock along every row. Since T-214 the generation
+    // keeps no head event on its own fixtures (Backwards leaves those positions out), so the events come
+    // from this path and the generation's check routine run on it (NativeCollisionCheck, mn_check_path).
+    private static (PipelineResult Result, CollisionReport Check) DeepZigzag()
+    {
+        var plate = SlottedPlate();
+        var path = new Toolpath();
+        var at = new Vector3(1, 2, 18);
+        path.Add(new ToolpathSegment(at, new Vector3(1, 2, 4), MoveKind.Plunge, plate.Parameters.FeedRate));
+        at = new Vector3(1, 2, 4);
+        for (var row = 0; row < 5; row++)
+        {
+            var across = new Vector3(row % 2 == 0 ? 19 : 1, at.Y, 4);
+            path.Add(new ToolpathSegment(at, across, MoveKind.Feed, plate.Parameters.FeedRate));
+            at = across;
+            if (row < 4)
+            {
+                var up = new Vector3(at.X, at.Y + 4, 4);
+                path.Add(new ToolpathSegment(at, up, MoveKind.Feed, plate.Parameters.FeedRate));
+                at = up;
+            }
+        }
+
+        path.Add(new ToolpathSegment(at, new Vector3(at.X, at.Y, 18), MoveKind.Rapid, plate.Parameters.RapidRate));
+        var result = plate with { Toolpath = path, Layers = new[] { new ToolpathLayer(0, 4f) } };
+        var check = NativeCollisionCheck.Run(path, plate.Stock.Map, plate.Model, plate.Floor, plate.Profile.Tool, CollisionDetector.Tolerance, out _);
+        return (result, check);
     }
 
     private static (float[] Stock, List<(SimulationEventKind Kind, int Segment, Vector3 Tip)> Events) Run(PipelineResult result, Action<SimulationEngine> drive)
@@ -89,7 +115,9 @@ public sealed class SimulationCadenceTests
         return (stock.Z, events);
     }
 
-    private static void AssertCadenceFree(PipelineResult result)
+    private static void AssertCadenceFree(PipelineResult result) => AssertCadenceFree(result, result.Collisions.Report!);
+
+    private static void AssertCadenceFree(PipelineResult result, CollisionReport check)
     {
         var runToEnd = Run(result, e => e.RunToEnd(TestContext.Current.CancellationToken));
         var fine = Run(result, e =>
@@ -124,16 +152,14 @@ public sealed class SimulationCadenceTests
         Assert.Equal(runToEnd.Events, coarse.Events);
         Assert.Equal(runToEnd.Events, seeks.Events);
 
-        var generation = result.Collisions.Report!.Events.Select(e => (e.Kind, e.SegmentIndex, e.Position)).ToList();
+        var generation = check.Events.Select(e => (e.Kind, e.SegmentIndex, e.Position)).ToList();
         Assert.Equal(generation, runToEnd.Events);
     }
 
-    [Theory]
-    [InlineData(ZLayerByLayerStrategy.StrategyId)]
-    [InlineData(ThreeAxisFreedomStrategy.StrategyId)]
-    public void Heart_StockAndEvents_AreTheSameAtEveryCadence_AndEqualTheGenerationCheck(string strategy)
+    [Fact]
+    public void Heart_StockAndEvents_AreTheSameAtEveryCadence_AndEqualTheGenerationCheck()
     {
-        AssertCadenceFree(Heart(strategy, 0.4f));
+        AssertCadenceFree(Heart(ZLayerByLayerStrategy.StrategyId, 0.4f));
     }
 
     [Fact]
@@ -142,14 +168,12 @@ public sealed class SimulationCadenceTests
         AssertCadenceFree(ShortCutterBox());
     }
 
-    [Theory]
-    [InlineData(CollisionMode.Recursion)]
-    [InlineData(CollisionMode.OneRun)]
-    public void SlottedPlate_WithHeadEvents_IsCadenceFree_AndEqualsTheGenerationCheck(CollisionMode mode)
+    [Fact]
+    public void ACollidingPath_IsCadenceFree_AndEqualsTheGenerationCheck()
     {
-        var result = SlottedPlate(mode);
-        Assert.NotEmpty(result.Collisions.Report!.Events);
-        AssertCadenceFree(result);
+        var (result, check) = DeepZigzag();
+        Assert.NotEmpty(check.Events);
+        AssertCadenceFree(result, check);
     }
 
     [Fact]

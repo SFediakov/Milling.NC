@@ -56,7 +56,7 @@ public sealed class MachineViewModelTests : IDisposable
     {
         var toolpath = new Toolpath();
         var corners = new[] { new Vector3(0, 0, 1), new Vector3(10, 0, 1), new Vector3(10, 10, 1), new Vector3(0, 10, 1) };
-        toolpath.Add(new ToolpathSegment(new Vector3(0, 0, 5), corners[0], MoveKind.Plunge, 200));
+        toolpath.Add(new ToolpathSegment(new Vector3(0, 0, 5), corners[0], MoveKind.Plunge, 800));
         for (var k = 1; k < corners.Length; k++)
         {
             toolpath.Add(new ToolpathSegment(corners[k - 1], corners[k], MoveKind.Feed, 800));
@@ -137,21 +137,21 @@ public sealed class MachineViewModelTests : IDisposable
         await ConnectAsync();
         _viewport.SetToolpath(_toolpath);
         _vm.UseToolpathCommand.Execute(null);
-        Assert.Equal($"{MachineService.GeneratedProgramName}, 10 lines", _vm.ProgramText);
+        Assert.Equal($"{MachineService.GeneratedProgramName}, 11 lines", _vm.ProgramText);
         Assert.True(_vm.StartCommand.CanExecute(null));
         string? status = null;
         _vm.StatusChanged += (_, s) => status = s;
 
         await _vm.StartCommand.ExecuteAsync(null);
         Assert.Single(_confirm.Questions);
-        Assert.Contains("10 lines", _confirm.Questions[0], StringComparison.Ordinal);
+        Assert.Contains("11 lines", _confirm.Questions[0], StringComparison.Ordinal);
         Assert.Empty(Link.Lines);
 
         _confirm.Confirmations.Enqueue(true);
         await _vm.StartCommand.ExecuteAsync(null);
         await UntilAsync(() => _service.Snapshot!.Job is { State: JobState.Done });
         Assert.Equal(1f, _vm.Progress);
-        Assert.Equal("11 of 11 lines", _vm.ProgressText);
+        Assert.Equal("12 of 12 lines", _vm.ProgressText);
         Assert.StartsWith("Program done", _vm.JobText, StringComparison.Ordinal);
         Assert.False(_vm.JobFailed);
         Assert.Equal(_toolpath.Count, _viewport.ToolpathProgressIndex);

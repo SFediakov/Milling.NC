@@ -61,7 +61,7 @@ public sealed class MachineServiceTests : IDisposable
     {
         var toolpath = new Toolpath();
         var corners = new[] { new Vector3(0, 0, 1), new Vector3(10, 0, 1), new Vector3(10, 10, 1), new Vector3(0, 10, 1), new Vector3(0, 0, 1) };
-        toolpath.Add(new ToolpathSegment(new Vector3(0, 0, 5), corners[0], MoveKind.Plunge, 200));
+        toolpath.Add(new ToolpathSegment(new Vector3(0, 0, 5), corners[0], MoveKind.Plunge, 800));
         for (var k = 1; k < corners.Length; k++)
         {
             toolpath.Add(new ToolpathSegment(corners[k - 1], corners[k], MoveKind.Feed, 800));
@@ -128,10 +128,10 @@ public sealed class MachineServiceTests : IDisposable
         Assert.True(program.FromToolpath);
         Assert.Equal(MachineService.GeneratedProgramName, program.Grbl.Name);
 
-        // G21 G90 G94 G17, S M3, G0 Z, G0 X Y lead in; one line per segment; M5 and M30 after them.
-        Assert.Equal(new[] { 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 6, 6 }, program.SegmentsAfterLine);
+        // G21 G90 G94 G17, S M3, F (T-215), G0 Z, G0 X Y lead in; one line per segment; M5 and M30 after them.
+        Assert.Equal(new[] { 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 6, 6 }, program.SegmentsAfterLine);
         Assert.Equal(0, program.SegmentsDone(0));
-        Assert.Equal(2, program.SegmentsDone(6));
+        Assert.Equal(2, program.SegmentsDone(7));
         Assert.Equal(toolpath.Count, program.SegmentsDone(program.Grbl.Count + 1));
 
         var (connected, link) = await ConnectedAsync();

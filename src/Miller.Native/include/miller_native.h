@@ -86,10 +86,8 @@ typedef struct mn_segment {
 
 typedef struct mn_parameters {
     float feed_rate;
-    float plunge_rate;
     float rapid_rate;
     float stepover;
-    float finishing_stepover;
     float stepdown;
     float safe_height;
     float cell_size;
@@ -202,6 +200,9 @@ MN_API int32_t mn_islands_remove_below(const int32_t* island_cells, const int32_
 MN_API int32_t mn_caves(const uint8_t* masks, int32_t level_count, int32_t width, int32_t height, int32_t* labels, int32_t** cave_levels, int32_t** cave_ids, int32_t** cave_cells, int32_t** cave_cell_offsets, int32_t** cave_children, int32_t** cave_child_offsets, int32_t** roots, int32_t* cave_count, int32_t* root_count);
 
 /* ---- routing ---- */
+/* The node step along a row of a Z layer lattice (T-210): the largest step up to the row step whose node
+ * footprints alone cover the cells between two rows. */
+MN_API int32_t mn_column_step(int32_t row_step, float cutter_radius, float cell_size);
 MN_API int32_t mn_step_cells(float spacing, float cell_size);
 MN_API int32_t mn_on_lattice(int32_t index, int32_t count, int32_t step);
 MN_API int32_t mn_lattice_nodes(const uint8_t* inside, int32_t width, int32_t height, int32_t step, int32_t** nodes, int32_t* count);
@@ -216,14 +217,13 @@ MN_API float mn_turn_slow_length(const float* x, const float* y, const int32_t* 
 MN_API float mn_turn_overlap(int32_t zones_a, int32_t zones_b, float gap);
 MN_API float mn_turn_fine(const float* x, const float* y, const int32_t* order, int32_t count);
 /* The slow factor of the zones (a third: three times slower) and the fine per slow millimetre in
- * route cost units, as the solver and the slow zones use them. */
+ * route cost units, as the solver prices them (T-215: the zones price the routes only, the toolpath
+ * runs at the feed rate). */
 MN_API float mn_turn_slow_speed_factor(void);
 MN_API float mn_turn_per_slow_millimetre(void);
 MN_API int64_t mn_budget_share(int64_t remaining, int32_t nodes, int64_t nodes_left);
-/* Precedence pairs (T-150): pair k orders node before[k] ahead of node after[k]; pair_count 0 means no
- * pairs. The start must have no predecessor and the pairs must be acyclic. `end` (T-166) is -1 for a
- * path that ends anywhere, or the node it must finish at (not the start, no successor). */
-MN_API int32_t mn_route_solve(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, int32_t count, int32_t start, int32_t end, const int32_t* before, const int32_t* after, int32_t pair_count, int64_t allowance, const volatile int32_t* cancel, int32_t* order, int64_t* evaluations);
+/* `end` (T-166) is -1 for a path that ends anywhere, or the node it must finish at (not the start). */
+MN_API int32_t mn_route_solve(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, int32_t count, int32_t start, int32_t end, int64_t allowance, const volatile int32_t* cancel, int32_t* order, int64_t* evaluations);
 MN_API float mn_route_path_cost(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, const int32_t* order, int32_t count);
 
 /* ---- writer ---- */
@@ -238,32 +238,23 @@ MN_API void mn_writer_free(mn_writer* writer);
 
 /* ---- strategies, checks, simplification ---- */
 #define MN_STRATEGY_Z_LAYER 0
-#define MN_STRATEGY_THREE_AXIS_FREEDOM 1
 
 /* ---- cell status (collision handling, T-147) ---- */
-/* One byte per cell. MODEL: shouldn't be removed (the model stands above the floor). SHOULD_REMOVE:
- * stock the head hit; cut to its closing before the tool goes deeper beside it. COLLISION: the head
- * or a rapid entered the cell in the last check and it stayed unresolved (a model cell, or stock that
- * could not be removed). FORBIDDEN: a tool position raised until its head clears. BRIDGE: a cut-through
- * cell of a holding bridge, shouldn't be cut below the bridge top (separation scope). */
+/* One byte per cell. MODEL: shouldn't be removed (the model stands above the floor). COLLISION: the
+ * head or a rapid entered the cell in the last check. BRIDGE: a cut-through cell of a holding bridge,
+ * shouldn't be cut below the bridge top (separation scope). */
 #define MN_CELL_MODEL 1
-#define MN_CELL_SHOULD_REMOVE 2
 #define MN_CELL_COLLISION 4
-#define MN_CELL_FORBIDDEN 8
 #define MN_CELL_BRIDGE 16
 
-/* Recursion: generate, check, resolve and generate again while collisions decrease. One run: the
- * strategies evaluate every node against the standing material before its route (T-150). Backwards
- * (T-169 to T-172, Z layer only): a check from the lowest level up excludes the positions whose head
- * would meet material only cutting the model frees, and the routes of every far stepdown slab are
- * solved from the bottom while it runs. */
-#define MN_COLLISION_RECURSION 0
-#define MN_COLLISION_ONE_RUN 1
-#define MN_COLLISION_BACKWARDS 2
+/* Backwards (T-169 to T-172, T-193): a check from the lowest level up excludes the positions whose head
+ * would meet material only cutting the model frees, and the Z layer routes the plan it reaches. With its
+ * GPU copy the only collision handling (T-214). */
+#define MN_COLLISION_BACKWARDS 0
 /* Backwards_GPU (T-174, user request): Backwards with its data-parallel processes on the discrete GPU
  * (the backward check's sweeps, the intended surface, extra start tours of the route solver); it fails
  * when no OpenCL GPU is found. */
-#define MN_COLLISION_BACKWARDS_GPU 3
+#define MN_COLLISION_BACKWARDS_GPU 1
 
 /* The OpenCL GPU the Backwards_GPU mode uses: MN_OK and its name, or a status and mn_last_error. */
 MN_API int32_t mn_gpu_device(char* name, int32_t capacity);
@@ -294,7 +285,7 @@ typedef struct mn_collision {
 /* Dynamic collision check over a stock clone: feeds and plunges remove material at CellSize / 2 along
  * the segment; the head ring is tested at every segment end and every max(CellSize, cutter radius)
  * along it, the footprint of a rapid at the same spacing, against the stock as it stands. status
- * (cells) receives MODEL and, per entered cell, COLLISION; SHOULD_REMOVE is not touched. */
+ * (cells) receives MODEL and, per entered cell, COLLISION. */
 /* The simulation session (T-207): the simulation's whole segments on the collision check's banded walk
  * over the CPU workers. Open takes the footprint, the annulus and the segments once (copied) and keeps
  * a worker pool; walk sweeps segments [first, last) over `stock` in place, with one event per check
@@ -317,10 +308,7 @@ MN_API int32_t mn_collision_check(const mn_segment* segments, int32_t count, con
  * or a negative status. */
 MN_API int32_t mn_far_withdraw(const uint8_t* places, int32_t width, int32_t height, float cell_size, float radius, uint8_t* allowed);
 
-/* Everything a strategy reads. Masks of the plan come from mn_plan; should_cut may be NULL. In one
- * run mode (collision_mode MN_COLLISION_ONE_RUN, ratio Y) the strategy evaluates every node against
- * the standing material and writes the raised tips of the positions it does not achieve into
- * `raised` (cells, NaN where none) when that is not NULL. */
+/* Everything a strategy reads. Masks of the plan come from mn_plan. */
 typedef struct mn_context {
     mn_grid grid;
     const float* model;
@@ -328,15 +316,12 @@ typedef struct mn_context {
     const float* effective_tip;
     const float* head_limit;
     const float* stock;
-    const uint8_t* should_cut;
     const mn_plan* plan;
     mn_tool tool;
     mn_parameters parameters;
     float stock_top;
     float floor;
     int32_t collision_mode;
-    float ratio;
-    float* raised;
     /* Z layer with a far stepdown (T-164): the positions the far block may take (NULL: every far
      * position), and, when not NULL, 1 per position it milled with the far stepdown, 0 elsewhere. */
     const uint8_t* far_allowed;
@@ -346,19 +331,10 @@ typedef struct mn_context {
     struct mn_gpu_session* gpu;
 } mn_context;
 
-/* 3 axis freedom helpers: the level map max(tip, level) with NaN kept, and whether a cell of a map
- * steps by more than the tolerance to a neighbour or borders a cell without material. */
-MN_API void mn_level_map(const float* tip, int32_t cells, float level, float* result);
-MN_API int32_t mn_is_step(const mn_grid* grid, const float* map, int32_t i, int32_t j, float tolerance);
 MN_API int32_t mn_strategy_generate(int32_t strategy, const mn_context* context, mn_progress_fn progress, void* progress_context, const volatile int32_t* cancel, mn_segment** segments, int32_t* count);
 MN_API int32_t mn_gouge_verify(const mn_segment* segments, int32_t count, const mn_grid* grid, const float* effective_tip, float tolerance, int32_t** segment_index, float** positions, float** depths, int32_t* violation_count);
 MN_API int32_t mn_gouge_is_clear(const mn_segment* segment, const mn_grid* grid, const float* effective_tip, float tolerance);
 MN_API int32_t mn_simplify(const mn_segment* segments, int32_t count, const mn_grid* grid, const float* effective_tip, float tolerance, mn_segment** result, int32_t* result_count);
-/* Slow zones (the turn fine in the toolpath): every movement, a run of feeds straight on in XY, gets
- * its first and last 5 mm of XY travel at the slow factor of the rate, a movement shorter than 10 mm
- * wholly; rapids, plunges, feeds without XY travel and direction changes end a movement. The pipeline
- * runs it after the simplifier. */
-MN_API int32_t mn_slow_zones_apply(const mn_segment* segments, int32_t count, mn_segment** result, int32_t* result_count);
 MN_API int32_t mn_kept_indices(const float* points, int32_t count, const mn_grid* grid, const float* effective_tip, float tolerance, float feed_rate, int32_t** kept, int32_t* kept_count);
 MN_API float mn_distance_to_segment(const float* p, const float* a, const float* b);
 MN_API int32_t mn_statistics_compute(const mn_segment* segments, int32_t count, float rapid_rate, mn_statistics* statistics);
@@ -392,8 +368,6 @@ typedef struct mn_job {
     float min_island_volume;
     float reach_percent;
     int32_t collision_mode;
-    float recursion_ratio;
-    float one_run_ratio;
     /* Separation scope: holding bridges per part the trench frees (0 to MN_MAX_BRIDGES, 0 for none),
      * their width and the material they keep above the floor. */
     int32_t bridge_count;
@@ -416,7 +390,7 @@ typedef struct mn_result mn_result;
 #define MN_STAGE_STATISTICS 9
 #define MN_STAGE_CHECK 10
 
-/* Recursion passes never exceed this number. */
+/* Generation passes (the far withdrawal's repeats) never exceed this number. */
 #define MN_MAX_PASSES 8
 
 /* Progress: context, pass (from 1), stage, step, steps, fraction. */
@@ -433,7 +407,6 @@ MN_API int32_t mn_generate(const mn_job* job, mn_stage_fn progress, void* contex
 #define MN_MAP_STRATEGY_TIP 6
 
 #define MN_MASK_HEAD_LIMITED 0
-#define MN_MASK_SHOULD_CUT 1
 #define MN_MASK_STATUS 2
 /* Per cell what the kept pass's check entered: nothing, stock only, or the model (outranks stock). */
 #define MN_MASK_CONTACTS 3
