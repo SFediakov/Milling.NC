@@ -180,6 +180,21 @@ typedef struct mn_problem {
 /* Whether a collision mode is Backwards on the CPU or on the GPU. */
 static inline int mn_backwards_mode(int collision_mode) { return collision_mode == MN_COLLISION_BACKWARDS || collision_mode == MN_COLLISION_BACKWARDS_GPU; }
 
+/* The levels a far stepdown spans (T-156, T-196): k >= 2 when it is on, 1 when it is off (0, or the
+ * stepdown itself: nothing then goes deeper than one stepdown), 0 when it is no whole multiple of the
+ * stepdown, which the caller reports. */
+static inline int mn_far_levels(const mn_parameters* p)
+{
+    if (p->far_stepdown == 0.0f) {
+        return 1;
+    }
+    if (!(p->far_stepdown > 0.0f && p->stepdown > 0.0f)) {
+        return 0;
+    }
+    int k = mn_f2i(rintf(p->far_stepdown / p->stepdown));
+    return k >= 1 && fabsf(p->far_stepdown - (float)k * p->stepdown) <= MN_LEVEL_TOLERANCE ? k : 0;
+}
+
 static inline mn_v3 mn_problem_node(const mn_problem* p, int k) { return mn_v3_make(p->x[k], p->y[k], p->z[k]); }
 
 /* TurnFine constants: the slow zones of a movement run at MN_SLOW_SPEED_FACTOR of the speed (three
@@ -304,6 +319,14 @@ void mn_model_bits(const float* model, int cells, float floor, uint8_t* status);
 int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const float* stock, const float* model, float floor, const mn_profile* profile, float cutter_radius,
     float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, float* final_stock);
 
+/* The check's walk with its inputs kept (T-207): opened once, run over any segment range in place on a
+ * stock, closed when done. The grid and the profile's offsets must outlive the walker. */
+typedef struct mn_walker mn_walker;
+int mn_walker_open(const mn_grid* g, const mn_profile* profile, float cutter_radius, float cutter_length, float tolerance, int first_hit_only, mn_walker** walker);
+int mn_walker_run(mn_walker* walker, const mn_segment* segments, int first_segment, int count, float* stock, const float* model, float floor, uint8_t* status,
+    mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, double* probing_seconds, double* walking_seconds);
+void mn_walker_close(mn_walker* walker);
+
 /* Not cut (T-173): the cells whose material after the toolpath stands more than the tolerance above
  * what the plan intended, their volume above it and the highest of them. */
 typedef struct mn_uncut {
@@ -360,28 +383,16 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
 
 /* ---- backward check (T-170, mn_backwards.c) ---- */
 
-/* One batch of levels first..last from the top (one far stepdown slab, one level without a far
- * stepdown): per level the positions reached there ((last - first + 1) * cells, level first first) and
- * the positions of the far go (NULL without one). */
-typedef struct mn_backwards_batch {
-    int first;
-    int last;
-    uint8_t* reached;
-    uint8_t* far;
-} mn_backwards_batch;
-
 typedef struct mn_backwards mn_backwards;
 
-/* Starts the check on a thread of its own with `workers` workers; the batches come from the lowest.
- * With the context's GPU session the sweeps run on the GPU (mn_gpu_backward_settle). */
-int mn_backwards_start(const mn_context* context, int group_size, int workers, const volatile int32_t* cancel, mn_backwards** check);
-int mn_backwards_batch_count(const mn_backwards* check);
-/* Per position the deepest level index the check settled on (-1 for none); valid once a batch is taken. */
-const int* mn_backwards_deepest(const mn_backwards* check);
-/* The batch `taken` from the bottom (0 the lowest); waits until the check has it. */
-int mn_backwards_take(mn_backwards* check, int taken, const mn_backwards_batch** batch);
-/* Frees the batch and lets the check run on. */
-void mn_backwards_release(mn_backwards* check, int taken);
+/* Starts the check on a thread of its own with `workers` workers. With the context's GPU session the
+ * sweeps run on the GPU (mn_gpu_backward_settle). */
+int mn_backwards_start(const mn_context* context, int workers, const volatile int32_t* cancel, mn_backwards** check);
+/* Waits until the check has settled (T-193) and gives the reached plan, the plan's levels with per level
+ * the positions of its mask reached that deep, and the strategy tip with every position that loses a
+ * level raised to the deepest level it reaches (the stock top where it reaches none), so the Z layer
+ * routes them as it routes a raised position; both stay valid until mn_backwards_finish. */
+int mn_backwards_settled(mn_backwards* check, const mn_plan** reached, const float** tip);
 /* Joins the check (stopping it first when `abort`) and frees it; returns the check's status unless it
  * was aborted, the unreached positions and the model cells summed over the levels, and the sweeps it
  * took to settle. */

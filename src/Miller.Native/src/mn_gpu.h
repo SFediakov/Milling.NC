@@ -44,9 +44,8 @@ int mn_gpu_closing_of(mn_gpu_session* session, const float* map, float* closing)
 /* The backward check's sweeps on the GPU (mn_backwards.c) over the session's stock and masks: from the
  * deepest level of the plan's masks, every sweep tests all levels against the closing of the deepest
  * levels the sweep before reached, until a sweep changes nothing; `deepest` (cells) receives the settled
- * level indices, `closing` their closing (which the far go of a batch reads), `sweeps` their number. The
- * same result as the CPU sweeps. */
-int mn_gpu_backward_settle(mn_gpu_session* session, const mn_context* context, int* deepest, float* closing, int* sweeps);
+ * level indices, `sweeps` their number. The same result as the CPU sweeps; the closing stays on the GPU. */
+int mn_gpu_backward_settle(mn_gpu_session* session, const mn_context* context, int* deepest, int* sweeps);
 
 /* Start tours of the route solver (T-177, T-186, the user's idea: many combinations at once, the
  * cheapest kept): `tours` nearest-neighbour tours from `start`; tour 0 takes the

@@ -1209,7 +1209,7 @@ int mn_gpu_closing_of(mn_gpu_session* session, const float* map, float* closing)
 
 /* ---- the backward check's sweeps ---- */
 
-int mn_gpu_backward_settle(mn_gpu_session* session, const mn_context* context, int* deepest, float* closing_out, int* sweeps)
+int mn_gpu_backward_settle(mn_gpu_session* session, const mn_context* context, int* deepest, int* sweeps)
 {
     const mn_grid* g = &context->grid;
     const mn_plan* plan = context->plan;
@@ -1222,7 +1222,6 @@ int mn_gpu_backward_settle(mn_gpu_session* session, const mn_context* context, i
     if (levels == 0) {
         for (int c = 0; c < cells; c++) {
             deepest[c] = -1;
-            closing_out[c] = NAN;
         }
         return MN_OK;
     }
@@ -1328,9 +1327,6 @@ int mn_gpu_backward_settle(mn_gpu_session* session, const mn_context* context, i
     }
     if (status == MN_OK) {
         status = read_back(deep, (size_t)cells * sizeof(int), deepest);
-    }
-    if (status == MN_OK) {
-        status = read_back(closing, (size_t)cells * sizeof(float), closing_out);
     }
     buffers_release(&b);
     gpu_leave();

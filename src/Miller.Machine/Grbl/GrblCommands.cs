@@ -12,7 +12,7 @@ public enum MachineAxis
 // The command lines of the machine panel, in millimetres whatever the controller's default unit is.
 // Jogging uses $J=, which Grbl keeps apart from the program state and cancels with 0x85; zero uses
 // G10 L20 P0, which sets the active work coordinate system so that the current position reads as
-// the given value and survives a reset.
+// the given value and survives a reset; the zero buttons and the work coordinate panel share it.
 public static class GrblCommands
 {
     public const string Home = "$H";
@@ -21,6 +21,7 @@ public static class GrblCommands
     public const double MaxJogDistance = 1000;
     public const double MaxFeed = 100_000;
     public const double MaxProbeTravel = 200;
+    public const double MaxWorkCoordinate = 100_000;
     private const string NumberFormat = "0.###";
 
     public static string Jog(MachineAxis axis, double distance, double feed)
@@ -34,14 +35,17 @@ public static class GrblCommands
         return $"$J=G91 G21 {axis}{Number(distance)} F{Number(feed)}";
     }
 
-    public static string Zero(bool x, bool y, bool z)
+    public static string Zero(bool x, bool y, bool z) => SetWork(x ? 0 : null, y ? 0 : null, z ? 0 : null);
+
+    // The current position reads as the given work coordinates on the named axes.
+    public static string SetWork(double? x, double? y, double? z)
     {
-        if (!x && !y && !z)
+        if (x is null && y is null && z is null)
         {
-            throw new ArgumentException("Zero needs at least one axis.");
+            throw new ArgumentException("Setting work coordinates needs at least one axis.");
         }
 
-        return "G10 L20 P0" + (x ? " X0" : string.Empty) + (y ? " Y0" : string.Empty) + (z ? " Z0" : string.Empty);
+        return "G10 L20 P0" + WorkWord('X', x) + WorkWord('Y', y) + WorkWord('Z', z);
     }
 
     // Touch plate on the work surface: probe down, set Z so the contact point reads as the plate
@@ -73,27 +77,27 @@ public static class GrblCommands
         };
     }
 
-    // The rectangle around the program in XY at the current height, rapid moves, back to the start
-    // corner, so the operator sees where the program will cut.
-    public static string[] Outline(GrblBounds bounds)
-    {
-        ArgumentNullException.ThrowIfNull(bounds);
-        return new[]
-        {
-            $"G21 G90 G0 X{Number(bounds.MinX)} Y{Number(bounds.MinY)}",
-            $"G0 X{Number(bounds.MaxX)} Y{Number(bounds.MinY)}",
-            $"G0 X{Number(bounds.MaxX)} Y{Number(bounds.MaxY)}",
-            $"G0 X{Number(bounds.MinX)} Y{Number(bounds.MaxY)}",
-            $"G0 X{Number(bounds.MinX)} Y{Number(bounds.MinY)}",
-        };
-    }
-
     private static void CheckFeed(double feed)
     {
         if (!double.IsFinite(feed) || feed <= 0 || feed > MaxFeed)
         {
             throw new ArgumentOutOfRangeException(nameof(feed), $"The feed must be above 0 and at most {MaxFeed} mm/min, got {feed}.");
         }
+    }
+
+    private static string WorkWord(char axis, double? value)
+    {
+        if (value is not double v)
+        {
+            return string.Empty;
+        }
+
+        if (!double.IsFinite(v) || Math.Abs(v) > MaxWorkCoordinate)
+        {
+            throw new ArgumentOutOfRangeException(axis.ToString(), $"A work coordinate must be a number within {MaxWorkCoordinate} mm of zero, got {v}.");
+        }
+
+        return $" {axis}{Number(v)}";
     }
 
     private static string Number(double value) => value.ToString(NumberFormat, CultureInfo.InvariantCulture);

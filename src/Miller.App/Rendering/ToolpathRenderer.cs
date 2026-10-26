@@ -6,8 +6,9 @@ namespace Miller.App.Rendering;
 
 // Toolpath as lines colored by move kind. The done part (segments before the progress index) is
 // drawn from a bright buffer, the remaining part from a buffer whose colors are mixed towards the
-// background, so no blending state is needed. Geometry building is static so tests cover it
-// without a GL context.
+// background, so no blending state is needed. A third buffer holds every segment in the highlight
+// color, of which only the next moves after the progress index are drawn. Geometry building is
+// static so tests cover it without a GL context.
 public sealed class ToolpathRenderer : IDisposable
 {
     public const float RemainingMix = 0.5f;
@@ -15,52 +16,74 @@ public sealed class ToolpathRenderer : IDisposable
 
     private readonly VertexBuffer _bright;
     private readonly VertexBuffer _dim;
+    private readonly VertexBuffer _next;
+    private readonly Vector4 _nextColor;
     private readonly IReadOnlyDictionary<MoveKind, Vector4> _colors;
     private readonly Vector4 _background;
 
-    public ToolpathRenderer(GlInterface gl, IReadOnlyDictionary<MoveKind, Vector4> colors, Vector4 background)
+    public ToolpathRenderer(GlInterface gl, IReadOnlyDictionary<MoveKind, Vector4> colors, Vector4 background, Vector4 nextColor)
     {
         _bright = new VertexBuffer(gl, (GlShaders.PositionLocation, 3), (GlShaders.ColorLocation, 4));
         _dim = new VertexBuffer(gl, (GlShaders.PositionLocation, 3), (GlShaders.ColorLocation, 4));
+        _next = new VertexBuffer(gl, (GlShaders.PositionLocation, 3), (GlShaders.ColorLocation, 4));
+        _nextColor = nextColor;
         _colors = colors ?? throw new ArgumentNullException(nameof(colors));
         _background = background;
     }
 
     public int SegmentCount { get; private set; }
 
-    public void Upload(Toolpath? toolpath)
+    public void Upload(IReadOnlyList<ToolpathSegment> segments)
     {
-        var (bright, dim) = Build(toolpath, _colors, _background);
+        var (bright, dim) = BuildSegments(segments, _colors, _background);
         SegmentCount = bright.Length / (2 * FloatsPerVertex);
         _bright.Upload(bright, bright.Length, GlConsts.GL_STATIC_DRAW);
         _dim.Upload(dim, dim.Length, GlConsts.GL_STATIC_DRAW);
+        var next = BuildHighlight(segments, _nextColor);
+        _next.Upload(next, next.Length, GlConsts.GL_STATIC_DRAW);
     }
 
-    public void Draw(int progressIndex)
+    // The full path and the next moves are separate options; the highlight is drawn last so it lies
+    // over the dimmed remaining part (equal depth passes GL_LEQUAL).
+    public void Draw(int progressIndex, bool full, bool nextMoves, int nextCount)
     {
-        var (doneVertices, remainingVertices) = Split(progressIndex, SegmentCount);
-        _bright.Draw(GlConstants.GL_LINES, 0, doneVertices);
-        _dim.Draw(GlConstants.GL_LINES, doneVertices, remainingVertices);
+        if (full)
+        {
+            var (doneVertices, remainingVertices) = Split(progressIndex, SegmentCount);
+            _bright.Draw(GlConstants.GL_LINES, 0, doneVertices);
+            _dim.Draw(GlConstants.GL_LINES, doneVertices, remainingVertices);
+        }
+
+        if (nextMoves)
+        {
+            var (first, count) = NextRange(progressIndex, SegmentCount, nextCount);
+            _next.Draw(GlConstants.GL_LINES, first, count);
+        }
     }
 
     public void Dispose()
     {
         _bright.Dispose();
         _dim.Dispose();
+        _next.Dispose();
     }
 
-    // Two vertices per segment: position and color, bright and dimmed variants.
     public static (float[] Bright, float[] Dim) Build(Toolpath? toolpath, IReadOnlyDictionary<MoveKind, Vector4> colors, Vector4 background)
+        => BuildSegments(toolpath?.Segments ?? Array.Empty<ToolpathSegment>(), colors, background);
+
+    // Two vertices per segment: position and color, bright and dimmed variants.
+    public static (float[] Bright, float[] Dim) BuildSegments(IReadOnlyList<ToolpathSegment> segments, IReadOnlyDictionary<MoveKind, Vector4> colors, Vector4 background)
     {
-        if (toolpath is null || toolpath.Count == 0)
+        ArgumentNullException.ThrowIfNull(segments);
+        if (segments.Count == 0)
         {
             return (Array.Empty<float>(), Array.Empty<float>());
         }
 
-        var bright = new float[toolpath.Count * 2 * FloatsPerVertex];
+        var bright = new float[segments.Count * 2 * FloatsPerVertex];
         var dim = new float[bright.Length];
         var k = 0;
-        foreach (var s in toolpath.Segments)
+        foreach (var s in segments)
         {
             var color = colors[s.Kind];
             var dimmed = Dim(color, background);
@@ -69,6 +92,29 @@ public sealed class ToolpathRenderer : IDisposable
         }
 
         return (bright, dim);
+    }
+
+    // Two vertices per segment, every one in the highlight color.
+    public static float[] BuildHighlight(IReadOnlyList<ToolpathSegment> segments, Vector4 color)
+    {
+        ArgumentNullException.ThrowIfNull(segments);
+        var data = new float[segments.Count * 2 * FloatsPerVertex];
+        var k = 0;
+        foreach (var s in segments)
+        {
+            k = Put(data, data, k, s.Start, color, color);
+            k = Put(data, data, k, s.End, color, color);
+        }
+
+        return data;
+    }
+
+    // First vertex and vertex count of the next `nextCount` segments after the progress index.
+    public static (int FirstVertex, int VertexCount) NextRange(int progressIndex, int segmentCount, int nextCount)
+    {
+        var first = Math.Clamp(progressIndex, 0, segmentCount);
+        var count = Math.Clamp(nextCount, 0, segmentCount - first);
+        return (first * 2, count * 2);
     }
 
     public static Vector4 Dim(Vector4 color, Vector4 background) => Vector4.Lerp(background, color, RemainingMix) with { W = 1f };

@@ -1,0 +1,39 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Miller.App.ViewModels"
+        x:Class="Miller.App.Views.ProgramListingWindow"
+        x:DataType="vm:ProgramListingViewModel"
+        Title="Program code"
+        Width="560"
+        Height="720"
+        MinWidth="320"
+        MinHeight="240">
+  <!-- The machine program row by row; executed rows and the executing row are marked. Rows are
+       virtualized, so a program of any length opens at once. -->
+  <DockPanel Margin="8">
+    <StackPanel DockPanel.Dock="Top" Spacing="4" Margin="0,0,0,6">
+      <SelectableTextBlock Name="TitleText" Classes="header" Text="{Binding Title}" />
+      <SelectableTextBlock Name="DescriptionText" Text="{Binding Description}" TextWrapping="Wrap" />
+      <CheckBox Name="FollowBox" Content="Follow" IsChecked="{Binding Follow}" />
+    </StackPanel>
+    <ScrollViewer Name="RowsScroll" HorizontalScrollBarVisibility="Auto">
+      <ItemsControl Name="RowsList" ItemsSource="{Binding Rows}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <VirtualizingStackPanel />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:ProgramRowViewModel">
+            <Border Classes="row" Classes.executed="{Binding IsExecuted}" Classes.executing="{Binding IsExecuting}">
+              <Grid ColumnDefinitions="64,*" ColumnSpacing="8">
+                <SelectableTextBlock Classes="code" Text="{Binding Number}" HorizontalAlignment="Right" />
+                <SelectableTextBlock Grid.Column="1" Classes="code" Text="{Binding Text}" />
+              </Grid>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+  </DockPanel>
+</Window>

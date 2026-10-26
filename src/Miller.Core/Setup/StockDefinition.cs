@@ -57,7 +57,8 @@ public sealed class StockDefinition
     public float Margin { get; set; } = DefaultMargin;
 
     // Offset of the stock's minimum corner (min X, min Y, bottom Z of its bounding box) from the
-    // oriented model's minimum corner; used only with Placement = Explicit. See AxisSetup.StockCorner.
+    // oriented model's minimum corner, or from the global origin with machine zero Global; used only
+    // with Placement = Explicit. See ModelLayout.StockCorner.
     public Vector3 ExplicitOrigin { get; set; } = Vector3.Zero;
 
     public static StockDefinition Default() => new();

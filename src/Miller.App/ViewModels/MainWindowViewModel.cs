@@ -335,6 +335,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void ToggleTool() => Viewport.ShowTool = !Viewport.ShowTool;
 
+    [RelayCommand]
+    private void ToggleNextMoves() => Viewport.ShowNextMoves = !Viewport.ShowNextMoves;
+
     // The viewport shows the model in machine space with the stock placed around it; both follow
     // the axis and stock settings, so any project change recomputes them.
     // A new project state invalidates the last toolpath and the stock it was cut from.

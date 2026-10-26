@@ -12,12 +12,17 @@ public sealed record StepResult(Vector3 ToolPosition, DirtyRect Dirty, int Segme
 // listener sees the same positions at any speed (T-161).
 public readonly record struct SimulationSample(int SegmentIndex, MoveKind Kind, Vector3 Tip);
 
+// Sweeps whole segments [first, last) over the stock at once and returns the cells it changed; the
+// events it finds go to its owner (NativeSimulationSession over the CPU workers, T-207).
+public delegate DirtyRect SegmentWalker(HeightMap stock, int first, int last);
+
 // Walks the toolpath by time or by distance: each segment is covered at its own rate (mm/min),
 // feed and plunge parts sweep the stock, rapids remove nothing. Steps compose: covering a segment
 // in parts gives the same stock and the same samples as covering it at once, because the sweep
 // stamps the samples of the whole segment (cell / 2 apart) and reports the positions the
 // generation's collision check uses. SeekTo covers forward only; a position behind the current
-// one needs Reset first.
+// one needs Reset first. With a Walker, whole segments that start at the tool are swept by it, with
+// the same stock and events and without Sampled; parts of a segment are always sampled here.
 public sealed class SimulationEngine
 {
     private readonly Toolpath _toolpath;
@@ -57,6 +62,8 @@ public sealed class SimulationEngine
 
     public event Action<SimulationSample>? Sampled;
 
+    public SegmentWalker? Walker { get; set; }
+
     public HeightMap Stock { get; private set; }
 
     public Vector3 ToolPosition { get; private set; }
@@ -88,6 +95,32 @@ public sealed class SimulationEngine
         var remaining = simSeconds;
         while (remaining > 0 && !IsFinished)
         {
+            if (Walker is not null && _covered == 0 && !_planned)
+            {
+                // Whole segments that fit into the time, each subtracted as the loop below would.
+                var end = _index;
+                var budget = remaining;
+                while (budget > 0 && end < _toolpath.Count)
+                {
+                    var next = _toolpath.Segments[end];
+                    var time = next.Length / (next.FeedRate / 60f);
+                    if (time > budget)
+                    {
+                        break;
+                    }
+
+                    budget -= time;
+                    end++;
+                }
+
+                if (end > _index)
+                {
+                    dirty = dirty.Union(WalkTo(end));
+                    remaining = budget;
+                    continue;
+                }
+            }
+
             var segment = _toolpath.Segments[_index];
             var length = segment.Length;
             var left = length - _covered;
@@ -126,6 +159,23 @@ public sealed class SimulationEngine
         var dirty = DirtyRect.Empty;
         while (!IsFinished)
         {
+            if (Walker is not null && _covered == 0 && !_planned)
+            {
+                var whole = _index;
+                var done = _doneLength;
+                while (whole < _toolpath.Count && done + _toolpath.Segments[whole].Length <= target)
+                {
+                    done += _toolpath.Segments[whole].Length;
+                    whole++;
+                }
+
+                if (whole > _index)
+                {
+                    dirty = dirty.Union(WalkTo(whole));
+                    continue;
+                }
+            }
+
             var segment = _toolpath.Segments[_index];
             var end = _doneLength + segment.Length;
             if (end <= target)
@@ -161,6 +211,12 @@ public sealed class SimulationEngine
         var dirty = DirtyRect.Empty;
         while (_index < target)
         {
+            if (Walker is not null && _covered == 0 && !_planned)
+            {
+                dirty = dirty.Union(WalkTo(target));
+                break;
+            }
+
             var segment = _toolpath.Segments[_index];
             dirty = dirty.Union(Cover(segment, _covered, segment.Length));
             Complete(segment);
@@ -211,6 +267,21 @@ public sealed class SimulationEngine
         _index++;
         _covered = 0;
         _planned = false;
+    }
+
+    // Whole segments from the tool's segment to `end` through the walker; the counters advance segment by
+    // segment as Complete does, and the tool stands at the last segment's end as after Cover.
+    private DirtyRect WalkTo(int end)
+    {
+        var dirty = Walker!(Stock, _index, end);
+        while (_index < end)
+        {
+            var segment = _toolpath.Segments[_index];
+            ToolPosition = PointAt(segment, segment.Length);
+            Complete(segment);
+        }
+
+        return dirty;
     }
 
     private Vector3 StartPosition() => _toolpath.Count > 0 ? _toolpath.Segments[0].Start : Vector3.Zero;

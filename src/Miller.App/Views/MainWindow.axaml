@@ -19,6 +19,7 @@
     <KeyBinding Gesture="Ctrl+D2" Command="{Binding ToggleStockCommand}" />
     <KeyBinding Gesture="Ctrl+D3" Command="{Binding ToggleToolpathCommand}" />
     <KeyBinding Gesture="Ctrl+D4" Command="{Binding ToggleToolCommand}" />
+    <KeyBinding Gesture="Ctrl+D5" Command="{Binding ToggleNextMovesCommand}" />
   </Window.KeyBindings>
   <DockPanel>
     <views:MainMenu DockPanel.Dock="Top" />
@@ -70,7 +71,7 @@
       <TabItem Header="Analysis" Name="AnalysisTab">
         <views:AnalysisView DataContext="{Binding Analysis}" />
       </TabItem>
-      <TabItem Header="Machine" Name="MachineTab">
+      <TabItem Header="Machine" Name="MachineTab" IsSelected="{Binding Machine.IsViewActive, Mode=OneWayToSource}">
         <views:MachineView DataContext="{Binding Machine}" />
       </TabItem>
     </TabControl>

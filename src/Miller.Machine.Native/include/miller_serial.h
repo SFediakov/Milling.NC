@@ -2,7 +2,8 @@
 #define MILLER_SERIAL_H
 
 /* Serial ports for the machine connection of Miller: list, open at a baud rate (8 data bits, no
- * parity, one stop bit, no flow control, DTR and RTS on), read with a timeout, write, close. The
+ * parity, one stop bit, no flow control; DTR and RTS off on Windows, no hang-up on close on Linux,
+ * so opening does not restart an Arduino), read with a timeout, write, close. The
  * operating system is chosen when the library is compiled, the API is the same on Windows and
  * Linux. A function returns MS_OK, a byte count or a negative status and ms_last_error() then
  * describes the failure. One thread uses a port at a time: the caller reads and writes from one

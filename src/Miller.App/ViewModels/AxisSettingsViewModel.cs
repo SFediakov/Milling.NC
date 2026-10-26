@@ -15,12 +15,12 @@ public sealed class AxisSettingsViewModel : SettingsViewModelBase
 
     public const string ModelOffsetLabel = "Custom zero relative to the models' corner (mm)";
 
-    public const string GlobalOffsetLabel = "Zero in the global frame, the model coordinates after the axis mapping (mm)";
+    public const string GlobalZeroText = "Zero is the global origin, the one 0 of the axes and the stock: the axis rotations turn the models about it and an explicit stock corner is measured from it. A model offset moves the model from its file position; its scale and turn act about the model's own centre.";
 
     private static readonly string[] BoundProperties =
     {
         nameof(MapX), nameof(MapY), nameof(MapZ), nameof(FlipX), nameof(FlipY), nameof(FlipZ), nameof(RotationX), nameof(RotationY), nameof(RotationZ),
-        nameof(OriginMode), nameof(OffsetX), nameof(OffsetY), nameof(OffsetZ), nameof(IsCustom), nameof(OffsetLabel), nameof(MachineBoundsText),
+        nameof(OriginMode), nameof(OffsetX), nameof(OffsetY), nameof(OffsetZ), nameof(IsCustom), nameof(IsGlobal), nameof(OffsetLabel), nameof(MachineBoundsText),
         nameof(StockBoundsText),
     };
 
@@ -65,8 +65,10 @@ public sealed class AxisSettingsViewModel : SettingsViewModelBase
         get => Current.Axes.OriginMode;
         set
         {
-            Set(p => p.Axes.OriginMode = value);
+            var models = _meshImport.Matches(Current) && Current.Axes.IsPermutation ? _meshImport.Bounds : null;
+            Set(p => ModelLayout.SetOriginMode(p, models, value));
             OnPropertyChanged(nameof(IsCustom));
+            OnPropertyChanged(nameof(IsGlobal));
             OnPropertyChanged(nameof(OffsetLabel));
         }
     }
@@ -78,14 +80,11 @@ public sealed class AxisSettingsViewModel : SettingsViewModelBase
     public float OffsetZ { get => Current.Axes.CustomOffset.Z; set => Set(p => p.Axes.CustomOffset = new Vector3(p.Axes.CustomOffset.X, p.Axes.CustomOffset.Y, value)); }
 
     // The modes that place zero by CustomOffset, and what the offset is measured from.
-    public bool IsCustom => OriginMode is OriginMode.Custom or OriginMode.ModelCustom or OriginMode.Global;
+    public bool IsCustom => OriginMode is OriginMode.Custom or OriginMode.ModelCustom;
 
-    public string OffsetLabel => OriginMode switch
-    {
-        OriginMode.ModelCustom => ModelOffsetLabel,
-        OriginMode.Global => GlobalOffsetLabel,
-        _ => StockOffsetLabel,
-    };
+    public bool IsGlobal => Current.Axes.IsGlobal;
+
+    public string OffsetLabel => OriginMode == OriginMode.ModelCustom ? ModelOffsetLabel : StockOffsetLabel;
 
     public string? MappingError => ErrorFor("Axes.MapX");
 

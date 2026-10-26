@@ -69,17 +69,12 @@ public static class ProjectValidator
         InRange(errors, "Parameters.Stepover", p.Stepover, tool.CutterDiameter);
         InRange(errors, "Parameters.FinishingStepover", p.FinishingStepover, tool.CutterDiameter);
         Positive(errors, "Parameters.Stepdown", p.Stepdown);
-        if (p.Stepdown > 0 && p.FarStepdown != 0 && !IsFarStepdown(p.FarStepdown, p.Stepdown))
+        if (p.Stepdown > 0 && !IsFarStepdownOff(p.FarStepdown, p.Stepdown) && !IsFarStepdown(p.FarStepdown, p.Stepdown))
         {
             errors.Add(new ValidationMessage("Parameters.FarStepdown",
-                $"Far stepdown {F(p.FarStepdown)} must be 0 (none) or a whole multiple of the stepdown {F(p.Stepdown)} of at least twice it."));
+                $"Far stepdown {F(p.FarStepdown)} must be 0 or the stepdown {F(p.Stepdown)} (none) or a whole multiple of the stepdown of at least twice it."));
         }
-        else if (p.Stepdown > 0 && project.CollisionMode is CollisionMode.Backwards or CollisionMode.Backwards_GPU && p.FarStepdown + p.Tolerance > tool.CutterLength + Slicer.LevelTolerance)
-        {
-            warnings.Add(new ValidationMessage("Parameters.FarStepdown",
-                $"Far stepdown {F(p.FarStepdown)} plus the tolerance {F(p.Tolerance)} exceeds the cutter length {F(tool.CutterLength)}: Backwards cuts the far go only where the head clears the material at the slab top, everything else level by level."));
-        }
-        else if (p.Stepdown > 0 && p.FarStepdown > tool.CutterLength + Slicer.LevelTolerance)
+        else if (p.Stepdown > 0 && IsFarStepdown(p.FarStepdown, p.Stepdown) && p.FarStepdown > tool.CutterLength + Slicer.LevelTolerance)
         {
             warnings.Add(new ValidationMessage("Parameters.FarStepdown",
                 $"Far stepdown {F(p.FarStepdown)} exceeds the cutter length {F(tool.CutterLength)}: no single step can go deeper, so the far area is cut in steps of at most the cutter length, each over the positions the head clears."));
@@ -227,7 +222,13 @@ public static class ProjectValidator
         return true;
     }
 
-    // A whole multiple of the stepdown of at least twice it, within the level tolerance.
+    // No far stepdown (T-196): 0, or the stepdown itself within the level tolerance, so nothing goes deeper
+    // than one stepdown; every strategy and collision mode then mills as without the feature
+    // (mn_far_levels in the native library).
+    public static bool IsFarStepdownOff(float farStepdown, float stepdown)
+        => farStepdown == 0 || MathF.Abs(farStepdown - stepdown) <= Slicer.LevelTolerance;
+
+    // A whole multiple of the stepdown of at least twice it, within the level tolerance: the far stepdown is on.
     public static bool IsFarStepdown(float farStepdown, float stepdown)
     {
         if (!(float.IsFinite(farStepdown) && farStepdown > stepdown))

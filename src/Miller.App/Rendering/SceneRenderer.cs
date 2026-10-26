@@ -40,9 +40,9 @@ public sealed class SceneRenderer : IDisposable
     private bool _showStock = true;
     private bool _showToolpath = true;
     private bool _showTool = true;
+    private bool _showNextMoves;
     private int _progressIndex;
     private Vector3 _toolPosition;
-    private bool _machineLive;
 
     // The camera belongs to the control so input works without a GL context.
     public SceneRenderer(GlInterface gl, GlVersion version, Camera camera)
@@ -68,7 +68,8 @@ public sealed class SceneRenderer : IDisposable
                 [MoveKind.Feed] = ThemeColors.Get("ToolpathFeedColor"),
                 [MoveKind.Plunge] = ThemeColors.Get("ToolpathPlungeColor"),
             },
-            _background);
+            _background,
+            ThemeColors.Get("ToolpathNextColor"));
         _stockMap = new HeightMapRenderer(gl);
         _categoryColors = new Dictionary<CellCategory, Vector4>
         {
@@ -90,17 +91,17 @@ public sealed class SceneRenderer : IDisposable
     public void Sync(ViewportViewModel viewModel)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
-        _showModel = viewModel.ShowModel;
-        _showStock = viewModel.ShowStock;
+        _showModel = viewModel.DisplayModel;
+        _showStock = viewModel.DisplayStock;
         _showToolpath = viewModel.ShowToolpath;
-        _showTool = viewModel.ShowTool;
-        _progressIndex = viewModel.ToolpathProgressIndex;
-        _toolPosition = viewModel.ToolPosition;
-        _machineLive = viewModel.MachineLive;
+        _showTool = viewModel.DisplayTool;
+        _showNextMoves = viewModel.ShowNextMoves;
+        _progressIndex = viewModel.DisplayedProgressIndex;
+        _toolPosition = viewModel.DisplayedToolPosition;
         if (viewModel.ToolpathVersion != _toolpathVersion)
         {
             _toolpathVersion = viewModel.ToolpathVersion;
-            _toolpath.Upload(viewModel.Toolpath);
+            _toolpath.Upload(viewModel.DisplayedSegments);
         }
 
         if (viewModel.StockMapVersion != _stockMapVersion)
@@ -160,8 +161,7 @@ public sealed class SceneRenderer : IDisposable
         if (viewModel.FitPending)
         {
             viewModel.ClearFitRequest();
-            var bounds = viewModel.Meshes.Count > 0 ? viewModel.MeshBounds : viewModel.StockBounds;
-            if (bounds is { IsEmpty: false } target)
+            if (viewModel.FitBounds is { IsEmpty: false } target)
             {
                 Camera.FitToBounds(target);
             }
@@ -201,7 +201,7 @@ public sealed class SceneRenderer : IDisposable
             _stockMap.Draw();
         }
 
-        if (_showTool && (_toolpath.SegmentCount > 0 || _machineLive) && _tool.HasGeometry)
+        if (_showTool && _tool.HasGeometry)
         {
             _tool.Draw(_lit, _litMvp, viewProjection, _toolPosition);
         }
@@ -209,10 +209,7 @@ public sealed class SceneRenderer : IDisposable
         _lines.Use();
         _lines.SetMatrix(_linesMvp, viewProjection);
         _axes.Draw(_showStock);
-        if (_showToolpath)
-        {
-            _toolpath.Draw(_progressIndex);
-        }
+        _toolpath.Draw(_progressIndex, _showToolpath, _showNextMoves, ViewportViewModel.NextMoveCount);
         return _gl.GetError();
     }
 

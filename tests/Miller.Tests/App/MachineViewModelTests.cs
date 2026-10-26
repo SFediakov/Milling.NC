@@ -168,7 +168,7 @@ public sealed class MachineViewModelTests : IDisposable
         _confirm.Confirmations.Enqueue(true);
         await _vm.StartCommand.ExecuteAsync(null);
         await UntilAsync(() => _vm.IsJobActive);
-        foreach (var command in new[] { _vm.StartCommand, _vm.CheckCommand, _vm.OutlineCommand, _vm.HomeCommand, _vm.UnlockCommand, _vm.GoToZeroCommand, _vm.ProbeCommand, _vm.SendCommand, _vm.UseToolpathCommand, _vm.OpenFileCommand, _vm.ConnectCommand })
+        foreach (var command in new[] { _vm.StartCommand, _vm.HomeCommand, _vm.UnlockCommand, _vm.GoToZeroCommand, _vm.ProbeCommand, _vm.SendCommand, _vm.UseToolpathCommand, _vm.OpenFileCommand, _vm.ConnectCommand })
         {
             Assert.False(command.CanExecute(null));
         }

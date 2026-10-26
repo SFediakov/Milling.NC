@@ -13,9 +13,11 @@ using Xunit;
 namespace Miller.Tests.Application;
 
 // T-169 to T-172 (user request): the collision mode Backwards. A check from the lowest level up leaves out
-// every position whose head would meet material only cutting the model frees; the far stepdown slabs are
-// routed from the lowest while it runs, each ending where the slab below it starts, and joined from the
-// top; the share of unreached positions against the model cells is reported.
+// every position whose head would meet material only cutting the model frees; the share of unreached
+// positions against the model cells is reported. Since T-193 the Z layer routes the positions the check
+// reaches by its own rules (far stepdown only away from every obstacle, everything else level by level,
+// route units ending where the next begins), so the slabs run from the top and each ends where the one
+// below it starts.
 public sealed class BackwardsTests
 {
     private const float WallTop = 6f;
@@ -76,6 +78,28 @@ public sealed class BackwardsTests
     // sweep changes nothing; a material cell standing h above the head bottom forbids the positions
     // within the meet radius at h plus the head margin. Flat tip.
     private static (long Unreached, long ModelCells) Reference(PipelineResult result, ToolDefinition tool)
+    {
+        var plan = result.Plan;
+        var model = result.Model;
+        var deepest = ReferenceDeepest(result, tool);
+        long unreached = 0, modelCells = 0;
+        for (var j = 0; j < model.Height; j++)
+        {
+            for (var i = 0; i < model.Width; i++)
+            {
+                for (var k = 0; k < plan.Levels; k++)
+                {
+                    unreached += plan.Steps[k].Mask[i, j] && deepest[i, j] < k ? 1 : 0;
+                    modelCells += model[i, j] > result.Floor + 1e-4f && model[i, j] > plan.Steps[k].Level + 1e-4f ? 1 : 0;
+                }
+            }
+        }
+
+        return (unreached, modelCells);
+    }
+
+    // The deepest level index every position reaches by the rule above, -1 for none.
+    private static int[,] ReferenceDeepest(PipelineResult result, ToolDefinition tool)
     {
         var plan = result.Plan;
         var stock = result.Stock.Map;
@@ -198,20 +222,7 @@ public sealed class BackwardsTests
             }
         }
 
-        long unreached = 0, modelCells = 0;
-        for (var j = 0; j < height; j++)
-        {
-            for (var i = 0; i < width; i++)
-            {
-                for (var k = 0; k < levels; k++)
-                {
-                    unreached += plan.Steps[k].Mask[i, j] && deepest[i, j] < k ? 1 : 0;
-                    modelCells += model[i, j] > result.Floor + 1e-4f && model[i, j] > plan.Steps[k].Level + 1e-4f ? 1 : 0;
-                }
-            }
-        }
-
-        return (unreached, modelCells);
+        return deepest;
     }
 
     // The head radius h above the head bottom, never less than the cutter radius.
@@ -268,11 +279,11 @@ public sealed class BackwardsTests
         Assert.True(frustum.Unreached.Value.Sweeps >= 2, "the material of the first unreached ring must unreach more positions");
     }
 
-    // A slab (levels 7-5, 3-1 and 0) runs whole before the next deeper one, in machining order from the top;
-    // the positions reached on both levels of a slab are cut once at its bottom level, so level 7 is cut
-    // only over the wall, where level 5 is not reachable.
+    // A slab (levels 7-5, 3-1 and 0) runs whole before the next deeper one, in machining order from the top,
+    // its far block first at its bottom level (T-193); the band beside the wall is cut at every level, so
+    // every level of the plan is a layer (the far go of T-171 cut the band too and skipped level 3).
     [Fact]
-    public void Slabs_RunFromTheTop_WithTheirFarGoAtTheBottomLevel()
+    public void Slabs_RunFromTheTop_FarBlockFirst_AndEveryLevelIsALayer()
     {
         var result = RunWall(4f);
         var levels = result.Plan.Steps.Select(s => s.Level).ToList();
@@ -280,19 +291,108 @@ public sealed class BackwardsTests
         var slabs = result.Layers.Select(l => levels.FindIndex(z => z == l.Level) / 2).ToList();
         Assert.True(slabs.SequenceEqual(slabs.OrderBy(s => s)), $"slabs in path order: {string.Join(" ", slabs)}");
         Assert.Equal(new[] { 0, 1, 2 }, slabs.Distinct());
+        Assert.Equal(levels.OrderBy(z => z), result.Layers.Select(l => l.Level).Distinct().OrderBy(z => z));
 
-        var far = result.FarStepdown.Milled;
         var farCount = 0;
-        foreach (var cellIsFar in far)
+        foreach (var cellIsFar in result.FarStepdown.Milled)
         {
             farCount += cellIsFar ? 1 : 0;
         }
 
-        Assert.True(farCount > 0, "the pockets must be cut by far goes");
+        Assert.True(farCount > 0, "the pockets must be cut by the far block");
+        Assert.Equal(levels[1], result.Layers[0].Level);
+    }
 
-        // Slab 7-5: the far go at 5, then level 7 over the wall top; slab 3-1: the wall is vertical, so every
-        // position reached at 3 is reached at 1 and the far go cuts it all; slab 0: its one level.
-        Assert.Equal(new[] { 5f, 7f, 1f, 0f }, result.Layers.Select(l => l.Level));
+    // T-193: where the check leaves nothing unreached, Backwards routes the plan of the pass by the Z layer's
+    // rules and gives the established toolpath bit for bit: the one Recursion keeps after its first pass.
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(4f)]
+    public void WhereNothingIsUnreached_TheToolpathIsTheZLayers(float farStepdown)
+    {
+        var backwards = RunWall(farStepdown);
+        Assert.Equal(0, backwards.Unreached!.Value.Unreached);
+        var recursion = Wall(farStepdown);
+        recursion.CollisionMode = CollisionMode.Recursion;
+        var reference = new PipelineService().Run(recursion, new[] { TestMeshes.Box(40, 4, WallTop) }, null, CancellationToken.None);
+        Assert.Equal(1, reference.Passes);
+        Assert.Equal(reference.Toolpath.Segments, backwards.Toolpath.Segments);
+        Assert.Equal(reference.Layers, backwards.Layers);
+        Assert.Equal(reference.RouteUnitEntries, backwards.RouteUnitEntries);
+        Assert.Equal(reference.FarStepdown.Milled.Cast<bool>(), backwards.FarStepdown.Milled.Cast<bool>());
+    }
+
+    // T-193: the far stepdown takes only positions reached at the bottom level of their slab and at least the
+    // stepover from every obstacle there, the model, the stock it stands above and every position the check
+    // leaves unreached at that level; the ring the frustum head cannot reach beside the box stays out.
+    [Fact]
+    public void TheFarBlock_KeepsTheStepoverFromTheModel_AndFromEveryUnreachedPosition()
+    {
+        var project = Frustum(4f);
+        var result = RunFrustum(4f);
+        var plan = result.Plan;
+        var tip = result.EffectiveTip;
+        var deepest = ReferenceDeepest(result, project.Tool);
+        var cell = tip.CellSize;
+        int width = tip.Width, height = tip.Height;
+        var group = (int)MathF.Round(project.Parameters.FarStepdown / project.Parameters.Stepdown);
+        var allowed = new bool[width, height];
+        for (var bottom = group - 1; bottom < plan.Levels; bottom += group)
+        {
+            var level = plan.Steps[bottom].Level;
+            var obstacles = new List<(int I, int J)>();
+            for (var j = 0; j < height; j++)
+            {
+                for (var i = 0; i < width; i++)
+                {
+                    if ((!float.IsNaN(tip[i, j]) && tip[i, j] > level + 1e-4f) || (plan.Steps[bottom].Mask[i, j] && deepest[i, j] < bottom))
+                    {
+                        obstacles.Add((i, j));
+                    }
+                }
+            }
+
+            for (var j = 0; j < height; j++)
+            {
+                for (var i = 0; i < width; i++)
+                {
+                    if (plan.Steps[bottom].Mask[i, j] && deepest[i, j] >= bottom
+                        && obstacles.All(o => cell * MathF.Sqrt((o.I - i) * (o.I - i) + (o.J - j) * (o.J - j)) + 1e-4f >= project.Parameters.Stepover))
+                    {
+                        allowed[i, j] = true;
+                    }
+                }
+            }
+        }
+
+        var far = 0;
+        var nearUnreached = 0;
+        for (var j = 0; j < height; j++)
+        {
+            for (var i = 0; i < width; i++)
+            {
+                if (!result.FarStepdown.Milled[i, j])
+                {
+                    continue;
+                }
+
+                far++;
+                Assert.True(allowed[i, j], $"far position ({i}, {j}) lies within the stepover of an obstacle or is not reached at its slab's bottom");
+            }
+        }
+
+        for (var j = 0; j < height; j++)
+        {
+            for (var i = 0; i < width; i++)
+            {
+                nearUnreached += plan.Steps[plan.Levels - 1].Mask[i, j] && deepest[i, j] < plan.Levels - 1 ? 1 : 0;
+            }
+        }
+
+        Assert.True(far > 0, "the open stock must be cut by the far block");
+        Assert.True(nearUnreached > 0, "the frustum must leave a ring unreached");
+        Assert.Equal(1, result.Passes);
+        Assert.Empty(result.Collisions.Report!.Events);
     }
 
     // Where nothing is unreached Backwards removes what the established Z layer removes: the wall's final
@@ -402,13 +502,13 @@ public sealed class BackwardsTests
         Assert.Throws<ArgumentException>(() => new ThreeAxisFreedomStrategy().Generate(context, null, TestContext.Current.CancellationToken));
     }
 
-    // A far stepdown deeper than the cutter length less nothing: the far go would meet the slab top, the
-    // validator warns and the result still keeps every head clear.
+    // A far stepdown deeper than the cutter length: the far block steps within the cutter length as in every
+    // mode (T-193), the validator gives the Z layer's warning and the result keeps every head clear.
     [Fact]
-    public void AFarGoDeeperThanTheCutter_IsWarned_AndStaysClear()
+    public void AFarStepdownDeeperThanTheCutter_IsWarned_AndStaysClear()
     {
         var project = Frustum(4f);
-        Assert.Contains(ProjectValidator.Validate(project, null).Warnings, w => w.Field == "Parameters.FarStepdown" && w.Message.Contains("Backwards", StringComparison.Ordinal));
+        Assert.Contains(ProjectValidator.Validate(project, null).Warnings, w => w.Field == "Parameters.FarStepdown" && w.Message.Contains("steps of at most the cutter length", StringComparison.Ordinal));
         Assert.Empty(RunFrustum(4f).Collisions.Report!.Events);
     }
 

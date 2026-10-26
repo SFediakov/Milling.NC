@@ -10,10 +10,14 @@ namespace Miller.App.ViewModels;
 // X and Y; the height equals the model height because the model top sits at the stock top.
 public sealed partial class StockSettingsViewModel : SettingsViewModelBase
 {
+    public const string ModelMinimumOriginLabel = "Stock corner offset from the model minimum (mm)";
+
+    public const string GlobalOriginLabel = "Stock corner from machine zero, the global origin (mm)";
+
     private static readonly string[] BoundProperties =
     {
         nameof(Shape), nameof(SizeX), nameof(SizeY), nameof(SizeZ), nameof(Diameter), nameof(Height), nameof(Placement), nameof(Margin),
-        nameof(OriginX), nameof(OriginY), nameof(OriginZ), nameof(IsBox), nameof(IsCylinder), nameof(IsExplicit),
+        nameof(OriginX), nameof(OriginY), nameof(OriginZ), nameof(OriginLabel), nameof(IsBox), nameof(IsCylinder), nameof(IsExplicit),
     };
 
     private readonly MeshImportService _meshImport;
@@ -72,6 +76,9 @@ public sealed partial class StockSettingsViewModel : SettingsViewModelBase
     public float OriginY { get => Current.Stock.ExplicitOrigin.Y; set => Edit(p => p.Stock.ExplicitOrigin = new Vector3(p.Stock.ExplicitOrigin.X, value, p.Stock.ExplicitOrigin.Z)); }
 
     public float OriginZ { get => Current.Stock.ExplicitOrigin.Z; set => Edit(p => p.Stock.ExplicitOrigin = new Vector3(p.Stock.ExplicitOrigin.X, p.Stock.ExplicitOrigin.Y, value)); }
+
+    // What the explicit corner is measured from, which follows machine zero (ModelLayout.StockCorner).
+    public string OriginLabel => Current.Axes.IsGlobal ? GlobalOriginLabel : ModelMinimumOriginLabel;
 
     public bool IsBox => Shape == StockShape.Box;
 

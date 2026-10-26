@@ -223,10 +223,14 @@ below the tip map by more than `Tolerance`.
   - on the box around the placed models (offsets included), moving with them
     (T-179): `ModelCornerMinXYMinZ`, `ModelCornerMinXYTopZ`, `ModelCenterTopZ`,
     `ModelCustom` (offset vector from the models' corner);
-  - `Global` (T-179): a fixed point, the offset vector in the global frame (the
-    model coordinates after the axis mapping, the STL origin at 0). Model
-    offsets move the models and the explicit stock corner moves the stock
-    against it.
+  - `Global` (T-179, T-189): the origin of the global frame (the model
+    coordinates after the axis mapping and the rotations, the STL origin at 0),
+    the one 0 of the axes, the model offsets and the explicit stock corner
+    (T-190, measured from it instead of the models' minimum); it takes no
+    offset. Model offsets move the models and the explicit stock corner moves
+    the stock against it; an auto-fit stock stays around the models.
+  Changing the mode into or out of `Global` rewrites the explicit stock
+  corner so the stock keeps its place against the models (T-191).
   The viewport draws machine space, its axes at zero: the reference of the
   mode stays in place and the rest moves.
 
@@ -497,7 +501,9 @@ Uncuttable classification (`UncuttableRegions`):
   Every such cell is a node (a lattice at the finishing stepover left the stock
   higher than the head limit counts on). Without should-cut cells the strategy is
   unchanged.
-- Far stepdown (`FarStepdown`, T-156, "Z layer by layer" only): 0 for none,
+- Far stepdown (`FarStepdown`, T-156, "Z layer by layer" only): 0 or the
+  Stepdown itself for none (T-196: nothing goes deeper than one Stepdown, and
+  every strategy and collision mode mills exactly as with 0, `mn_far_levels`),
   otherwise a whole multiple k of the Stepdown of at least twice it. The plan
   levels form groups of k (the last group may be shorter). Per group the far
   region of its bottom level, the positions of that level's mask at least the
@@ -576,10 +582,15 @@ Uncuttable classification (`UncuttableRegions`):
   the next unit's entry, at that route's height: it is the last node of the
   unit's last route (the solver's fixed end, `mn_solve` with `end`), and the
   walk visits the branch to the leaf cave nearest to it last, so the way there
-  is short. The units are solved in waves of up to min(`MN_MAX_WORKERS` (64),
-  processors) at once, each from its own copy of the planned heights the units
+  is short. The units are solved on up to min(`MN_MAX_WORKERS` (64), processors) workers,
+  each taking the next unit in order as soon as it is free (T-195, no wave waits
+  for its longest unit), from its own copy of the planned heights the units
   before it leave (replayed region by region: the routes write only regions
-  while the guard is off) and with its own writer placed at its entry; the
+  while the guard is off) and with its own writer placed at its entry; with the
+  guard on (one run, one worker) a unit starts from the heights and the position
+  the unit before actually left. The groups are prepared at once as well (T-195:
+  the standing maps folded per group and combined as running minima, then one
+  group per worker). The
   paths and layer marks are appended in unit order and the established stages
   (simplifier, slow zones, statistics, check) continue. The evaluation budget
   is shared by node count in unit order. One run decides every node against the
@@ -626,27 +637,24 @@ Uncuttable classification (`UncuttableRegions`):
   the deepest levels the sweep before reached, until one changes nothing (a
   position only loses levels; the result equals the cut from the top down for a
   flat tip, a ball tip's scallops above the level above are not counted). The
-  settled levels go to the solver as batches of far stepdown / stepdown levels
-  (one level without a far stepdown), filled at once once the levels settle
-  (T-185).
-  A batch's far go is every position reached on all of its levels (never one
-  withdrawn around a collision, T-164), cut in one step at its bottom level;
-  where the batch top stands higher above that level than the cutter length the
-  far go is tested against the material at the batch top as well. The solver
-  routes every batch like a Z layer slab: the far go, then the batch's levels
-  without the far go positions, cave by cave in route units (T-166, T-167) over
-  the material the batches above leave (every position at the deepest level it
-  reaches above the batch). A batch starts at the entry of its first unit and
-  its last unit ends at the start of the nearest batch below it with routes; the
-  lowest batch ends where its routes end. A batch depends on nothing another
-  batch routes, so the batches run at once (T-185): first every batch's group
-  and its first entry, then every batch's routes, the batch with the most nodes
-  first, one batch per worker with its units in sequence (units give the same
-  paths whatever runs at once, T-168). The
-  batches' paths are then joined from the top one down, the program starting
-  with a plunge from the safe plane to the first batch's entry, and the
-  established stages follow (simplifier, slow zones, statistics, check; the far
-  withdrawal of T-164 may start another pass). Statistics: "Unreached cells
+  settled check gives the Z layer its input in one pass over the masks (T-193,
+  user request: Backwards routes by the rules of "Z layer by layer"): the
+  reached plan, each level's mask without the positions that do not reach it,
+  and the strategy tip with those positions raised to the deepest level they
+  reach (the stock top where they reach none), as the recursion raises a
+  position. The Z layer then routes that plan exactly as it routes a pass: far
+  stepdown slabs whose far block takes only positions at least the stepover
+  from every obstacle, the raised positions included, in steps within the
+  cutter length where the head clears what stands (T-156, T-157, T-162, T-164),
+  everything else at every level cave by cave, in route units ending where the
+  next begins, priced with the turn fine. Where nothing is unreached the
+  toolpath is the Z layer's (Recursion's first pass) bit for bit. The far go of
+  T-171 (every position reached on all levels of a batch, cut in one step at
+  its bottom level) is gone: it cut the band beside the walls a far stepdown
+  deep (on the user's heart at 0.05 mm 22 percent of the depth steps were one
+  stepdown, 70 percent after T-193, 69 percent in Recursion). The established
+  stages follow (simplifier, slow zones, statistics, check; the far withdrawal
+  of T-164 may start another pass). Statistics: "Unreached cells
   (Backwards): U of M model cells, P %", U the unreached positions summed over
   the levels, M the cells whose model stands above a level summed over the
   levels, P = 100 U / M.
@@ -680,7 +688,7 @@ Uncuttable classification (`UncuttableRegions`):
   percent by a fixed hash), launched before the CPU's start walks and collected
   after them, of which the 4 shortest in XY are priced exactly beside the walks.
   On the CPU: the islands of the separation, the route floors (built over each
-  route's box only, T-185), the slab groups, the solver and the check (in bands,
+  route's box only, T-185), the level groups, the solver and the check (in bands,
   T-187). The validator refuses the mode without an OpenCL GPU; there is no CPU
   path behind a GPU call. The statistics name the GPU and every process time
   (`ProcessTimes`, `mn_result_timings`).
@@ -799,6 +807,14 @@ M30
   clipped to the grid as spans, a flat tip stamps one constant. The C# rules are
   kept as the reference in `NativeSimulationTests`; the heart at 0.4 mm cells
   runs `RunToEnd` in 8 ms against 133 ms with them (`out/simulation-timing.txt`).
+- Simulation session (T-207): whole segments (Run to end, seeks, layer jumps, the whole segments of a
+  playback step) go over the collision check's banded walk (`mn_walker`, the walk of `mn_check_path`)
+  on the CPU workers, in a session (`mn_sim_open`, `NativeSimulationSession`) that takes the footprint,
+  the annulus, the segments and the worker pool once per loaded result and the backup rows on the
+  first walk; the walk records one event per check position from its first entered cell, the
+  per-sample rule, so the stock and the events equal the per-sample engine's. Parts of a segment
+  (playback frames, a seek inside a segment) are sampled by the engine as before; the analysis keeps
+  the per-sample engine because it needs the contact of every entered cell.
 - Sampling (T-161): the engine stamps the sweep samples of the whole segment
   (`MaterialRemover.SweepSamples`, `mn_sweep_samples`: cell / 2 apart, both ends,
   numbered from the segment start) and raises `Sampled` at the positions of the
@@ -825,9 +841,8 @@ M30
 | `0 < Stepover <= CutterDiameter` | Parameters.Stepover |
 | `0 < FinishingStepover <= CutterDiameter` | Parameters.FinishingStepover |
 | `Stepdown > 0` | Parameters.Stepdown |
-| `FarStepdown == 0` or a whole multiple of `Stepdown` of at least `2 * Stepdown` (within `Slicer.LevelTolerance`) | Parameters.FarStepdown |
-| `FarStepdown <= CutterLength` (warning, not error: the far block then steps by the cutter length) | Parameters.FarStepdown |
-| Backwards: `FarStepdown + Tolerance <= CutterLength` (warning, not error: the far go then cuts only where the head clears the batch top) | Parameters.FarStepdown |
+| `FarStepdown == 0`, `FarStepdown == Stepdown` (both none, T-196) or a whole multiple of `Stepdown` of at least `2 * Stepdown` (within `Slicer.LevelTolerance`) | Parameters.FarStepdown |
+| `FarStepdown <= CutterLength` (warning, not error: the far block then steps by the cutter length; every collision mode, Backwards too since T-193) | Parameters.FarStepdown |
 | `SafeHeight > 0` (clearance above the stock top) | Parameters.SafeHeight |
 | `0.01 <= CellSize <= 5` | Parameters.CellSize |
 | `FeedRate, PlungeRate, RapidRate > 0` | Parameters.* |
@@ -845,12 +860,14 @@ M30
 ### 6.8 Machine connection (Grbl)
 
 - Links: a serial port through the native library `miller_serial` (8N1, no flow control, DTR and
-  RTS on; the rates 9600 to 921600 every system accepts, Grbl uses 115200) or a raw TCP stream to a
+  RTS off on Windows and no hang-up on close on Linux, so connecting does not restart an Arduino and
+  the machine keeps its position, overrides and modal state; Linux raises DTR on the first open
+  after the board is plugged in, which still restarts it once; the rates 9600 to 921600 every system accepts, Grbl uses 115200) or a raw TCP stream to a
   network controller (port 23 for FluidNC and grblHAL). One I/O thread reads and writes the link,
   because a synchronous Windows handle serializes reads and writes anyway.
-- Identification: an Arduino restarts when its port opens and prints `Grbl 1.1h ['$' for help]`;
-  the controller waits 2.5 s for that line, then asks `?`; the welcome line or a status report
-  identifies it, nothing after 5 s closes the connection.
+- Identification: a controller that restarts prints `Grbl 1.1h ['$' for help]`; the controller
+  waits 2.5 s for that line, then asks `?`; the welcome line or a status report identifies it,
+  nothing after 5 s closes the connection. Nothing but `?` is written on connect.
 - Streaming is send-response: a line is written only after the controller answered the previous
   one with `ok` or `error:N`, so it never holds more than one unconfirmed line. Grbl's `ok` means
   the line was executed; a move is then in its planner, which keeps motion continuous. A program job
@@ -861,7 +878,7 @@ M30
   characters per line. A line holding `?`, `!`, `~`, 0x18 or any byte from 0x80 is refused with its
   number, because Grbl would execute that character as a realtime command.
 - Errors: `error:N` in a program holds the machine, waits for Hold:0 and resets (position kept,
-  spindle off); in check mode it resets out of check mode; in manual commands the remaining lines
+  spindle off); in manual commands the remaining lines
   are dropped. `ALARM:N` ends the job. Codes are shown with the Grbl v1.1 texts.
 - Stop: feed hold, then the soft reset once the status shows the machine at rest (Hold:0, Idle) or
   after 5 s. A line in flight stays in flight until the welcome line after the reset.
@@ -869,8 +886,20 @@ M30
   for 3 s is closed as well. The running job fails with the reason.
 - Commands: jog `$J=G91 G21 <axis><step> F<feed>`, zero `G10 L20 P0` (active work system, kept over
   a reset), go to `G90 G0 X0 Y0`, touch-plate probe `G21 G91 G38.2 Z-<travel> F<feed>`, then
-  `G10 L20 P0 Z<plate>`, `G0 Z<lift>`, `G90`, the outline as rapids round the program's XY bounds at
-  the current height, home `$H`, unlock `$X`, check mode `$C` around the program.
+  `G10 L20 P0 Z<plate>`, `G0 Z<lift>`, `G90`, home `$H`, unlock `$X` (outline and check mode were
+  removed in T-206).
+- Executing move (T-205): Grbl acknowledges a line once it is in its planner, up to about 15 moves
+  ahead of the tool, so the machine view and the listing take the move the tool is on from the
+  reported work position: among the segments from the one found last to the end of the acknowledged
+  lines, the earliest within 0.01 mm of the nearest (`ExecutionTracker`), never moving back during a
+  run. The next moves (View > Show Next Moves) are the 150 segments from there. Save progress still
+  counts acknowledged lines minus two.
+- Console while a program is paused (Hold or Door): the line goes out before the next program
+  line, its answer is logged and never counted as program progress, an `error:N` does not fail the
+  program. Grbl queues a move behind the moves already in its planner; `$` commands other than `$G`
+  are refused by Grbl in Hold (error 8).
+- Macros: named command lists in `macros.json` beside the settings (own cluster, `MacroService`),
+  sent as one command job with a fixed delay (0 to 60000 ms) after each `ok` before the next line.
 - Positions: `WPos = MPos - WCO`; Grbl sends one of the two ($10) and the offset and overrides only
   every 10 to 30 reports, so both are carried over. Values are in the controller's unit ($13); the
   commands themselves are in millimetres.
@@ -2437,6 +2466,70 @@ check that decides done.
 - Input: user request (the summed time of the whole process, not only the parts)
 - Output: the heart at 0.025 mm cells, one build, one after the other: Backwards 298.8 s to 27.3 s, Backwards_GPU 296.1 s to 15.2 s; 0 events in both; machining 154.12 min (Backwards, as the original) and 149.00 min (Backwards_GPU, original 147.72 with tours on every route)
 - Acceptance: every process with its time, its place (GPU or CPU) and the data it moves in the report
+- Status: done
+
+#### T-189 Global machine zero at the global origin
+- Depends on: T-179
+- Files: `src/Miller.Core/Setup/AxisSetup.cs`, `src/Miller.App/ViewModels/AxisSettingsViewModel.cs`, `src/Miller.App/Views/AxisSettingsView.axaml`, `tests/Miller.Tests/Core/Setup/MachineZeroTests.cs`, `tests/Miller.Tests/App/MachineZeroViewTests.cs`
+- Input: user request (the global machine zero must be the 0 of the other parts, the axes and the stock)
+- Output: `Global` puts machine zero at the global origin (`AxisSetup.IsGlobal`); `CustomOffset` belongs to `Custom` and `ModelCustom` only; the axes panel hides the offset in `Global` and names the zero (`GlobalZeroText`)
+- Acceptance: machine zero is (0, 0, 0) whatever `CustomOffset` holds and the mapped origin lands at it; the stock and model modes keep their matrices and stock box; with the stock at zero and the model where the stock corner mode has it, `Global` gives the stock corner's toolpath segment for segment, and moving both shifts it
+- Status: done
+
+#### T-190 Explicit stock measured from the global zero
+- Depends on: T-189
+- Files: `src/Miller.Core/Setup/ModelLayout.cs`, `src/Miller.Core/Setup/StockDefinition.cs`, `src/Miller.App/ViewModels/StockSettingsViewModel.cs`, `src/Miller.App/Views/StockSettingsView.axaml`
+- Input: user request (as T-189)
+- Output: `ModelLayout.StockCorner(project, anchor)`, the one corner of `StockBoundsMachine`, `ModelBoundsInStock` and `AlignedOffset`: in `Global` with an explicit placement the corner is `ExplicitOrigin` from the global origin; the stock panel names the reference (`OriginLabel`)
+- Acceptance: the explicit stock stands at its corner whatever the axes, the scale, the turn and the offsets do; an auto-fit stock stays around the models; the align commands put the model at that stock
+- Status: done
+
+#### T-191 Changing machine zero keeps the stock against the models
+- Depends on: T-190
+- Files: `src/Miller.Core/Setup/ModelLayout.cs`, `src/Miller.App/ViewModels/AxisSettingsViewModel.cs`
+- Input: user request (as T-189; a reference change must not move a part)
+- Output: `ModelLayout.SetOriginMode(project, modelBounds, mode)` rewrites an explicit stock corner when the mode goes into or out of `Global`; without models (none loaded, mapping not a permutation) only the mode changes
+- Acceptance: the models' box in the stock is the same before and after a change into `Global` and back (1e-3 mm) for every stock and model mode; a change between two other modes and an auto-fit stock keep the values exactly
+- Status: done
+
+#### T-192 One zero in Global on the user's heart
+- Depends on: T-191
+- Files: `src/Miller.App/ViewModels/AxisSettingsViewModel.cs`, `tests/Miller.Tests/Core/Setup/MachineZeroTests.cs`
+- Input: user report (a Build_1.0.123 screenshot: stock corner 0, the axes away from it, more than one zero)
+- Output: the screenshot's corner (-2.746, 0.698, 0.352) is the models' minimum of the 1.0.123 rule, which T-190 removed; the launcher had kept 1.0.123 because the running instance locked the Release folder. Reference points of `Global`: machine zero (the axes), the explicit stock corner and the axis rotations share the global origin; a model's scale and turn act about its own centre and its offset moves it from its file position (the panel text says so)
+- Acceptance: on the heart with the screenshot's settings the corner 0 puts the stock at (0, 0, 0), the axes; the model lands at the screenshot's (-1.746, 2.898, -4.898); the generation cuts the stock box of the same frame; `Miller.cmd --version` prints the session's build
+- Status: done
+
+#### T-193 Backwards routed by the Z layer's rules
+- Depends on: T-170, T-171
+- Files: `src/Miller.Native/src/mn_backwards.c`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_internal.h`, `src/Miller.Native/src/mn_gpu.c`, `src/Miller.Native/src/mn_gpu.h`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, `tests/Miller.Tests/Application/BackwardsTests.cs`, `tests/Miller.Tests/Application/GpuTests.cs`
+- Input: user request (both Backwards modes did not mill layer by layer; their routes must follow the basic rules of "Z layer by layer" for the penalties and the targets)
+- Output: the rule of section 6.4: the check's reached plan and raised tip (`mn_backwards_settled`), one Z layer route body for every mode (`z_layer_route`); the batches, the far go of T-171, the slab schedule of T-185 and the GPU closing read-back are gone; the validator's Backwards warning is the Z layer's; process times "backward reached plan" and "level groups"
+- Acceptance: where nothing is unreached (the wall, far stepdown 0 and 4) Backwards gives Recursion's toolpath, layers, unit entries and far area bit for bit; on the frustum box every far position is reached at its slab's bottom and at least the stepover from the model and every unreached position; every plan level is a layer of the wall; zero events, no gouge, the same unreached counts (heart 9,508 of 56,171,255 at 0.025 mm); Backwards_GPU gives the CPU's layers, entries, far area and final stock (its start tours may order a route's nodes differently); the user's heart at 0.05 mm: one-stepdown depth steps 22 to 70 percent (Recursion 69), retracts 206 to 8, plunge 6,389 to 1,177 mm, 130.6 to 176.0 estimated minutes (Backwards_GPU 127.1 to 171.7), zero events
+- Status: done
+
+#### T-194 Validator and tests of T-193
+- Depends on: T-193
+- Files: `src/Miller.Application/Validation/ProjectValidator.cs`, `tests/Miller.Tests/Application/BackwardsTests.cs`, `tests/Miller.Tests/Application/GpuTests.cs`
+- Input: user request (as T-193)
+- Output: the Backwards far stepdown warning replaced by the Z layer's (steps within the cutter length); the far go order test replaced by the layer test; the GPU test compares what the start tours cannot change (verified: without the tours both modes give the same segments)
+- Acceptance: 891 tests pass
+- Status: done
+
+#### T-195 Driver-level time of the routes
+- Depends on: T-193
+- Files: `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_slicing.c`, `src/Miller.Native/src/mn_backwards.c`
+- Input: user request (keep the driver-level approach: inputs once, nothing whole-grid inside a loop, every stage measured and the total)
+- Output: the level groups prepared at once (standing maps folded per group, running minima, one group per worker, the far area written after); the should-cut touches stamped from the marked cells instead of gathered over the footprint for every cell (4.7 s of a first pass at 0.025 mm with nothing marked); route units taken by free workers in order without wave barriers; the lower envelope's column pass in blocks of 16 adjacent columns; the check's sweep scratch only on the CPU; every change gives the same toolpaths bit for bit (the user's heart G-code compared byte for byte, the worker-count, one run and golden tests)
+- Acceptance: the user's heart at 0.025 mm in Backwards 44.8 s after T-193 to 31.0 s (27.3 s before T-193, whose far go cut fewer layers), Backwards_GPU 34.6 s to 20.9 s (15.2 s): level groups 10.7 to 2.3 s, route units 10.4 to 9.3 s (lower bound about 7.8 s: 125 s of solver thread time on 16 threads), check wait 4.6 s (the check on half the workers, user request of T-170); Recursion at the same settings 453 s, 8 passes, 67 events
+- Status: done
+
+#### T-196 The stepdown as far stepdown switches it off
+- Depends on: T-156, T-193
+- Files: `src/Miller.Native/src/mn_internal.h`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_pipeline.c`, `src/Miller.Native/include/miller_native.h`, `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.App/Views/CuttingParametersView.axaml`, `tests/Miller.Tests/Application/FarStepdownOffTests.cs`, `tests/Miller.Tests/Application/ProjectValidatorTests.cs`, `tests/Miller.Tests/App/SettingsViewModelsTests.cs`
+- Input: user request (for all options the far stepdown may equal the normal stepdown; the far stepdown is then off and all milling uses the normal stepdown as its deepest cut; define the existing milling strategies and implement it)
+- Output: `mn_far_levels` (k >= 2 on, 1 off for 0 or the stepdown, 0 invalid) decides the Z layer's groups and the far withdrawal's passes; `ProjectValidator.IsFarStepdownOff`, the error text and the Cutting tab label name the new value; the cutter length warning only for a far stepdown that is on. The options: strategies "Z layer by layer" (collision modes Recursion, One run, Backwards, Backwards_GPU; the far stepdown applies) and "3 axis freedom" (Recursion, One run; it never reads the far stepdown), cut scopes Everything and Separation
+- Acceptance: 0, the stepdown (2 and 2.00005 over 2, 0.2 over 0.2), 4, 6 and 0.6 over 0.2 accepted, 1, 3, 2.001, negative, NaN and infinite refused, no cutter length warning for the stepdown itself, the stepdown accepted with every strategy and mode; for every strategy, every mode it takes and both scopes the stepdown as far stepdown gives the toolpath, layers, passes, unit entries, unreached and not-cut counts and events of 0 bit for bit and no far area; 910 tests pass
 - Status: done
 
 #### T-165 Head bottom down to half the cutter diameter

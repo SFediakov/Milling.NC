@@ -14,6 +14,7 @@
   <Color x:Key="ToolpathRapidColor">#FFE5484D</Color>
   <Color x:Key="ToolpathFeedColor">#FF3DDC84</Color>
   <Color x:Key="ToolpathPlungeColor">#FFF5A524</Color>
+  <Color x:Key="ToolpathNextColor">#FF22D3EE</Color>
   <Color x:Key="ToolCutterColor">#FFD0D0D0</Color>
   <Color x:Key="ToolHeadColor">#FF707070</Color>
   <Color x:Key="CategoryOkColor">#FF3DDC84</Color>
@@ -27,6 +28,8 @@
   <Color x:Key="AxisXColor">#FFE5484D</Color>
   <Color x:Key="AxisYColor">#FF3DDC84</Color>
   <Color x:Key="AxisZColor">#FF3D8BFD</Color>
+  <Color x:Key="ListingExecutedColor">#FF243A2E</Color>
+  <Color x:Key="ListingExecutingColor">#FF1F4E8C</Color>
 
   <SolidColorBrush x:Key="WindowBackgroundBrush" Color="{StaticResource WindowBackgroundColor}" />
   <SolidColorBrush x:Key="PanelBackgroundBrush" Color="{StaticResource PanelBackgroundColor}" />
@@ -40,6 +43,7 @@
   <SolidColorBrush x:Key="ToolpathRapidBrush" Color="{StaticResource ToolpathRapidColor}" />
   <SolidColorBrush x:Key="ToolpathFeedBrush" Color="{StaticResource ToolpathFeedColor}" />
   <SolidColorBrush x:Key="ToolpathPlungeBrush" Color="{StaticResource ToolpathPlungeColor}" />
+  <SolidColorBrush x:Key="ToolpathNextBrush" Color="{StaticResource ToolpathNextColor}" />
   <SolidColorBrush x:Key="ToolCutterBrush" Color="{StaticResource ToolCutterColor}" />
   <SolidColorBrush x:Key="ToolHeadBrush" Color="{StaticResource ToolHeadColor}" />
   <SolidColorBrush x:Key="CategoryOkBrush" Color="{StaticResource CategoryOkColor}" />
@@ -53,4 +57,6 @@
   <SolidColorBrush x:Key="AxisXBrush" Color="{StaticResource AxisXColor}" />
   <SolidColorBrush x:Key="AxisYBrush" Color="{StaticResource AxisYColor}" />
   <SolidColorBrush x:Key="AxisZBrush" Color="{StaticResource AxisZColor}" />
+  <SolidColorBrush x:Key="ListingExecutedBrush" Color="{StaticResource ListingExecutedColor}" />
+  <SolidColorBrush x:Key="ListingExecutingBrush" Color="{StaticResource ListingExecutingColor}" />
 </ResourceDictionary>

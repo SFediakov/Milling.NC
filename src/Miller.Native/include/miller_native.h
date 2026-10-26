@@ -95,7 +95,7 @@ typedef struct mn_parameters {
     float cell_size;
     float tolerance;
     /* Z layer by layer: the far region of every group of far_stepdown / stepdown levels is cut this
-     * much deeper in one step (T-156); 0 for none. */
+     * much deeper in one step (T-156); 0 or the stepdown itself for none (T-196). */
     float far_stepdown;
 } mn_parameters;
 
@@ -295,6 +295,17 @@ typedef struct mn_collision {
  * the segment; the head ring is tested at every segment end and every max(CellSize, cutter radius)
  * along it, the footprint of a rapid at the same spacing, against the stock as it stands. status
  * (cells) receives MODEL and, per entered cell, COLLISION; SHOULD_REMOVE is not touched. */
+/* The simulation session (T-207): the simulation's whole segments on the collision check's banded walk
+ * over the CPU workers. Open takes the footprint, the annulus and the segments once (copied) and keeps
+ * a worker pool; walk sweeps segments [first, last) over `stock` in place, with one event per check
+ * position from its first entered cell (the per-sample simulation's rule), and returns the events
+ * (free with mn_free) and a rectangle holding every changed cell. */
+typedef struct mn_sim mn_sim;
+MN_API int32_t mn_sim_open(const mn_grid* grid, const mn_offset* offsets, int32_t offset_count, const mn_offset* annulus, int32_t annulus_count, float cutter_radius,
+    float cutter_length, float tolerance, const mn_segment* segments, int32_t segment_count, mn_sim** session);
+MN_API int32_t mn_sim_walk(mn_sim* session, int32_t first, int32_t last, float* stock, const float* model, float floor, mn_collision** events, int32_t* event_count, mn_dirty* dirty);
+MN_API void mn_sim_close(mn_sim* session);
+
 MN_API int32_t mn_collision_check(const mn_segment* segments, int32_t count, const mn_grid* grid, const float* stock, const float* model, float floor, const mn_tool* tool, float tolerance, uint8_t* status, mn_collision** events, int32_t* event_count);
 
 /* Far stepdown withdrawal (T-164): a collision's place (a cell the head or a rapid entered, and the
@@ -472,15 +483,16 @@ MN_API int32_t mn_result_unreached(const mn_result* result, int64_t* unreached, 
 MN_API void mn_result_uncut(const mn_result* result, int32_t* cells, double* volume, float* max_height);
 
 /* Process times of the whole generation in seconds (T-176), indexed as below: the wall time of every
- * stage over all passes, then the parts inside them; the slab groups, the route units and the solver
- * parts (candidate lists, start walks, local search, route floors, writing, GPU start tours) are summed
- * over the slabs and units, which run on several threads at once (T-185); the check's bands are the
+ * stage over all passes, then the parts inside them; the backward check's input is the reached plan and
+ * the raised tip it gives the Z layer (T-193), the level groups the Z layer's preparation of its groups;
+ * the route units and the solver parts (candidate lists, start walks, local search, route floors,
+ * writing, GPU start tours) are summed over the units, which run on several threads at once; the check's bands are the
  * batches the workers walked at once, its walk the batches with a hit that ran as one walk (T-187); GPU
  * transfers include the kernels a read waits for. Returns how many values it wrote (at most `capacity`). */
 #define MN_TIME_INTENDED 10
 #define MN_TIME_BACK_SETTLE 11
 #define MN_TIME_BACK_LEVELS 12
-#define MN_TIME_BACK_FILL 13
+#define MN_TIME_BACK_INPUT 13
 #define MN_TIME_BACK_WAIT 14
 #define MN_TIME_GROUPS 15
 #define MN_TIME_UNITS 16

@@ -4,6 +4,7 @@ using Miller.Core.Generation;
 using Miller.Core.HeightMaps;
 using Miller.Core.Native;
 using Miller.Core.Setup;
+using Miller.Core.Simulation;
 using Miller.Core.Toolpaths.Strategies;
 using Miller.Tests.Fixtures;
 using Xunit;
@@ -110,8 +111,10 @@ public sealed class GpuTests
         return project;
     }
 
-    // On the frustum box the GPU sweeps settle on the CPU's levels, the GPU tours are not cheaper than the
-    // CPU's walks there, so the toolpath is the CPU's segment for segment.
+    // On the frustum box the GPU sweeps settle on the CPU's levels, so the Z layer routes the same plan in the
+    // same units and layers; the GPU start tours may only order the nodes of a route differently where one is
+    // cheaper (with far stepdown 4 one is since T-193; without the tours both give the same segments), so the
+    // final stock is the CPU's within the simplifier's slack.
     [Theory]
     [InlineData(0f)]
     [InlineData(4f)]
@@ -123,7 +126,22 @@ public sealed class GpuTests
         var gpu = new PipelineService().Run(Frustum(CollisionMode.Backwards_GPU, farStepdown), mesh, null, CancellationToken.None);
         Assert.Equal(cpu.Unreached, gpu.Unreached);
         Assert.Equal(cpu.Uncut, gpu.Uncut);
-        Assert.Equal(cpu.Toolpath.Segments, gpu.Toolpath.Segments);
+        Assert.Equal(cpu.Layers.Select(l => l.Level), gpu.Layers.Select(l => l.Level));
+        Assert.Equal(cpu.RouteUnitEntries, gpu.RouteUnitEntries);
+        Assert.Equal(cpu.FarStepdown.Milled.Cast<bool>(), gpu.FarStepdown.Milled.Cast<bool>());
+        var ours = new SimulationService();
+        ours.Load(gpu);
+        ours.RunToEnd();
+        var theirs = new SimulationService();
+        theirs.Load(cpu);
+        theirs.RunToEnd();
+        var slack = 2 * cpu.Tolerance + CollisionDetector.Tolerance;
+        for (var k = 0; k < cpu.Stock.Map.Z.Length; k++)
+        {
+            Assert.True(MathF.Abs(ours.Stock!.Z[k] - theirs.Stock!.Z[k]) <= slack, $"cell {k}: {ours.Stock.Z[k]} against {theirs.Stock.Z[k]}");
+        }
+
+        Assert.Empty(ours.Events);
         Assert.Empty(gpu.Collisions.Report!.Events);
         Assert.Equal(GpuDevice.Description, gpu.Gpu);
         Assert.Null(cpu.Gpu);

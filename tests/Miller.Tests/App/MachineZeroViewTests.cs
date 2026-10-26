@@ -55,13 +55,15 @@ public sealed class MachineZeroViewTests : IDisposable
             [OriginMode.Custom] = AxisSettingsViewModel.StockOffsetLabel,
             [OriginMode.ModelCornerMinXYTopZ] = null,
             [OriginMode.ModelCustom] = AxisSettingsViewModel.ModelOffsetLabel,
-            [OriginMode.Global] = AxisSettingsViewModel.GlobalOffsetLabel,
+            [OriginMode.Global] = null,
         };
         foreach (var (mode, label) in labels)
         {
             vm.Axes.OriginMode = mode;
             Assert.Equal(mode, vm.Project.Current.Axes.OriginMode);
             Assert.Equal(label is not null, vm.Axes.IsCustom);
+            Assert.Equal(mode == OriginMode.Global, vm.Axes.IsGlobal);
+            Assert.Equal(mode == OriginMode.Global ? StockSettingsViewModel.GlobalOriginLabel : StockSettingsViewModel.ModelMinimumOriginLabel, vm.Stock.OriginLabel);
             if (label is not null)
             {
                 Assert.Equal(label, vm.Axes.OffsetLabel);
@@ -103,6 +105,38 @@ public sealed class MachineZeroViewTests : IDisposable
         // The panel shows the box the viewport outlines.
         var shown = vm.Viewport.StockBounds!.Value;
         Assert.Contains(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"min ({shown.Min.X:0.000}, {shown.Min.Y:0.000}, {shown.Min.Z:0.000})"), vm.Axes.StockBoundsText, StringComparison.Ordinal);
+        Assert.Empty(_errors.Shown);
+    }
+
+    // T-189 to T-191: choosing Global keeps the stock against the model; the axes sit at the global origin,
+    // the model at its own coordinates, the stock at the corner the stock panel shows from that 0.
+    [Fact]
+    public async Task ChoosingGlobal_KeepsTheStockAgainstTheModel_AndMeasuresEverythingFromTheGlobalOrigin()
+    {
+        var vm = await WithCubeAsync();
+        vm.Stock.OriginX = -3f;
+        vm.Stock.OriginZ = -2f;
+        var gap = vm.Viewport.StockBounds!.Value.Min - vm.Viewport.Meshes[0].Bounds.Min;
+
+        vm.Axes.OriginMode = OriginMode.Global;
+        AssertClose(gap, vm.Viewport.StockBounds!.Value.Min - vm.Viewport.Meshes[0].Bounds.Min);
+        AssertClose(vm.MeshImport.Bounds[0].Min, vm.Viewport.Meshes[0].Bounds.Min);
+        Assert.Equal(new Vector3(vm.Stock.OriginX, vm.Stock.OriginY, vm.Stock.OriginZ), vm.Viewport.StockBounds!.Value.Min);
+        Assert.True(vm.Axes.IsGlobal);
+        Assert.False(vm.Axes.IsCustom);
+        Assert.Equal(StockSettingsViewModel.GlobalOriginLabel, vm.Stock.OriginLabel);
+
+        vm.Axes.OriginMode = OriginMode.StockCornerMinXYMinZ;
+        AssertClose(gap, vm.Viewport.StockBounds!.Value.Min - vm.Viewport.Meshes[0].Bounds.Min);
+        AssertClose(new Vector3(-3, 0, -2), vm.Project.Current.Stock.ExplicitOrigin);
+        Assert.Equal(StockSettingsViewModel.ModelMinimumOriginLabel, vm.Stock.OriginLabel);
+
+        // A mapping that is not a permutation places no model: the mode changes, the corner stays.
+        var corner = vm.Project.Current.Stock.ExplicitOrigin;
+        vm.Axes.MapY = ModelAxis.X;
+        vm.Axes.OriginMode = OriginMode.Global;
+        Assert.Equal(OriginMode.Global, vm.Project.Current.Axes.OriginMode);
+        Assert.Equal(corner, vm.Project.Current.Stock.ExplicitOrigin);
         Assert.Empty(_errors.Shown);
     }
 }

@@ -196,6 +196,9 @@ internal static unsafe class CoreNative
     [DllImport(Library)] public static extern int mn_segment_steps(float* start, float* end, float cellSize, float* length);
     [DllImport(Library)] public static extern int mn_sweep_samples(float* stock, Grid* grid, Offset* offsets, int count, float* start, float* end, int first, int last, Dirty* dirty, float* lastTip);
     [DllImport(Library)] public static extern int mn_stamp(float* stock, Grid* grid, Offset* offsets, int count, float* tip, Dirty* dirty);
+    [DllImport(Library)] public static extern int mn_sim_open(Grid* grid, Offset* offsets, int offsetCount, Offset* annulus, int annulusCount, float cutterRadius, float cutterLength, float tolerance, Segment* segments, int segmentCount, IntPtr* session);
+    [DllImport(Library)] public static extern int mn_sim_walk(IntPtr session, int first, int last, float* stock, float* model, float floor, Collision** events, int* eventCount, Dirty* dirty);
+    [DllImport(Library)] public static extern void mn_sim_close(IntPtr session);
     [DllImport(Library)] public static extern int mn_check_tip(float* stock, Grid* grid, Offset* offsets, int offsetCount, Offset* annulus, int annulusCount, float cutterLength, float tolerance, float* tip, int rapid, int* cells, float* surfaces, int capacity, int* firstKind, float* firstStock, float* firstSurface);
 
     [DllImport(Library)] public static extern int mn_profile_create(Tool* tool, float cellSize, Offset** offsets, int* offsetCount, Offset** annulus, int* annulusCount);

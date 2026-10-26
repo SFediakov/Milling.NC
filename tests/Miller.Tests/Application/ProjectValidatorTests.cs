@@ -140,14 +140,18 @@ public sealed class ProjectValidatorTests
         AssertSingleError(p => p.Parameters.Stepdown = 0, "Parameters.Stepdown");
     }
 
+    // T-196: 0 or the stepdown itself is no far stepdown; otherwise a whole multiple of at least twice it.
     [Fact]
-    public void FarStepdown_IsNoneOrAWholeMultipleOfTheStepdownOfAtLeastTwice()
+    public void FarStepdown_IsNoneTheStepdownOrAWholeMultipleOfTheStepdownOfAtLeastTwice()
     {
         AssertValid(p => p.Parameters.FarStepdown = 0);
+        AssertValid(p => p.Parameters.FarStepdown = 2);
+        AssertValid(p => p.Parameters.FarStepdown = 2.00005f);
+        AssertValid(p => { p.Parameters.Stepdown = 0.2f; p.Parameters.FarStepdown = 0.2f; });
         AssertValid(p => p.Parameters.FarStepdown = 4);
         AssertValid(p => p.Parameters.FarStepdown = 6);
         AssertValid(p => { p.Parameters.Stepdown = 0.2f; p.Parameters.FarStepdown = 0.6f; });
-        AssertSingleError(p => p.Parameters.FarStepdown = 2, "Parameters.FarStepdown");
+        AssertSingleError(p => p.Parameters.FarStepdown = 2.001f, "Parameters.FarStepdown");
         AssertSingleError(p => p.Parameters.FarStepdown = 3, "Parameters.FarStepdown");
         AssertSingleError(p => p.Parameters.FarStepdown = 1, "Parameters.FarStepdown");
         AssertSingleError(p => p.Parameters.FarStepdown = -4, "Parameters.FarStepdown");
@@ -155,6 +159,11 @@ public sealed class ProjectValidatorTests
         AssertSingleError(p => p.Parameters.FarStepdown = float.PositiveInfinity, "Parameters.FarStepdown");
         Assert.True(ProjectValidator.IsFarStepdown(4f, 2f));
         Assert.False(ProjectValidator.IsFarStepdown(4.01f, 2f));
+        Assert.False(ProjectValidator.IsFarStepdown(2f, 2f));
+        Assert.True(ProjectValidator.IsFarStepdownOff(2f, 2f));
+        Assert.True(ProjectValidator.IsFarStepdownOff(0f, 2f));
+        Assert.False(ProjectValidator.IsFarStepdownOff(4f, 2f));
+        Assert.False(ProjectValidator.IsFarStepdownOff(float.NaN, 2f));
         // An invalid stepdown reports itself only.
         AssertSingleError(p => { p.Parameters.Stepdown = 0; p.Parameters.FarStepdown = 4; }, "Parameters.Stepdown");
     }
@@ -169,6 +178,23 @@ public sealed class ProjectValidatorTests
         Assert.Empty(Validate(p => p.Parameters.FarStepdown = 8).Warnings);
         Assert.Empty(Validate(p => { p.Tool.CutterLength = 8; p.Parameters.FarStepdown = 8; }).Warnings);
         Assert.Empty(Validate(p => { p.Tool.CutterLength = 2; p.Parameters.FarStepdown = 3; }).Warnings);
+        // The stepdown itself is no far stepdown: nothing to warn about however short the cutter is.
+        Assert.DoesNotContain(Validate(p => { p.Tool.CutterLength = 1; p.Parameters.FarStepdown = 2; }).Warnings, w => w.Field == "Parameters.FarStepdown");
+    }
+
+    // T-196: the stepdown as far stepdown is accepted with every strategy and collision mode.
+    [Theory]
+    [InlineData("z-layer-by-layer", CollisionMode.Recursion)]
+    [InlineData("z-layer-by-layer", CollisionMode.OneRun)]
+    [InlineData("z-layer-by-layer", CollisionMode.Backwards)]
+    [InlineData("z-layer-by-layer", CollisionMode.Backwards_GPU)]
+    [InlineData("three-axis-freedom", CollisionMode.Recursion)]
+    [InlineData("three-axis-freedom", CollisionMode.OneRun)]
+    public void FarStepdown_EqualToTheStepdown_IsAcceptedForEveryStrategyAndMode(string strategy, CollisionMode mode)
+    {
+        var result = Validate(p => { p.RoutingStrategyId = strategy; p.CollisionMode = mode; p.Parameters.FarStepdown = p.Parameters.Stepdown; });
+        Assert.DoesNotContain(result.Errors, e => e.Field == "Parameters.FarStepdown");
+        Assert.DoesNotContain(result.Warnings, w => w.Field == "Parameters.FarStepdown");
     }
 
     [Fact]

@@ -168,14 +168,16 @@ MS_API int32_t ms_open(const char* name, int32_t baud, ms_port** port)
     dcb.fParity = FALSE;
     dcb.fOutxCtsFlow = FALSE;
     dcb.fOutxDsrFlow = FALSE;
-    dcb.fDtrControl = DTR_CONTROL_ENABLE;
+    /* DTR and RTS stay off: an Arduino restarts when DTR rises (its reset capacitor), which would
+     * clear the position, the overrides and the modal state of a connected machine. */
+    dcb.fDtrControl = DTR_CONTROL_DISABLE;
     dcb.fDsrSensitivity = FALSE;
     dcb.fTXContinueOnXoff = TRUE;
     dcb.fOutX = FALSE;
     dcb.fInX = FALSE;
     dcb.fErrorChar = FALSE;
     dcb.fNull = FALSE;
-    dcb.fRtsControl = RTS_CONTROL_ENABLE;
+    dcb.fRtsControl = RTS_CONTROL_DISABLE;
     dcb.fAbortOnError = FALSE;
     if (!SetCommState(handle, &dcb)) {
         DWORD error = GetLastError();
@@ -332,7 +334,9 @@ MS_API int32_t ms_open(const char* name, int32_t baud, ms_port** port)
     tty.c_iflag &= ~(tcflag_t)(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON | IXOFF | IXANY);
     tty.c_oflag &= ~(tcflag_t)OPOST;
     tty.c_lflag &= ~(tcflag_t)(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
-    tty.c_cflag &= ~(tcflag_t)(CSIZE | PARENB | CSTOPB | CRTSCTS);
+    /* No HUPCL: closing keeps DTR as it is, so the next open does not restart an Arduino. The kernel
+     * raises DTR when a port opens, so only the first open after the board was plugged in does. */
+    tty.c_cflag &= ~(tcflag_t)(CSIZE | PARENB | CSTOPB | CRTSCTS | HUPCL);
     tty.c_cflag |= (tcflag_t)(CS8 | CREAD | CLOCAL);
     tty.c_cc[VMIN] = 0;
     tty.c_cc[VTIME] = 0;

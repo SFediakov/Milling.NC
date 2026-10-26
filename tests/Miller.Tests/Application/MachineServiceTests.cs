@@ -112,7 +112,6 @@ public sealed class MachineServiceTests : IDisposable
         await WaitForAsync(() => service.Snapshot!.IsJobActive);
         Assert.Equal(MachineController.JobActiveMessage, Assert.Throws<InvalidOperationException>(() => service.Jog(MachineAxis.X, 1, 100)).Message);
         Assert.Throws<InvalidOperationException>(() => service.Send("G0 X5"));
-        Assert.Throws<InvalidOperationException>(service.CheckProgram);
         service.Pause();
         service.Resume();
         service.Realtime(GrblRealtime.SpindleMinus10);
@@ -128,7 +127,6 @@ public sealed class MachineServiceTests : IDisposable
         var program = service.LoadToolpath(toolpath, new MillingProject(), TestServices.Version);
         Assert.True(program.FromToolpath);
         Assert.Equal(MachineService.GeneratedProgramName, program.Grbl.Name);
-        Assert.Equal(new GrblBounds(0, 0, 10, 10), program.Bounds);
 
         // G21 G90 G94 G17, S M3, G0 Z, G0 X Y lead in; one line per segment; M5 and M30 after them.
         Assert.Equal(new[] { 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 6, 6 }, program.SegmentsAfterLine);
@@ -146,7 +144,7 @@ public sealed class MachineServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task FileProgram_CheckAndOutline()
+    public async Task FileProgram_LoadsWithItsName_AndABadLineIsRefusedWithItsNumber()
     {
         Directory.CreateDirectory(_root);
         var path = Path.Combine(_root, "part.nc");
@@ -158,11 +156,9 @@ public sealed class MachineServiceTests : IDisposable
         Assert.Equal(0, program.SegmentsDone(3));
         Assert.Equal("part.nc", program.Grbl.Name);
 
-        await RunAsync(service, service.CheckProgram);
+        await RunAsync(service, service.StartProgram);
         Assert.Equal(JobState.Done, service.Snapshot!.Job!.State);
-        await WaitForAsync(() => service.Snapshot!.CanRun && service.Snapshot.Status.State == GrblStatus.Idle);
-        await RunAsync(service, service.Outline);
-        Assert.Equal(new[] { "$C", "G21G90", "G0X-5Y2", "G1X15Y12F500", "M30", "$C", "G21G90G0X-5Y2", "G0X15Y2", "G0X15Y12", "G0X-5Y12", "G0X-5Y2" }, link.Lines);
+        Assert.Equal(new[] { "G21G90", "G0X-5Y2", "G1X15Y12F500", "M30", MachineJob.SyncLine }, link.Lines);
 
         File.WriteAllText(path, "G0 X1\nG0 X2 ; fine\nG0 X3 !\n");
         var bad = Assert.Throws<GrblProgramException>(() => service.LoadFile(path));

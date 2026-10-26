@@ -301,3 +301,132 @@ MN_API int32_t mn_check_tip(const float* stock, const mn_grid* grid, const mn_of
     }
     return entered;
 }
+
+/* ---- the simulation session (T-207) ---- */
+
+struct mn_sim {
+    mn_grid grid;
+    mn_offset* offsets;
+    mn_offset* annulus;
+    mn_segment* segments;
+    int segment_count;
+    int min_dx;
+    int max_dx;
+    int min_dy;
+    int max_dy;
+    mn_walker* walker;
+};
+
+MN_API void mn_sim_close(mn_sim* session)
+{
+    if (session == NULL) {
+        return;
+    }
+    mn_walker_close(session->walker);
+    free(session->offsets);
+    free(session->annulus);
+    free(session->segments);
+    free(session);
+}
+
+MN_API int32_t mn_sim_open(const mn_grid* grid, const mn_offset* offsets, int32_t offset_count, const mn_offset* annulus, int32_t annulus_count, float cutter_radius,
+    float cutter_length, float tolerance, const mn_segment* segments, int32_t segment_count, mn_sim** session)
+{
+    if (grid == NULL || session == NULL || offset_count < 0 || annulus_count < 0 || segment_count < 0 || (offset_count > 0 && offsets == NULL)
+        || (annulus_count > 0 && annulus == NULL) || (segment_count > 0 && segments == NULL)) {
+        return mn_fail(MN_ERR_ARGUMENT, "The simulation session needs a grid, the footprint, the annulus, the segments and an output.");
+    }
+    if (!(grid->cell_size > 0) || grid->width <= 0 || grid->height <= 0) {
+        return mn_fail(MN_ERR_ARGUMENT, "The grid must have a positive cell size and extent.");
+    }
+    if (!(cutter_radius > 0) || !(cutter_length > 0) || !(tolerance >= 0)) {
+        return mn_fail(MN_ERR_ARGUMENT, "The simulation session needs a positive cutter radius and length and a tolerance of zero or more.");
+    }
+    mn_sim* s = (mn_sim*)calloc(1, sizeof(mn_sim));
+    if (s == NULL) {
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for the simulation session.");
+    }
+    s->grid = *grid;
+    s->offsets = (mn_offset*)mn_alloc((size_t)(offset_count > 0 ? offset_count : 1), sizeof(mn_offset));
+    s->annulus = (mn_offset*)mn_alloc((size_t)(annulus_count > 0 ? annulus_count : 1), sizeof(mn_offset));
+    s->segments = (mn_segment*)mn_alloc((size_t)(segment_count > 0 ? segment_count : 1), sizeof(mn_segment));
+    if (s->offsets == NULL || s->annulus == NULL || s->segments == NULL) {
+        mn_sim_close(s);
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for the simulation session.");
+    }
+    if (offset_count > 0) {
+        memcpy(s->offsets, offsets, (size_t)offset_count * sizeof(mn_offset));
+    }
+    if (annulus_count > 0) {
+        memcpy(s->annulus, annulus, (size_t)annulus_count * sizeof(mn_offset));
+    }
+    if (segment_count > 0) {
+        memcpy(s->segments, segments, (size_t)segment_count * sizeof(mn_segment));
+    }
+    s->segment_count = segment_count;
+    s->min_dx = INT_MAX;
+    s->max_dx = INT_MIN;
+    s->min_dy = INT_MAX;
+    s->max_dy = INT_MIN;
+    for (int o = 0; o < offset_count; o++) {
+        s->min_dx = mn_mini(s->min_dx, offsets[o].dx);
+        s->max_dx = mn_maxi(s->max_dx, offsets[o].dx);
+        s->min_dy = mn_mini(s->min_dy, offsets[o].dy);
+        s->max_dy = mn_maxi(s->max_dy, offsets[o].dy);
+    }
+    mn_profile profile;
+    profile.offsets = s->offsets;
+    profile.offset_count = offset_count;
+    profile.annulus = s->annulus;
+    profile.annulus_count = annulus_count;
+    int code = mn_walker_open(&s->grid, &profile, cutter_radius, cutter_length, tolerance, 1, &s->walker);
+    if (code != MN_OK) {
+        mn_sim_close(s);
+        return code;
+    }
+    *session = s;
+    return MN_OK;
+}
+
+MN_API int32_t mn_sim_walk(mn_sim* session, int32_t first, int32_t last, float* stock, const float* model, float floor, mn_collision** events, int32_t* event_count, mn_dirty* dirty)
+{
+    if (session == NULL || stock == NULL || model == NULL || events == NULL || event_count == NULL || dirty == NULL) {
+        return mn_fail(MN_ERR_ARGUMENT, "The simulation walk needs a session, the stock, the model and the outputs.");
+    }
+    if (first < 0 || last > session->segment_count || first > last) {
+        return mn_fail(MN_ERR_ARGUMENT, "The simulation walk covers segments 0 to %d, got %d to %d.", session->segment_count, (int)first, (int)last);
+    }
+    const mn_grid* g = &session->grid;
+    dirty_clear(dirty);
+    if (session->min_dx <= session->max_dx) {
+        for (int k = first; k < last; k++) {
+            const mn_segment* sg = &session->segments[k];
+            if (sg->kind == MN_MOVE_RAPID) {
+                continue;
+            }
+            int a = mn_cell_i(g, sg->start_x);
+            int b = mn_cell_i(g, sg->end_x);
+            int c = mn_cell_j(g, sg->start_y);
+            int d = mn_cell_j(g, sg->end_y);
+            int i0 = mn_maxi(mn_mini(a, b) + session->min_dx, 0);
+            int i1 = mn_mini(mn_maxi(a, b) + session->max_dx, g->width - 1);
+            int j0 = mn_maxi(mn_mini(c, d) + session->min_dy, 0);
+            int j1 = mn_mini(mn_maxi(c, d) + session->max_dy, g->height - 1);
+            if (i0 <= i1 && j0 <= j1) {
+                dirty_include_row(dirty, i0, i1, j0);
+                dirty_include_row(dirty, i0, i1, j1);
+            }
+        }
+    }
+    mn_collisions list = { 0 };
+    double probing = 0.0;
+    double walking = 0.0;
+    int code = mn_walker_run(session->walker, session->segments, first, last, stock, model, floor, NULL, NULL, &list, NULL, &probing, &walking);
+    if (code != MN_OK) {
+        mn_collisions_free(&list);
+        return code;
+    }
+    *events = list.items != NULL ? list.items : (mn_collision*)mn_alloc(1, sizeof(mn_collision));
+    *event_count = list.count;
+    return MN_OK;
+}

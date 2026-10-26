@@ -229,32 +229,6 @@ public sealed class MachineControllerTests
     }
 
     [Fact]
-    public async Task Check_RunsTheProgramInCheckMode_AndLeavesIt()
-    {
-        var link = new FakeGrblLink();
-        using var controller = await ConnectAsync(link);
-        var program = Program(3);
-        controller.Run(MachineJob.Check(program));
-        await WaitForAsync(() => controller.Snapshot.Job is { State: JobState.Done });
-        Assert.Equal(program.Lines.Prepend(MachineJob.CheckModeLine).Append(MachineJob.CheckModeLine), link.Lines);
-        await WaitForAsync(() => controller.Snapshot.CanRun && controller.Snapshot.Status.State == GrblStatus.Idle);
-        Assert.Empty(link.RealtimeBytes);
-    }
-
-    [Fact]
-    public async Task Check_Error_ResetsOutOfCheckMode()
-    {
-        var link = new FakeGrblLink { Respond = line => line == "G1X2Y2F800" ? "error:22" : "ok" };
-        using var controller = await ConnectAsync(link);
-        controller.Run(MachineJob.Check(Program(4)));
-        await WaitForAsync(() => controller.Snapshot.Job is { State: JobState.Failed });
-        Assert.Contains("Feed rate has not yet been set", controller.Snapshot.Job!.Message, StringComparison.Ordinal);
-        await WaitForAsync(() => link.RealtimeBytes.Contains(GrblRealtime.SoftReset));
-        Assert.Equal(GrblStatus.Idle, link.State);
-        Assert.Equal(3, link.Lines.Count);
-    }
-
-    [Fact]
     public async Task Run_IsRefused_WhileBusyOrNotIdle()
     {
         var link = new FakeGrblLink { OkDelay = TimeSpan.FromMilliseconds(20) };

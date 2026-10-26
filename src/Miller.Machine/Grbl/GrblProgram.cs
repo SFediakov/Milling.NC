@@ -11,14 +11,18 @@ public sealed class GrblProgram
     public const int MaxLineLength = 79;
     private const char ProgramDelimiter = '%';
 
-    private GrblProgram(string name, IReadOnlyList<string> lines, IReadOnlyList<int> sourceLines)
+    private GrblProgram(string name, string text, IReadOnlyList<string> lines, IReadOnlyList<int> sourceLines)
     {
         Name = name;
+        Text = text;
         Lines = lines;
         SourceLines = sourceLines;
     }
 
     public string Name { get; }
+
+    // The source text as given, for the listing and the resume file.
+    public string Text { get; }
 
     public IReadOnlyList<string> Lines { get; }
 
@@ -50,7 +54,7 @@ public sealed class GrblProgram
             }
         }
 
-        return lines.Count > 0 ? new GrblProgram(name, lines, sources) : throw new GrblProgramException(0, "The program holds no G-code line.");
+        return lines.Count > 0 ? new GrblProgram(name, text, lines, sources) : throw new GrblProgramException(0, "The program holds no G-code line.");
     }
 
     // One line as Grbl receives it; empty for a comment or blank line. Problem is set when the line

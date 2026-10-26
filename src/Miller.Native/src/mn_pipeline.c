@@ -239,7 +239,7 @@ static int prepare(const mn_job* job, stage_monitor* stage, const volatile int32
 }
 
 /* Whether the passes withdraw far positions around collisions: the Z layer with a far stepdown. */
-static int far_withdrawal_on(const mn_job* job) { return job->strategy == MN_STRATEGY_Z_LAYER && job->parameters.far_stepdown > 0; }
+static int far_withdrawal_on(const mn_job* job) { return job->strategy == MN_STRATEGY_Z_LAYER && mn_far_levels(&job->parameters) >= 2; }
 
 /* One pass: the tip under the raised map, slicing and cut scope, holding bridges, routing,
  * simplification, statistics and the check. `status` holds the MODEL and SHOULD_REMOVE bits the pass
