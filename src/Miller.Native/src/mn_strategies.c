@@ -306,6 +306,9 @@ static int cover_gaps(const uint8_t* inside, const mn_grid* g, const mn_profile*
     return MN_OK;
 }
 
+/* The plane rapids and every move over uncut stock run on: the stock top plus the safe height. */
+static float safe_plane(const mn_context* context) { return context->stock_top + context->parameters.safe_height; }
+
 /* The route floor and touch floor (`lifted`, cells each) over material no route has taken, whose
  * floor still stands at its stock height. A move through such a cell would run on the stock top, so
  * the cell rises to the safe plane (stock top plus the safe height). A point on its edge or corner, a
@@ -318,7 +321,7 @@ static void lift_uncut(const mn_context* context, const float* floor, mn_box box
     int width = context->grid.width;
     int cells = mn_cells(&context->grid);
     const float* stock = context->stock;
-    float safe = context->stock_top + context->parameters.safe_height;
+    float safe = safe_plane(context);
     float* touch = lifted + cells;
     for (int j = box.j0; j <= box.j1; j++) {
         for (int i = box.i0; i <= box.i1; i++) {
@@ -406,7 +409,7 @@ static int route_nodes(const mn_context* context, const mn_route_grid* grid, mn_
     lift_uncut(context, grid->floor, box, lifted_floor);
     mn_time_add(MN_TIME_FLOORS, mn_seconds() - started);
     int status = MN_OK;
-    mn_route_grid lifted = { grid->g, lifted_floor, lifted_floor + mn_cells(&grid->g) };
+    mn_route_grid lifted = { grid->g, lifted_floor, lifted_floor + mn_cells(&grid->g), grid->safe_z };
     mn_problem problem;
     problem.grid = lifted;
     problem.x = x;
@@ -430,7 +433,7 @@ static int route_nodes(const mn_context* context, const mn_route_grid* grid, mn_
     return status;
 }
 
-static int writer_for(const mn_context* context, mn_writer** writer) { return mn_writer_create(&context->parameters, context->stock_top + context->parameters.safe_height, writer); }
+static int writer_for(const mn_context* context, mn_writer** writer) { return mn_writer_create(&context->parameters, safe_plane(context), writer); }
 
 /* The exit of a route unit (T-166) as one more node after the route's own; returns the new count. */
 static int append_exit(float* xs, float* ys, float* zs, int count, const mn_v3* exit)
@@ -980,7 +983,7 @@ static int z_level_block(mn_z_state* s, float level, const int* region, int regi
         for (int m = 0; m < region_count; m++) {
             s->clearance[region[m]] = level;
         }
-        mn_route_grid grid = { *g, s->clearance, s->clearance };
+        mn_route_grid grid = { *g, s->clearance, s->clearance, safe_plane(context) };
         int end = exit_index(s->xs, s->ys, s->zs, count, exit);
         status = route_nodes(context, &grid, box, s->lifted, s->xs, s->ys, s->zs, count, end, &s->budget, s->nodes_left, s->monitor != NULL ? s->monitor->cancel : NULL, s->writer);
         s->nodes_left -= nodes->count;

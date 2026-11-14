@@ -10,11 +10,18 @@ namespace Miller.Core.Toolpaths;
 // follows the surface polyline of SurfacePath over the clearance grid: level, rising and gently
 // descending parts are feeds, a descent steeper than MaxRampSlope is a feed at the higher height to
 // over the lower point and then a plunge, so the tool never drops down a wall at feed rate and never
-// dips under a plateau. A travel between two positions takes the same polyline or a retract to safe
-// Z, a rapid and a plunge, whichever the rates make faster; the program starts with a plunge from
-// safe Z above the first position and ends with a retract.
+// dips under a plateau. A move whose polyline reaches safe Z (floors lifted over uncut stock) is on
+// safe Z from SafeMargin of its XY travel before that to SafeMargin after, or from its own start or to
+// its own end where they lie nearer (T-216). A travel between two positions takes the same polyline or
+// a retract to safe Z, a rapid and a plunge, whichever is faster when vertical travel takes
+// RouteCost.XySpeedFactor / RouteCost.ZSpeedFactor times as long as XY travel at the same rate (T-217);
+// the program starts with a plunge from safe Z above the first position and ends with a retract.
 public sealed class RouteWriter
 {
+    // Millimetres of XY travel between reaching safe Z and the first lifted cell, and between the last
+    // one and the landing, as the native library holds it.
+    public static float SafeMargin => CoreNative.mn_route_safe_margin();
+
     // Height differences below this are one level; float noise in a plateau is not a step.
     public const float LevelEpsilon = 1e-5f;
 

@@ -138,12 +138,22 @@ int mn_outline(const uint8_t* inside, int width, int height, int i, int j);
 
 /* `floor` is what a move through a cell stays above, `touch` what a point on a cell's edge or corner
  * stays above: over uncut stock the strategies put `floor` on the safe plane and `touch` on what must
- * remain there, so a diagonal step between neighbouring nodes past an uncut corner does not rise. */
+ * remain there, so a diagonal step between neighbouring nodes past an uncut corner does not rise.
+ * `safe_z` is that safe plane (T-216): a move that reaches it is on it from MN_SAFE_MARGIN before the
+ * first lifted cell to MN_SAFE_MARGIN after the last; INFINITY for plain floors without a safe plane
+ * (the polyline, cost and solver exports the C# facades call). */
 typedef struct mn_route_grid {
     mn_grid g;
     const float* floor;
     const float* touch;
+    float safe_z;
 } mn_route_grid;
+
+/* The XY distance along a move between the point where the tool reaches the safe plane and the first
+ * cell lifted onto it, and between the last such cell and the landing (T-216, user request: the safe
+ * height 1 mm before the cutter meets the protected material, the same for landing back). Where a
+ * move's own start or end lies nearer, the tool rises or lands in place there. */
+#define MN_SAFE_MARGIN 1.0f
 
 typedef struct mn_points {
     mn_v3* items;
@@ -161,6 +171,10 @@ float mn_cost_exact(const mn_route_grid* grid, mn_v3 a, mn_v3 b);
 
 #define MN_XY_SPEED_FACTOR 3.0f
 #define MN_Z_SPEED_FACTOR 1.0f
+/* How many times longer a millimetre of vertical travel takes than one of XY travel at the same rate:
+ * the route solver's Z speed. The writer times a travel's climbs, retracts and plunges with it (T-217,
+ * user request: the time up to the safe height and down again counts with the Z speed coefficient). */
+#define MN_Z_TIME_FACTOR (MN_XY_SPEED_FACTOR / MN_Z_SPEED_FACTOR)
 /* The move evaluations a route's local search may spend per node (T-211). The former fixed total of
  * 40,000,000 for a whole generation stopped 268 of the 320 routes of the user's heart (914,248 nodes,
  * 44 evaluations each) before the search had found its gains; without the cap every route converged at

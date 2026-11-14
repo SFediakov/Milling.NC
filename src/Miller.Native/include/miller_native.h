@@ -208,6 +208,9 @@ MN_API int32_t mn_on_lattice(int32_t index, int32_t count, int32_t step);
 MN_API int32_t mn_lattice_nodes(const uint8_t* inside, int32_t width, int32_t height, int32_t step, int32_t** nodes, int32_t* count);
 MN_API int32_t mn_is_outline(const uint8_t* inside, int32_t width, int32_t height, int32_t i, int32_t j);
 MN_API float mn_surface_trace(const mn_grid* grid, const float* floor, const float* a, const float* b, float** points, int32_t* point_count);
+/* The XY distance (mm) along a move between where the tool reaches the safe plane and the first cell
+ * lifted onto it, and between the last such cell and the landing (T-216); the writer's moves keep it. */
+MN_API float mn_route_safe_margin(void);
 MN_API float mn_route_exact(const mn_grid* grid, const float* floor, const float* a, const float* b);
 MN_API float mn_route_lower_bound(const float* a, const float* b);
 MN_API float mn_route_planar(const float* a, const float* b);

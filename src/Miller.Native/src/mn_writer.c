@@ -2,10 +2,12 @@
 
 /* Turns tool positions into segments (RouteWriter). A cut follows the surface polyline: level,
  * rising and gently descending parts are feeds, a descent steeper than MN_MAX_RAMP_SLOPE is a feed
- * over the lower point and a plunge; a part on the safe plane (a floor lifted over uncut stock) is a
- * rapid. A travel takes that polyline or a retract to safe Z, a rapid and a plunge, whichever the
- * rates make faster; the program starts with a plunge from safe Z. Feeds and plunges run at the feed
- * rate (T-215, user request: one speed in the whole program), rapids at the rapid rate. */
+ * over the lower point and a plunge; a part on the safe plane (a floor lifted over uncut stock, reached
+ * MN_SAFE_MARGIN before it and left MN_SAFE_MARGIN after it, T-216) is a rapid. A travel takes that
+ * polyline or a retract to safe Z, a rapid and a plunge, whichever is faster when vertical travel takes
+ * MN_Z_TIME_FACTOR times as long as XY travel at the same rate (T-217); the program starts with a plunge
+ * from safe Z. Feeds and plunges run at the feed rate (T-215, user request: one speed in the whole
+ * program), rapids at the rapid rate. */
 
 #define MN_WRITER_LEVEL_EPSILON 1e-5f
 #define MN_MAX_RAMP_SLOPE 2.0f
@@ -148,12 +150,17 @@ static int add(mn_writer* w, mn_segment segment)
     return MN_OK;
 }
 
+/* XY travel at the segment's rate (rapids at the rapid rate), vertical travel MN_Z_TIME_FACTOR times as
+ * long: the climbs, retracts and plunges of a travel at the route solver's Z speed (T-217). */
 static float minutes(const mn_writer* w, const mn_segment* segments, int count)
 {
     float total = 0.0f;
     for (int k = 0; k < count; k++) {
-        float rate = segments[k].kind == MN_MOVE_RAPID ? w->parameters.rapid_rate : segments[k].rate;
-        total += mn_segment_length(&segments[k]) / rate;
+        const mn_segment* s = &segments[k];
+        float rate = s->kind == MN_MOVE_RAPID ? w->parameters.rapid_rate : s->rate;
+        float dx = s->end_x - s->start_x;
+        float dy = s->end_y - s->start_y;
+        total += (sqrtf(dx * dx + dy * dy) + MN_Z_TIME_FACTOR * fabsf(s->end_z - s->start_z)) / rate;
     }
     return total;
 }
@@ -309,13 +316,13 @@ int mn_writer_release(mn_writer* w, mn_segments* result, mn_marks* marks)
 
 MN_API int32_t mn_writer_travel(mn_writer* writer, const float* to, const mn_grid* grid, const float* floor)
 {
-    mn_route_grid route = { *grid, floor, floor };
+    mn_route_grid route = { *grid, floor, floor, writer->safe_z };
     return mn_writer_travel_to(writer, mn_v3_make(to[0], to[1], to[2]), &route);
 }
 
 MN_API int32_t mn_writer_follow(mn_writer* writer, const float* to, const mn_grid* grid, const float* floor)
 {
-    mn_route_grid route = { *grid, floor, floor };
+    mn_route_grid route = { *grid, floor, floor, writer->safe_z };
     return mn_writer_follow_to(writer, mn_v3_make(to[0], to[1], to[2]), &route);
 }
 

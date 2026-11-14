@@ -1316,6 +1316,7 @@ MN_API int32_t mn_route_solve(const mn_grid* grid, const float* floor, const flo
     problem.grid.g = *grid;
     problem.grid.floor = floor;
     problem.grid.touch = floor;
+    problem.grid.safe_z = INFINITY;
     problem.x = x;
     problem.y = y;
     problem.z = z;
@@ -1330,6 +1331,7 @@ MN_API float mn_route_path_cost(const mn_grid* grid, const float* floor, const f
     problem.grid.g = *grid;
     problem.grid.floor = floor;
     problem.grid.touch = floor;
+    problem.grid.safe_z = INFINITY;
     problem.x = x;
     problem.y = y;
     problem.z = z;
