@@ -11,8 +11,10 @@
  * place and the MN_FAR_WITHDRAW_RADIUS around it are withdrawn from the far stepdown after each pass:
  * later passes may take only the first pass's far positions that were never withdrawn, and a
  * withdrawal that removes a position starts another pass while the entered cells decrease, at most
- * MN_MAX_PASSES times; the pass with the fewest entered cells is kept. Progress goes to the caller per
- * pass and stage; cancellation is honoured between the stages and inside the long ones. */
+ * MN_MAX_PASSES times; the pass with the fewest entered cells is kept. Only the roughing's hits count for
+ * these decisions: the finishing passes (T-222) follow each pass's roughing and their hits are reported only
+ * (T-223, user request: the program runs as with 0 passes until the finishing passes begin). Progress goes
+ * to the caller per pass and stage; cancellation is honoured between the stages and inside the long ones. */
 
 /* Everything one pass produced. */
 typedef struct mn_pass {
@@ -425,6 +427,7 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
         }
         hits->closing = closing.z;
         hits->slack = p->tolerance;
+        hits->reported_from = pass->finishing_first;
     }
     float* final_stock = (float*)mn_alloc((size_t)cells, sizeof(float));
     uint8_t* contact = (uint8_t*)mn_alloc((size_t)(pass->toolpath.count > 0 ? pass->toolpath.count : 1), 1);
@@ -464,7 +467,7 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
     }
     if (hits != NULL) {
         for (int k = 0; k < cells; k++) {
-            uint8_t flags = hits->cell_flags[k];
+            uint8_t flags = (uint8_t)(hits->cell_flags[k] | hits->reported_flags[k]);
             pass->contacts[k] = (uint8_t)((flags & MN_HIT_SURFACE) != 0 ? MN_CONTACT_MODEL : flags != 0 ? MN_CONTACT_STOCK : MN_CONTACT_NONE);
         }
     }
@@ -537,6 +540,7 @@ static int generate(const mn_job* job, stage_monitor* stage, const volatile int3
         mn_pass pass;
         memset(hits.position_flags, 0, (size_t)cells);
         memset(hits.cell_flags, 0, (size_t)cells);
+        memset(hits.reported_flags, 0, (size_t)cells);
         for (int k = 0; k < cells; k++) {
             hits.position_z[k] = NAN;
             hits.cell_height[k] = NAN;

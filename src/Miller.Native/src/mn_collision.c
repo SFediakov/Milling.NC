@@ -49,7 +49,9 @@ int mn_hits_init(mn_hits* hits, int cells)
     hits->position_flags = (uint8_t*)mn_alloc((size_t)cells, 1);
     hits->cell_height = (float*)mn_alloc((size_t)cells, sizeof(float));
     hits->cell_flags = (uint8_t*)mn_alloc((size_t)cells, 1);
-    if (hits->position_z == NULL || hits->position_flags == NULL || hits->cell_height == NULL || hits->cell_flags == NULL) {
+    hits->reported_flags = (uint8_t*)mn_alloc((size_t)cells, 1);
+    hits->reported_from = INT_MAX;
+    if (hits->position_z == NULL || hits->position_flags == NULL || hits->cell_height == NULL || hits->cell_flags == NULL || hits->reported_flags == NULL) {
         mn_hits_free(hits);
         return mn_fail(MN_ERR_MEMORY, "Out of memory for the collision hits of %d cells.", cells);
     }
@@ -66,6 +68,7 @@ void mn_hits_free(mn_hits* hits)
     free(hits->position_flags);
     free(hits->cell_height);
     free(hits->cell_flags);
+    free(hits->reported_flags);
     memset(hits, 0, sizeof(*hits));
 }
 
@@ -166,20 +169,24 @@ static void record_hit(mn_walk_state* w, int kind, mn_v3 tip, int position, int 
         float closing = h->closing[c];
         int removable = !mn_isnan(closing) && closing + h->slack <= surface;
         uint8_t flag = (uint8_t)(removable ? MN_HIT_STOCK : MN_HIT_MODEL) | (uint8_t)(model_hit ? MN_HIT_SURFACE : 0);
-        if (h->cell_flags[c] == 0) {
-            h->entered++;
-        }
-        if (!removable && (h->cell_flags[c] & MN_HIT_MODEL) == 0) {
-            h->unremovable++;
-        }
-        h->cell_flags[c] |= flag;
-        if (mn_isnan(h->cell_height[c]) || standing > h->cell_height[c]) {
-            h->cell_height[c] = standing;
-        }
-        if (position >= 0) {
-            h->position_flags[position] |= flag;
-            if (mn_isnan(h->position_z[position]) || tip.z < h->position_z[position]) {
-                h->position_z[position] = tip.z;
+        if (w->segment >= h->reported_from) {
+            h->reported_flags[c] |= flag;
+        } else {
+            if (h->cell_flags[c] == 0) {
+                h->entered++;
+            }
+            if (!removable && (h->cell_flags[c] & MN_HIT_MODEL) == 0) {
+                h->unremovable++;
+            }
+            h->cell_flags[c] |= flag;
+            if (mn_isnan(h->cell_height[c]) || standing > h->cell_height[c]) {
+                h->cell_height[c] = standing;
+            }
+            if (position >= 0) {
+                h->position_flags[position] |= flag;
+                if (mn_isnan(h->position_z[position]) || tip.z < h->position_z[position]) {
+                    h->position_z[position] = tip.z;
+                }
             }
         }
     }

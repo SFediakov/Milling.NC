@@ -315,6 +315,10 @@ typedef struct mn_hits {
     uint8_t* cell_flags;
     int entered;            /* distinct entered cells */
     int unremovable;        /* entered cells flagged MODEL */
+    /* T-223: the hits of segments from `reported_from` on (the finishing passes) only mark `reported_flags`:
+     * they show in the contacts and steer no pass decision. INT_MAX: every hit steers. */
+    int reported_from;
+    uint8_t* reported_flags;
 } mn_hits;
 
 int mn_hits_init(mn_hits* hits, int cells);

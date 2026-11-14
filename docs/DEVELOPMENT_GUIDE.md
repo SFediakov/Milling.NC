@@ -721,6 +721,11 @@ Uncuttable classification (`UncuttableRegions`):
   steps) is not in the simulated stock, so the passes always run at the milling
   rates. The finishing path is simplified apart from the roughing and its first
   segment is reported (`FinishingFirstSegment`); 0 passes is the former toolpath.
+  The program runs as with 0 passes until the passes begin (T-223, user request):
+  the hits the check finds on the finishing segments show in the events and the
+  contacts but count for no decision of the generation passes (far withdrawal,
+  kept pass), so the .nc file is the 0-pass file byte for byte up to its final
+  retract, then the passes, their final retract and the same end.
   `Rapid` uses `RapidRate` (only for time estimation and simulation; G-code
   emits `G0`).
 
@@ -2608,6 +2613,14 @@ check that decides done.
 - Input: user request (a finishing setting in Cutting: passes on the lowest material already cut that mill only the artifacts of the first milling, a settable number of additional passes with 0 as standard, a pattern different from the first pass, for example parallel and moved by half a pass, and a pattern selection)
 - Output: the finishing passes of section 6.4; `z_finishing`, `MN_FINISHING_*`, `mn_result_finishing_first`
 - Acceptance: 0 passes keep the toolpath and the heart golden byte for byte; one pass on the box fixture: no collision, no gouge, every feed and plunge at the milling rate, at most the tolerance removed from the stock the roughing left, the roughing identical to the one without finishing, a 0.6 mm bump on the floor under a row cut down to its level; shifted rows on lines 2 of every 4, two passes on 1 and 3, cross rows across, diagonal rows at 45 degrees; settings saved, loaded (old files: none) and validated; the Cutting tab binds them; the heart sample with two cross-row passes 2,172 segments, 3.4 min (1,878, 2.1 min without)
+- Status: done
+
+#### T-223 Finishing passes after the program as with 0 passes
+- Depends on: T-222
+- Files: `src/Miller.Native/src/mn_collision.c`, `mn_internal.h`, `mn_pipeline.c`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `tests/Miller.Tests/App/FinishingIntegrationTests.cs`
+- Input: user request (an integration test: with 1 or more passes the code is byte for byte identical until the passes begin; first execute as for 0 passes, then add the passes only to the final layer)
+- Output: `mn_hits.reported_from` and `reported_flags`: the hits of the finishing segments mark the contacts and steer no generation pass; `FinishingIntegrationTests`
+- Acceptance: project to exported file for 1, 2 and 5 passes in every pattern (box with different milling and travel rates, so F words are compared), both cut scopes, far stepdown off and on, Backwards and Backwards_GPU, and the heart sample against its golden file: the 0-pass file up to its final retract starts the file with passes byte for byte, one line per finishing segment follows, then the final retract and M5, M30; generation passes, entered cells, far and withdrawn cells and the roughing's events equal; the passes remove at most the tolerance and reach the lowest level. Finishing made to collide (probe build, far stepdown 4): before 2 generation passes and all 5,300 far cells withdrawn, after 1 pass as with 0 passes and the 237 events still reported. A roughing rate changed only with passes fails the test at line 60. Heart check time 13.6 against 13.2 ms (median of 7)
 - Status: done
 
 

@@ -74,7 +74,8 @@ public readonly record struct UnreachedCells(long Unreached, long ModelCells, in
     public double Percent => ModelCells > 0 ? 100.0 * Unreached / ModelCells : 0.0;
 }
 
-// What one generation pass's check found: the distinct entered cells and the events; with a far
+// What one generation pass's check found: the distinct cells its roughing entered (the finishing passes'
+// hits are in the events and the contacts only, T-223) and the events; with a far
 // stepdown the positions the pass milled with it and those withdrawn around its collisions (T-164).
 public readonly record struct PassCollisions(int EnteredCells, int Events, int FarCells, int WithdrawnCells);
 
