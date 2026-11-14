@@ -140,10 +140,22 @@ typedef struct mn_walk_state {
     /* The simulation's rule (T-207): a check position records its first entered cell only, which
      * gives the kind and the heights of its event; the generation records every entered cell. */
     int first_hit_only;
+    /* T-218: 1 per segment that met material (removed more than the tolerance in a cell, or entered
+     * it with the head or a rapid's footprint), indexed from contact_first; NULL when not wanted. */
+    uint8_t* contact;
+    int contact_first;
 } mn_walk_state;
+
+static void touched(mn_walk_state* w)
+{
+    if (w->contact != NULL) {
+        w->contact[w->segment - w->contact_first] = 1;
+    }
+}
 
 static void record_hit(mn_walk_state* w, int kind, mn_v3 tip, int position, int c, float standing, float surface)
 {
+    touched(w);
     float m = w->model[c];
     int model_hit = m > w->floor + MN_FLOOR_TOLERANCE && m > surface + w->tolerance;
     if (w->status != NULL) {
@@ -285,6 +297,9 @@ static void stamp(mn_walk_state* w, mn_v3 tip)
             float current = w->stock[c];
             float cut = tip.z + p->offsets[o].dz;
             if (!mn_isnan(current) && cut < current) {
+                if (cut < current - w->tolerance) {
+                    touched(w);
+                }
                 w->stock[c] = cut;
             }
         }
@@ -341,6 +356,8 @@ static int64_t segment_work(const mn_segment* s, float sweep, float head_spacing
 
 /* The samples of one batch: many joins cost little, and a batch with a hit runs as one walk. */
 #define MN_CHECK_BATCH_SAMPLES 65536
+/* A segment takes at least two samples, so a batch holds at most this many segments. */
+#define MN_CHECK_BATCH_SEGMENTS (MN_CHECK_BATCH_SAMPLES / 2 + 1)
 
 typedef struct check_job {
     const mn_walk_state* walk;
@@ -356,6 +373,9 @@ typedef struct check_job {
     int row_first;
     int row_last;
     uint8_t* flags;
+    /* T-218: every band's own contact of the batch's segments (MN_CHECK_BATCH_SEGMENTS each), joined
+     * once no band hit; NULL when no contact is wanted. */
+    uint8_t* band_contact;
 } check_job;
 
 /* Saves (or puts back) one share of the stock rows the batch can reach. */
@@ -389,6 +409,11 @@ static void band_row(void* context, int row, void* scratch)
     w.band = row;
     w.bands = job->bands;
     w.probed = 0;
+    if (job->band_contact != NULL) {
+        w.contact = job->band_contact + (size_t)row * MN_CHECK_BATCH_SEGMENTS;
+        w.contact_first = job->first;
+        memset(w.contact, 0, (size_t)(job->last - job->first));
+    }
     for (int k = job->first; k < job->last && !w.probed; k++) {
         walk_segment(&w, &job->segments[k], k, job->sweep, job->head_spacing);
     }
@@ -408,6 +433,7 @@ struct mn_walker {
     int workers;
     mn_pool* pool;
     float* backup;
+    uint8_t* band_contact;
 };
 
 void mn_walker_close(mn_walker* walker)
@@ -417,6 +443,7 @@ void mn_walker_close(mn_walker* walker)
     }
     mn_pool_destroy(walker->pool);
     free(walker->backup);
+    free(walker->band_contact);
     free(walker->offset_rows.first);
     free(walker->annulus_rows.first);
     free(walker);
@@ -452,9 +479,10 @@ int mn_walker_open(const mn_grid* g, const mn_profile* profile, float cutter_rad
 }
 
 /* Segments [first_segment, count) over `stock` in place; the pool and the backup are made on the first
- * walk and kept. The band probing and the walking seconds go to the caller. */
+ * walk and kept. The band probing and the walking seconds go to the caller. `contact` (count entries,
+ * zero at the call, may be NULL) receives 1 for every segment that met material. */
 int mn_walker_run(mn_walker* walker, const mn_segment* segments, int first_segment, int count, float* stock, const float* model, float floor, uint8_t* status,
-    mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, double* probing_seconds, double* walking_seconds)
+    mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, double* probing_seconds, double* walking_seconds, uint8_t* contact)
 {
     const mn_grid* g = walker->g;
     int cells = mn_cells(g);
@@ -464,6 +492,10 @@ int mn_walker_run(mn_walker* walker, const mn_segment* segments, int first_segme
             walker->backup = (float*)mn_alloc((size_t)(cells > 0 ? cells : 1), sizeof(float));
         }
         code = walker->backup == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the collision check.") : mn_pool_create(walker->workers, NULL, &walker->pool);
+    }
+    if (code == MN_OK && walker->workers > 1 && contact != NULL && walker->band_contact == NULL) {
+        walker->band_contact = (uint8_t*)mn_alloc((size_t)walker->workers * MN_CHECK_BATCH_SEGMENTS, 1);
+        code = walker->band_contact == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the contact of the collision check.") : MN_OK;
     }
     mn_walk_state w;
     memset(&w, 0, sizeof(w));
@@ -482,6 +514,8 @@ int mn_walker_run(mn_walker* walker, const mn_segment* segments, int first_segme
     w.status_code = MN_OK;
     w.bands = 1;
     w.first_hit_only = walker->first_hit_only;
+    w.contact = contact;
+    w.contact_first = 0;
 
     float sweep = walker->sweep;
     float head_spacing = walker->head_spacing;
@@ -497,6 +531,7 @@ int mn_walker_run(mn_walker* walker, const mn_segment* segments, int first_segme
     job.bands = workers;
     job.backup = walker->backup;
     job.flags = flags;
+    job.band_contact = contact != NULL ? walker->band_contact : NULL;
 
     double probing = 0.0;
     double walking = 0.0;
@@ -535,6 +570,13 @@ int mn_walker_run(mn_walker* walker, const mn_segment* segments, int first_segme
             if (hit) {
                 job.saving = 0;
                 mn_pool_run(pool, 0, workers, backup_row, &job);
+            } else if (contact != NULL) {
+                for (int b = 0; b < workers; b++) {
+                    const uint8_t* band = job.band_contact + (size_t)b * MN_CHECK_BATCH_SEGMENTS;
+                    for (int k = first; k < last; k++) {
+                        contact[k] |= band[k - first];
+                    }
+                }
             }
             probing += mn_seconds() - started;
         }
@@ -552,7 +594,7 @@ int mn_walker_run(mn_walker* walker, const mn_segment* segments, int first_segme
 }
 
 int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const float* stock, const float* model, float floor, const mn_profile* profile, float cutter_radius,
-    float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, float* final_stock)
+    float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, float* final_stock, uint8_t* contact)
 {
     int cells = mn_cells(g);
     float* clone = (float*)mn_alloc((size_t)(cells > 0 ? cells : 1), sizeof(float));
@@ -568,7 +610,7 @@ int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const
     double walking = 0.0;
     int code = mn_walker_open(g, profile, cutter_radius, cutter_length, tolerance, 0, &walker);
     if (code == MN_OK) {
-        code = mn_walker_run(walker, segments, 0, count, clone, model, floor, status, hits, events, monitor, &probing, &walking);
+        code = mn_walker_run(walker, segments, 0, count, clone, model, floor, status, hits, events, monitor, &probing, &walking, contact);
     }
     mn_time_add(MN_TIME_CHECK_BANDS, probing);
     mn_time_add(MN_TIME_CHECK_WALK, walking);
@@ -649,7 +691,7 @@ MN_API int32_t mn_collision_check(const mn_segment* segments, int32_t count, con
     MN_CHECK(mn_profile_build(tool, grid->cell_size, &profile));
     mn_model_bits(model, mn_cells(grid), floor, status);
     mn_collisions list = { 0 };
-    int result = mn_check_path(segments, count, grid, stock, model, floor, &profile, tool->cutter_diameter / 2.0f, tool->cutter_length, tolerance, status, NULL, &list, NULL, NULL);
+    int result = mn_check_path(segments, count, grid, stock, model, floor, &profile, tool->cutter_diameter / 2.0f, tool->cutter_length, tolerance, status, NULL, &list, NULL, NULL, NULL);
     mn_profile_free(&profile);
     if (result != MN_OK) {
         mn_collisions_free(&list);

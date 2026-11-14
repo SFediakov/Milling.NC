@@ -95,6 +95,9 @@ typedef struct mn_parameters {
     /* Z layer by layer: the far region of every group of far_stepdown / stepdown levels is cut this
      * much deeper in one step (T-156); 0 or the stepdown itself for none (T-196). */
     float far_stepdown;
+    /* The rate of a feed or plunge that meets no material over its whole length (T-218); the
+     * generation's check decides it, every other feed and plunge runs at feed_rate. */
+    float travel_rate;
 } mn_parameters;
 
 /* Inclusive cell rectangle a sweep lowered; empty when i1 < i0 (DirtyRect). */
@@ -390,8 +393,9 @@ typedef struct mn_result mn_result;
 #define MN_STAGE_SLICE 6
 #define MN_STAGE_ROUTE 7
 #define MN_STAGE_SIMPLIFY 8
-#define MN_STAGE_STATISTICS 9
-#define MN_STAGE_CHECK 10
+/* The check comes before the statistics: it decides which moves run at the travel rate (T-218). */
+#define MN_STAGE_CHECK 9
+#define MN_STAGE_STATISTICS 10
 
 /* Generation passes (the far withdrawal's repeats) never exceed this number. */
 #define MN_MAX_PASSES 8

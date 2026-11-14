@@ -6,8 +6,8 @@
  * MN_SAFE_MARGIN before it and left MN_SAFE_MARGIN after it, T-216) is a rapid. A travel takes that
  * polyline or a retract to safe Z, a rapid and a plunge, whichever is faster when vertical travel takes
  * MN_Z_TIME_FACTOR times as long as XY travel at the same rate (T-217); the program starts with a plunge
- * from safe Z. Feeds and plunges run at the feed rate (T-215, user request: one speed in the whole
- * program), rapids at the rapid rate. */
+ * from safe Z. Feeds and plunges run at the feed rate (T-215), rapids at the rapid rate; the pipeline's
+ * check gives the feeds and plunges that meet no material the travel rate afterwards (T-218). */
 
 #define MN_WRITER_LEVEL_EPSILON 1e-5f
 #define MN_MAX_RAMP_SLOPE 2.0f

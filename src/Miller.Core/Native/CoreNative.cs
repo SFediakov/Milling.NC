@@ -75,6 +75,7 @@ internal static unsafe class CoreNative
         public float CellSize;
         public float Tolerance;
         public float FarStepdown;
+        public float TravelRate;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -391,6 +392,7 @@ internal static unsafe class CoreNative
         CellSize = p.CellSize,
         Tolerance = p.Tolerance,
         FarStepdown = p.FarStepdown,
+        TravelRate = p.TravelRate,
     };
 
     public static Offset[] OffsetsOf(ProfileOffset[] offsets)

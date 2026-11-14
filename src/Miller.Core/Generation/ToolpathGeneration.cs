@@ -51,7 +51,7 @@ public sealed record ProcessTimes(IReadOnlyList<double> Seconds)
 {
     public static readonly IReadOnlyList<string> Names = new[]
     {
-        "transform", "stock", "model map", "reach map", "head clearance", "slice", "route", "simplify", "statistics", "collision check",
+        "transform", "stock", "model map", "reach map", "head clearance", "slice", "route", "simplify", "collision check", "statistics",
         "intended surface", "backward closings", "backward level tests", "backward reached plan", "solver waiting for the check", "level groups",
         "route units", "solver candidate lists", "solver start walks", "solver local search", "route floors", "route writing",
         "GPU setup", "GPU transfers", "GPU start tours", "check bands", "check walk",
@@ -87,10 +87,11 @@ public readonly record struct BridgeReport(int Parts, int Wanted, int Placed);
 
 // The whole toolpath generation in one call of the native library (mn_generate): transform, stock,
 // model map, reach map, then per pass slicing and cut scope, the holding bridges of the separation
-// scope, the backward check, routing, simplification, statistics and the dynamic collision check; with a
-// far stepdown the pass repeats while the far withdrawal takes positions and the collisions decrease.
+// scope, the backward check, routing, simplification, the dynamic collision check (which gives the moves
+// without material contact the travel rate, T-218) and the statistics; with a far stepdown the pass
+// repeats while the far withdrawal takes positions and the collisions decrease.
 // The placement of the models (machine matrices) and the stock box come from the setup classes, which the viewport shares; the progress reports carry the pass and
-// the stage index of the pipeline table (1 transform .. 10 collision check).
+// the stage index of the pipeline table (1 transform .. 9 collision check, 10 statistics).
 public static class ToolpathGeneration
 {
     public static unsafe GenerationResult Run(MillingProject project, IReadOnlyList<Mesh> meshes, Action<int, int, StepProgress>? progress, CancellationToken cancellation)

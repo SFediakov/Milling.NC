@@ -1,9 +1,12 @@
+using System.Text.Json.Serialization;
+
 namespace Miller.Core.Setup;
 
 // Units: mm, mm/min, rpm. Stepover spaces the nodes of "Z layer by layer", Stepdown is its layer height.
-public sealed class CuttingParameters
+public sealed class CuttingParameters : IJsonOnDeserialized
 {
     public const float DefaultFeedRate = 800f;
+    public const float DefaultTravelRate = DefaultFeedRate;
     public const float DefaultRapidRate = 3000f;
     public const float DefaultSpindleRpm = 12000f;
     public const float DefaultStepover = 3f;
@@ -13,8 +16,23 @@ public sealed class CuttingParameters
     public const float DefaultCellSize = 0.2f;
     public const float DefaultTolerance = 0.05f;
 
-    // The one speed of feeds and plunges; the .nc file sets it once in its header (T-215).
+    private float _travelRate = DefaultTravelRate;
+    private bool _travelRateRead;
+
+    // The speed of feeds and plunges in contact with material; the .nc file sets it in its header (T-215).
     public float FeedRate { get; set; } = DefaultFeedRate;
+
+    // The speed of a feed or plunge that meets no material over its whole length (T-218); the .nc file
+    // writes F only where the speed changes.
+    public float TravelRate
+    {
+        get => _travelRate;
+        set
+        {
+            _travelRate = value;
+            _travelRateRead = true;
+        }
+    }
 
     public float RapidRate { get; set; } = DefaultRapidRate;
 
@@ -50,4 +68,13 @@ public sealed class CuttingParameters
     public float? PlungeRate { get; set; }
 
     public static CuttingParameters Default() => new();
+
+    // Files written before T-218 have no travel rate: their travels ran at the feed rate, and still do.
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        if (!_travelRateRead)
+        {
+            _travelRate = FeedRate;
+        }
+    }
 }

@@ -325,16 +325,18 @@ void mn_model_bits(const float* model, int cells, float floor, uint8_t* status);
 
 /* Clears MN_CELL_COLLISION, walks the segments over a clone of `stock` and sets it again on every
  * entered cell; `hits` may be NULL, otherwise its closing map must be set. Events hold one collision
- * per segment and kind. `final_stock` (cells, may be NULL) receives the clone as the walk leaves it. */
+ * per segment and kind. `final_stock` (cells, may be NULL) receives the clone as the walk leaves it.
+ * `contact` (count entries, zero at the call, may be NULL) receives 1 for every segment that met
+ * material: removed more than `tolerance` from a cell or entered one with the head or a rapid (T-218). */
 int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const float* stock, const float* model, float floor, const mn_profile* profile, float cutter_radius,
-    float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, float* final_stock);
+    float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, float* final_stock, uint8_t* contact);
 
 /* The check's walk with its inputs kept (T-207): opened once, run over any segment range in place on a
  * stock, closed when done. The grid and the profile's offsets must outlive the walker. */
 typedef struct mn_walker mn_walker;
 int mn_walker_open(const mn_grid* g, const mn_profile* profile, float cutter_radius, float cutter_length, float tolerance, int first_hit_only, mn_walker** walker);
 int mn_walker_run(mn_walker* walker, const mn_segment* segments, int first_segment, int count, float* stock, const float* model, float floor, uint8_t* status,
-    mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, double* probing_seconds, double* walking_seconds);
+    mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, double* probing_seconds, double* walking_seconds, uint8_t* contact);
 void mn_walker_close(mn_walker* walker);
 
 /* Not cut (T-173): the cells whose material after the toolpath stands more than the tolerance above

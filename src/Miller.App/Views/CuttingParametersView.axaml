@@ -7,9 +7,12 @@
   <ScrollViewer>
     <StackPanel Margin="8" Spacing="4">
       <TextBlock Classes="header" Text="Speeds" />
-      <TextBlock Classes="label" Text="Feed rate of feeds and plunges (mm/min)" />
+      <TextBlock Classes="label" Text="Milling rate: feeds and plunges in contact with material (mm/min)" TextWrapping="Wrap" />
       <c:NumericBox Name="FeedRateBox" Classes="numeric" Value="{Binding FeedRate}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding FeedRateError}" IsVisible="{Binding FeedRateError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Classes="label" Text="Travel rate: feeds and plunges without material contact over the whole move (mm/min)" TextWrapping="Wrap" />
+      <c:NumericBox Name="TravelRateBox" Classes="numeric" Value="{Binding TravelRate}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding TravelRateError}" IsVisible="{Binding TravelRateError, Converter={x:Static ObjectConverters.IsNotNull}}" />
       <TextBlock Classes="label" Text="Rapid rate (mm/min)" />
       <c:NumericBox Name="RapidRateBox" Classes="numeric" Value="{Binding RapidRate}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding RapidRateError}" IsVisible="{Binding RapidRateError, Converter={x:Static ObjectConverters.IsNotNull}}" />

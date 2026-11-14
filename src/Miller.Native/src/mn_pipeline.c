@@ -4,7 +4,8 @@
 
 /* The whole generation after the project is validated (PipelineService): transform, stock, model
  * map and reach map once, then one or more passes of slicing and cut scope, routing, simplification,
- * statistics and the dynamic collision check (T-147). The Z layer leaves out the positions the
+ * the dynamic collision check (T-147), which also gives every feed and plunge that meets no material
+ * the travel rate (T-218), and the statistics. The Z layer leaves out the positions the
  * backward check finds unreached (T-170, Backwards and Backwards_GPU, the only collision handling
  * since T-214) and the pass is checked for the report. With a far stepdown (T-164) every collision's
  * place and the MN_FAR_WITHDRAW_RADIUS around it are withdrawn from the far stepdown after each pass:
@@ -238,7 +239,7 @@ static int prepare(const mn_job* job, stage_monitor* stage, const volatile int32
 /* Whether the passes withdraw far positions around collisions: the Z layer with a far stepdown. */
 static int far_withdrawal_on(const mn_job* job) { return job->strategy == MN_STRATEGY_Z_LAYER && mn_far_levels(&job->parameters) >= 2; }
 
-/* One pass: slicing and cut scope, holding bridges, routing, simplification, statistics and the check.
+/* One pass: slicing and cut scope, holding bridges, routing, simplification, the check and the statistics.
  * `status` holds the MODEL bits the pass runs with and receives the BRIDGE bits of its bridges and the
  * COLLISION bits of its check; `hits` receives the check's aggregation when given; `far_allowed` limits
  * the far positions (NULL: all). `intended` (T-173) is filled from the first pass's plan, before the
@@ -394,13 +395,9 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
     MN_CHECK(status_code);
     MN_STOP_IF_CANCELLED();
 
-    /* statistics */
-    begin(stage, MN_STAGE_STATISTICS);
-    mn_statistics_of(pass->toolpath.items, pass->toolpath.count, p->rapid_rate, &pass->statistics);
-
     /* check: the head and the rapids against the stock as the pass leaves it, order included. A hit
      * cell is removable when its closing under the strategy tip (standing stock included) lies
-     * below the tool surface. */
+     * below the tool surface. It also finds the feeds and plunges that meet no material. */
     begin(stage, MN_STAGE_CHECK);
     mn_map closing = { 0 };
     if (hits != NULL) {
@@ -415,13 +412,23 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
         hits->slack = p->tolerance;
     }
     float* final_stock = (float*)mn_alloc((size_t)cells, sizeof(float));
-    status_code = final_stock == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the final stock.")
-                                      : mn_check_path(pass->toolpath.items, pass->toolpath.count, g, r->stock.z, r->model.z, r->floor, &r->profile, job->tool.cutter_diameter / 2.0f,
-                                          job->tool.cutter_length, MN_COLLISION_TOLERANCE, status, hits, &pass->events, &monitor, final_stock);
+    uint8_t* contact = (uint8_t*)mn_alloc((size_t)(pass->toolpath.count > 0 ? pass->toolpath.count : 1), 1);
+    status_code = final_stock == NULL || contact == NULL
+        ? mn_fail(MN_ERR_MEMORY, "Out of memory for the final stock and the contact of %d segments.", pass->toolpath.count)
+        : mn_check_path(pass->toolpath.items, pass->toolpath.count, g, r->stock.z, r->model.z, r->floor, &r->profile, job->tool.cutter_diameter / 2.0f,
+              job->tool.cutter_length, MN_COLLISION_TOLERANCE, status, hits, &pass->events, &monitor, final_stock, contact);
     if (status_code == MN_OK) {
         mn_uncut_of(g, final_stock, intended, p->tolerance, &pass->uncut);
+        /* T-218 (user request): a feed or plunge that met no material over its whole length is a travel. */
+        for (int k = 0; k < pass->toolpath.count; k++) {
+            mn_segment* s = &pass->toolpath.items[k];
+            if (s->kind != MN_MOVE_RAPID) {
+                s->rate = contact[k] ? p->feed_rate : p->travel_rate;
+            }
+        }
     }
     free(final_stock);
+    free(contact);
     if (status_code != MN_OK) {
         mn_map_free(&closing);
         if (hits != NULL) {
@@ -445,6 +452,10 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
         }
     }
     pass->entered = hits != NULL ? hits->entered : pass->events.count;
+
+    /* statistics, at the rates the check gave */
+    begin(stage, MN_STAGE_STATISTICS);
+    mn_statistics_of(pass->toolpath.items, pass->toolpath.count, p->rapid_rate, &pass->statistics);
     pass->valid = 1;
     return MN_OK;
 }
@@ -456,6 +467,9 @@ static int generate(const mn_job* job, stage_monitor* stage, const volatile int3
     }
     if (job->strategy != MN_STRATEGY_Z_LAYER) {
         return mn_fail(MN_ERR_ARGUMENT, "Unknown strategy %d.", job->strategy);
+    }
+    if (!(job->parameters.travel_rate > 0)) {
+        return mn_fail(MN_ERR_ARGUMENT, "The travel rate must be greater than 0, got %g.", (double)job->parameters.travel_rate);
     }
     if (job->bridge_count < 0 || job->bridge_count > MN_MAX_BRIDGES) {
         return mn_fail(MN_ERR_ARGUMENT, "The bridge count must be 0 to %d, got %d.", MN_MAX_BRIDGES, job->bridge_count);
