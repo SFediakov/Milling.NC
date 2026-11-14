@@ -371,6 +371,8 @@ int mn_bridges_place(const mn_grid* g, const float* stock, const float* model, c
 float mn_distance_to(mn_v3 p, mn_v3 a, mn_v3 b);
 
 /* `marks` (NULL allowed) receives the layer marks of the routes. */
+/* `finishing` receives the finishing passes (T-222) and the final retract, `result` everything before
+ * them; without finishing passes `result` ends with the retract and `finishing` stays empty. */
 /* `entries` (may be NULL) receives the entry of every route unit after the first (T-166). */
 /* `unreached` (may be NULL) receives the counts of the backward check when the collision mode is
  * MN_COLLISION_BACKWARDS (T-170). */
@@ -381,7 +383,7 @@ typedef struct mn_unreached {
     int sweeps;
 } mn_unreached;
 
-int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks, mn_points* entries, mn_unreached* unreached);
+int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_segments* finishing, mn_marks* marks, mn_points* entries, mn_unreached* unreached);
 
 /* ---- backward check (T-170, mn_backwards.c) ---- */
 

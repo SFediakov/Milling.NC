@@ -17,7 +17,8 @@ namespace Miller.Core.Generation;
 // the toolpath (ToolpathLayer); FarStepdown the far positions of the first and the kept pass and those
 // withdrawn around collisions (T-164); RouteUnitEntries where every route unit after the first begins and
 // the one before it ends (T-166); Unreached the counts of the backward check, null unless the collision
-// mode was Backwards (T-172); Uncut the cells the toolpath leaves above what the plan intended (T-173).
+// mode was Backwards (T-172); Uncut the cells the toolpath leaves above what the plan intended (T-173);
+// FinishingFirstSegment the first segment of the finishing passes, the segment count without them (T-222).
 public sealed record GenerationResult(
     Mesh MachineMesh,
     StockGeometry Stock,
@@ -42,7 +43,8 @@ public sealed record GenerationResult(
     IReadOnlyList<Vector3> RouteUnitEntries,
     UnreachedCells? Unreached,
     UncutCells Uncut,
-    ProcessTimes Times);
+    ProcessTimes Times,
+    int FinishingFirstSegment);
 
 // The process times of a generation in seconds (T-176, mn_result_timings): the wall time of every stage
 // over all passes, then the parts inside them; the solver parts are summed over route units that run on
@@ -392,6 +394,7 @@ public static class ToolpathGeneration
             entries,
             unreached,
             uncut,
-            new ProcessTimes(timings));
+            new ProcessTimes(timings),
+            CoreNative.mn_result_finishing_first(result));
     }
 }

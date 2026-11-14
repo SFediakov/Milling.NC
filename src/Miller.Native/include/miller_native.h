@@ -102,7 +102,19 @@ typedef struct mn_parameters {
      * runs at the vector feed of mn_segment_rate. */
     float feed_rate_z;
     float travel_rate_z;
+    /* T-222: finishing passes after the roughing (0 to MN_MAX_FINISHING_PASSES, 0 for none) and their
+     * pattern (MN_FINISHING_*). */
+    int32_t finishing_passes;
+    int32_t finishing_pattern;
 } mn_parameters;
+
+/* Finishing passes (T-222): each visits the positions the roughing cut at the final level it took them to,
+ * along rows of the roughing's row spacing moved by k / (passes + 1) of it for pass k: parallel to the
+ * roughing rows, across them, or along the diagonal; the ends of every row are visited too. */
+#define MN_MAX_FINISHING_PASSES 5
+#define MN_FINISHING_SHIFTED_ROWS 0
+#define MN_FINISHING_CROSS_ROWS 1
+#define MN_FINISHING_DIAGONAL_ROWS 2
 
 /* Inclusive cell rectangle a sweep lowered; empty when i1 < i0 (DirtyRect). */
 typedef struct mn_dirty {
@@ -449,6 +461,9 @@ MN_API void mn_result_statistics(const mn_result* result, mn_statistics* statist
  * index of its first segment (the first layer starts at 0) and its level. */
 MN_API int32_t mn_result_layer_count(const mn_result* result);
 MN_API void mn_result_layers(const mn_result* result, int32_t* segment, float* level);
+/* The first segment of the finishing passes of the kept pass's toolpath (T-222); the segment count when it
+ * has none. From there every feed and plunge runs at the milling rates. */
+MN_API int32_t mn_result_finishing_first(const mn_result* result);
 MN_API int32_t mn_result_passes(const mn_result* result);
 /* Per pass (mn_result_passes entries): the distinct cells its check entered and its events. */
 MN_API void mn_result_pass_counts(const mn_result* result, int32_t* entered, int32_t* events);

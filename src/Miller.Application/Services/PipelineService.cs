@@ -73,6 +73,9 @@ public sealed record PipelineResult(
     // Process times of the generation (T-176).
     public ProcessTimes Times { get; init; } = new(Array.Empty<double>());
 
+    // The first segment of the finishing passes (T-222); the segment count without them.
+    public int FinishingFirstSegment { get; init; }
+
     // The GPU the generation ran on (Backwards_GPU, T-174); null in the other modes.
     public string? Gpu { get; init; }
 }
@@ -159,6 +162,7 @@ public sealed class PipelineService
             Unreached = generated.Unreached,
             Uncut = generated.Uncut,
             Times = generated.Times,
+            FinishingFirstSegment = generated.FinishingFirstSegment,
             Gpu = project.CollisionMode == CollisionMode.Backwards_GPU ? Miller.Core.Native.GpuDevice.Description : null,
         };
     }

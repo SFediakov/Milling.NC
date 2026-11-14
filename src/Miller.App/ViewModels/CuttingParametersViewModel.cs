@@ -12,13 +12,17 @@ public sealed class CuttingParametersViewModel : SettingsViewModelBase
     {
         nameof(FeedRate), nameof(FeedRateZ), nameof(TravelRate), nameof(TravelRateZ), nameof(RapidRate), nameof(SpindleRpm), nameof(Stepover),
         nameof(Stepdown), nameof(FarStepdown), nameof(SafeHeight), nameof(CellSize), nameof(Tolerance), nameof(GridSizeText),
+        nameof(FinishingPasses), nameof(FinishingPattern),
     };
 
     private static readonly string[] ErrorProperties =
     {
         nameof(FeedRateError), nameof(FeedRateZError), nameof(TravelRateError), nameof(TravelRateZError), nameof(RapidRateError), nameof(SpindleRpmError), nameof(StepoverError),
         nameof(StepdownError), nameof(FarStepdownError), nameof(FarStepdownWarning), nameof(SafeHeightError), nameof(CellSizeError), nameof(CellSizeWarning),
+        nameof(FinishingPassesError),
     };
+
+    public static IReadOnlyList<FinishingPattern> FinishingPatterns { get; } = Enum.GetValues<FinishingPattern>();
 
     public CuttingParametersViewModel(ProjectService project)
         : base(project, "Parameters.")
@@ -57,6 +61,12 @@ public sealed class CuttingParametersViewModel : SettingsViewModelBase
     }
 
     public float Tolerance { get => Current.Parameters.Tolerance; set => Edit(p => p.Parameters.Tolerance = value); }
+
+    public float FinishingPasses { get => Current.Parameters.FinishingPasses; set => Edit(p => p.Parameters.FinishingPasses = value); }
+
+    public FinishingPattern FinishingPattern { get => Current.Parameters.FinishingPattern; set => Edit(p => p.Parameters.FinishingPattern = value); }
+
+    public string? FinishingPassesError => ErrorFor("Parameters.FinishingPasses");
 
     public string? FeedRateError => ErrorFor("Parameters.FeedRate");
 

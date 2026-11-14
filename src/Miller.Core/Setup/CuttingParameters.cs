@@ -17,6 +17,7 @@ public sealed class CuttingParameters : IJsonOnDeserialized
     public const float DefaultSafeHeight = 5f;
     public const float DefaultCellSize = 0.2f;
     public const float DefaultTolerance = 0.05f;
+    public const float MaxFinishingPasses = 5f;
 
     private float _feedRateZ = DefaultFeedRateZ;
     private float _travelRate = DefaultTravelRate;
@@ -81,6 +82,12 @@ public sealed class CuttingParameters : IJsonOnDeserialized
     public float CellSize { get; set; } = DefaultCellSize;
 
     public float Tolerance { get; set; } = DefaultTolerance;
+
+    // T-222: passes after the roughing over the floors it cut, each at every cut position's final level,
+    // cleaning what the roughing left there; a whole number from 0 (none) to MaxFinishingPasses.
+    public float FinishingPasses { get; set; }
+
+    public FinishingPattern FinishingPattern { get; set; } = FinishingPattern.ShiftedRows;
 
     // Schema 2 field (zigzag or one way): read for migration, never written back; the route solver
     // decides the direction of every move.

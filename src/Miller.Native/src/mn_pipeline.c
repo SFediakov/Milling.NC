@@ -40,6 +40,8 @@ typedef struct mn_pass {
     mn_unreached unreached;
     /* The cells the pass left above what the first pass's plan intended (T-173). */
     mn_uncut uncut;
+    /* The first segment of the finishing passes (T-222), the segment count without them. */
+    int finishing_first;
     int entered;
     int valid;
 } mn_pass;
@@ -375,12 +377,14 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
         context.far_area = pass->far_area;
     }
     mn_segments routed = { 0 };
-    status_code = mn_z_layer(&context, &monitor, &routed, &pass->layers, &pass->units, &pass->unreached);
+    mn_segments finished = { 0 };
+    status_code = mn_z_layer(&context, &monitor, &routed, &finished, &pass->layers, &pass->units, &pass->unreached);
     if (status_code == MN_OK && cancelled(cancel)) {
         status_code = mn_fail(MN_ERR_CANCELLED, "Cancelled.");
     }
     if (status_code != MN_OK) {
         mn_segments_free(&routed);
+        mn_segments_free(&finished);
         return status_code;
     }
     mn_head_limited_mask(r->tip.z, pass->limit.z, cells, p->tolerance, pass->head_limited);
@@ -388,10 +392,21 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
         pass->far_cells += pass->far_area[k];
     }
 
-    /* simplify; the turn fine priced the routes only, every feed runs at the feed rate (T-215). */
+    /* simplify; the turn fine priced the routes only, every feed runs at the feed rate (T-215). The finishing
+     * passes (T-222) are simplified on their own and follow, so their first segment stays known. */
     begin(stage, MN_STAGE_SIMPLIFY);
+    mn_segments finishing = { 0 };
     status_code = mn_simplify_path(&routed, g, pass->strategy_tip.z, p->tolerance, &pass->layers, &pass->toolpath);
+    if (status_code == MN_OK) {
+        status_code = mn_simplify_path(&finished, g, pass->strategy_tip.z, p->tolerance, NULL, &finishing);
+    }
+    pass->finishing_first = pass->toolpath.count;
+    for (int k = 0; k < finishing.count && status_code == MN_OK; k++) {
+        status_code = mn_segments_push(&pass->toolpath, finishing.items[k]);
+    }
     mn_segments_free(&routed);
+    mn_segments_free(&finished);
+    mn_segments_free(&finishing);
     MN_CHECK(status_code);
     MN_STOP_IF_CANCELLED();
 
@@ -420,11 +435,12 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
     if (status_code == MN_OK) {
         mn_uncut_of(g, final_stock, intended, p->tolerance, &pass->uncut);
         /* T-218 (user request): a feed or plunge that met no material over its whole length is a travel; it
-         * runs at the vector feed of its XY and Z rates (T-221). */
+         * runs at the vector feed of its XY and Z rates (T-221). The finishing passes (T-222) cut what the
+         * machine left, which the simulated stock does not hold, so they keep the milling rates. */
         for (int k = 0; k < pass->toolpath.count; k++) {
             mn_segment* s = &pass->toolpath.items[k];
             if (s->kind != MN_MOVE_RAPID) {
-                s->rate = contact[k] ? mn_segment_rate(s, p->feed_rate, p->feed_rate_z) : mn_segment_rate(s, p->travel_rate, p->travel_rate_z);
+                s->rate = contact[k] || k >= pass->finishing_first ? mn_segment_rate(s, p->feed_rate, p->feed_rate_z) : mn_segment_rate(s, p->travel_rate, p->travel_rate_z);
             }
         }
     }
@@ -690,6 +706,8 @@ MN_API void mn_result_segments(const mn_result* result, mn_segment* segments)
 MN_API void mn_result_statistics(const mn_result* result, mn_statistics* statistics) { *statistics = result->best.statistics; }
 
 MN_API int32_t mn_result_layer_count(const mn_result* result) { return result->best.layers.count; }
+
+MN_API int32_t mn_result_finishing_first(const mn_result* result) { return result->best.finishing_first; }
 
 MN_API void mn_result_layers(const mn_result* result, int32_t* segment, float* level)
 {

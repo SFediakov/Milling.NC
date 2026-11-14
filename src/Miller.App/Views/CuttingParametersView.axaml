@@ -49,6 +49,13 @@
       <TextBlock Name="GridSizeText" Text="{Binding GridSizeText}" TextWrapping="Wrap" />
       <TextBlock Classes="label" Text="Tolerance (mm; below the cell size every wall is traced cell by cell)" />
       <c:NumericBox Name="ToleranceBox" Classes="numeric" Value="{Binding Tolerance}" HorizontalAlignment="Left" />
+
+      <TextBlock Classes="header" Text="Finishing" />
+      <TextBlock Classes="label" Text="Finishing passes over the cut floors at their final level (0: none)" TextWrapping="Wrap" />
+      <c:NumericBox Name="FinishingPassesBox" Classes="numeric" Value="{Binding FinishingPasses}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding FinishingPassesError}" IsVisible="{Binding FinishingPassesError, Converter={x:Static ObjectConverters.IsNotNull}}" TextWrapping="Wrap" />
+      <TextBlock Classes="label" Text="Finishing pattern (rows moved by part of the stepover per pass)" TextWrapping="Wrap" />
+      <ComboBox Name="FinishingPatternBox" ItemsSource="{x:Static vm:CuttingParametersViewModel.FinishingPatterns}" SelectedItem="{Binding FinishingPattern}" Width="260" HorizontalAlignment="Left" />
     </StackPanel>
   </ScrollViewer>
 </UserControl>
