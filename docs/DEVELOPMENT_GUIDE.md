@@ -693,14 +693,34 @@ Uncuttable classification (`UncuttableRegions`):
 - `Stepover`: valid range `(0, CutterDiameter]`.
 - `SafeHeight`: clearance above the stock top for rapid moves. The absolute rapid Z is
   stock top + `SafeHeight`; the value must be > 0 and does not depend on the origin mode.
-- Feed kinds: `Feed` and `Plunge` use `FeedRate` where they meet material and
-  `TravelRate` where they meet none over their whole length (T-218, user
+- Feed kinds: `Feed` and `Plunge` use the milling rates `FeedRate` (XY) and
+  `FeedRateZ` (Z) where they meet material and the travel rates `TravelRate` and
+  `TravelRateZ` where they meet none over their whole length (T-218, T-221, user
   request: different speeds for milling and travelling, set apart in the
   Cutting tab). The generation's check walks the final toolpath over the stock
   and decides it per segment: a removal of more than the check tolerance
   (1e-4 mm) from a cell or a head or rapid hit is contact; the check therefore
-  runs before the statistics (stages 9 and 10). `TravelRate` defaults to the
-  default feed rate; files written before load with their own feed rate.
+  runs before the statistics (stages 9 and 10). A move runs at the vector feed
+  of its two rates (`mn_segment_rate`): a pure XY move at the XY rate, a pure Z
+  move at the Z rate, any other one as fast as neither axis passes its rate and
+  not faster than the larger rate, so equal rates give that rate in every
+  direction. The rates default to the default feed rate; files written before
+  load the travel rate from their feed rate and each Z rate from its XY rate.
+  The finishing passes keep the milling rates (T-222).
+- Finishing passes (`FinishingPasses` 0 to 5, `FinishingPattern`, T-222, user
+  request: passes over the lowest material already cut that clean what the first
+  milling left, on a pattern other than the roughing's): after the route units
+  every pass k of n routes the positions the roughing cut (planned floor below
+  the stock) at the final level it took each one to, every cut cell on its lines
+  a node: lines of the roughing's row step moved by k / (n + 1) of it (half a
+  step for one pass), parallel to the roughing rows (ShiftedRows), across them
+  (CrossRows) or along the 45 degree diagonal at the same spacing
+  (DiagonalRows). One route per pass over the floors as the roughing left them,
+  never-cut positions on the safe plane. On material milled as planned a pass
+  cuts at most the simplifier's slack; what the machine left (deflection, lost
+  steps) is not in the simulated stock, so the passes always run at the milling
+  rates. The finishing path is simplified apart from the roughing and its first
+  segment is reported (`FinishingFirstSegment`); 0 passes is the former toolpath.
   `Rapid` uses `RapidRate` (only for time estimation and simulation; G-code
   emits `G0`).
 
@@ -2573,6 +2593,23 @@ check that decides done.
 - Output: the bar and the line count from `RunExecutedLines`, the file line of the move the tool is on (`RunExecutingSourceLine`, none before the first move and once done), the generated toolpath drawn as done and its next moves from the executed lines; the machine view and the listing already followed the executing move (T-205). Acknowledged lines remain only where they bound what can have run: the tracker's window, the cap of the executed lines and the listing before the first move (settings Grbl executes as it acknowledges them)
 - Acceptance: with every line acknowledged and the tool on the cut from X10 to X11 of a 41-segment toolpath, the bar and the count show the executed lines, the file line is the one of that cut and equals the listing's, the toolpath is done up to segment 11 where the next moves start, the machine view at path segment 13; a finished run shows 100 percent and M of M lines
 - Status: done
+
+#### T-221 XY and Z rates for milling and travel
+- Depends on: T-218
+- Files: `src/Miller.Native/src/mn_writer.c`, `mn_pipeline.c`, `include/miller_native.h`, `src/Miller.Core/Setup/CuttingParameters.cs`, `src/Miller.Core/Toolpath/ToolpathSegment.cs`, `src/Miller.Core/GCode/GrblPostProcessor.cs`, `src/Miller.Core/Native/CoreNative.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, the Cutting tab, tests
+- Input: user request (the milling and the travel speed divided per XY and Z, as the speeds differ there)
+- Output: `FeedRateZ`, `TravelRateZ`; `mn_segment_rate` (vector feed) for the check's rates, the writer's travel time and the post-processor's rate guard; old files take their XY rates for Z
+- Acceptance: pure moves at their axis rate, a 45 degree ramp at 200 / sin 45 under 800 XY and 200 Z, equal rates exactly that rate in every direction; on the box fixture every move at the vector feed of its rates with no axis above its rate, every G1 of the file at its segment's rate; equal rates give one F; old files take their XY rates; the validator refuses Z rates of 0, negative or NaN; the 9 mm ridge travel retracts at 800 mm/min of Z and stays on the surface at 2000
+- Status: done
+
+#### T-222 Finishing passes over the cut floors
+- Depends on: T-210, T-218, T-221
+- Files: `src/Miller.Native/src/mn_strategies.c`, `mn_pipeline.c`, `mn_internal.h`, `include/miller_native.h`, `src/Miller.Core/Setup/FinishingPattern.cs`, `src/Miller.Core/Setup/CuttingParameters.cs`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Application/Services/PipelineService.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, the Cutting tab, tests
+- Input: user request (a finishing setting in Cutting: passes on the lowest material already cut that mill only the artifacts of the first milling, a settable number of additional passes with 0 as standard, a pattern different from the first pass, for example parallel and moved by half a pass, and a pattern selection)
+- Output: the finishing passes of section 6.4; `z_finishing`, `MN_FINISHING_*`, `mn_result_finishing_first`
+- Acceptance: 0 passes keep the toolpath and the heart golden byte for byte; one pass on the box fixture: no collision, no gouge, every feed and plunge at the milling rate, at most the tolerance removed from the stock the roughing left, the roughing identical to the one without finishing, a 0.6 mm bump on the floor under a row cut down to its level; shifted rows on lines 2 of every 4, two passes on 1 and 3, cross rows across, diagonal rows at 45 degrees; settings saved, loaded (old files: none) and validated; the Cutting tab binds them; the heart sample with two cross-row passes 2,172 segments, 3.4 min (1,878, 2.1 min without)
+- Status: done
+
 
 #### T-165 Head bottom down to half the cutter diameter
 - Depends on: T-135, T-162
