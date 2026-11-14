@@ -419,11 +419,12 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
               job->tool.cutter_length, MN_COLLISION_TOLERANCE, status, hits, &pass->events, &monitor, final_stock, contact);
     if (status_code == MN_OK) {
         mn_uncut_of(g, final_stock, intended, p->tolerance, &pass->uncut);
-        /* T-218 (user request): a feed or plunge that met no material over its whole length is a travel. */
+        /* T-218 (user request): a feed or plunge that met no material over its whole length is a travel; it
+         * runs at the vector feed of its XY and Z rates (T-221). */
         for (int k = 0; k < pass->toolpath.count; k++) {
             mn_segment* s = &pass->toolpath.items[k];
             if (s->kind != MN_MOVE_RAPID) {
-                s->rate = contact[k] ? p->feed_rate : p->travel_rate;
+                s->rate = contact[k] ? mn_segment_rate(s, p->feed_rate, p->feed_rate_z) : mn_segment_rate(s, p->travel_rate, p->travel_rate_z);
             }
         }
     }
@@ -468,8 +469,9 @@ static int generate(const mn_job* job, stage_monitor* stage, const volatile int3
     if (job->strategy != MN_STRATEGY_Z_LAYER) {
         return mn_fail(MN_ERR_ARGUMENT, "Unknown strategy %d.", job->strategy);
     }
-    if (!(job->parameters.travel_rate > 0)) {
-        return mn_fail(MN_ERR_ARGUMENT, "The travel rate must be greater than 0, got %g.", (double)job->parameters.travel_rate);
+    if (!(job->parameters.travel_rate > 0) || !(job->parameters.travel_rate_z > 0) || !(job->parameters.feed_rate_z > 0)) {
+        return mn_fail(MN_ERR_ARGUMENT, "The travel rates and the Z feed rate must be greater than 0, got %g, %g and %g.", (double)job->parameters.travel_rate,
+            (double)job->parameters.travel_rate_z, (double)job->parameters.feed_rate_z);
     }
     if (job->bridge_count < 0 || job->bridge_count > MN_MAX_BRIDGES) {
         return mn_fail(MN_ERR_ARGUMENT, "The bridge count must be 0 to %d, got %d.", MN_MAX_BRIDGES, job->bridge_count);

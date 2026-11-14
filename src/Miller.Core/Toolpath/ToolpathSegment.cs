@@ -1,4 +1,5 @@
 using System.Numerics;
+using Miller.Core.Native;
 
 namespace Miller.Core.Toolpaths;
 
@@ -15,6 +16,14 @@ public enum MoveKind
 public readonly record struct ToolpathSegment(Vector3 Start, Vector3 End, MoveKind Kind, float FeedRate)
 {
     public float Length => Vector3.Distance(Start, End);
+
+    // The vector feed of this move when its XY travel may run at rateXy and its Z travel at rateZ (T-221,
+    // native mn_segment_rate, the rule the generation gives its moves).
+    public unsafe float RateAt(float rateXy, float rateZ)
+    {
+        var native = CoreNative.SegmentOf(this);
+        return CoreNative.mn_segment_rate(&native, rateXy, rateZ);
+    }
 
     public Vector3 Direction
     {

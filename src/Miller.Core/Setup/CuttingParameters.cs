@@ -6,7 +6,9 @@ namespace Miller.Core.Setup;
 public sealed class CuttingParameters : IJsonOnDeserialized
 {
     public const float DefaultFeedRate = 800f;
+    public const float DefaultFeedRateZ = DefaultFeedRate;
     public const float DefaultTravelRate = DefaultFeedRate;
+    public const float DefaultTravelRateZ = DefaultTravelRate;
     public const float DefaultRapidRate = 3000f;
     public const float DefaultSpindleRpm = 12000f;
     public const float DefaultStepover = 3f;
@@ -16,13 +18,28 @@ public sealed class CuttingParameters : IJsonOnDeserialized
     public const float DefaultCellSize = 0.2f;
     public const float DefaultTolerance = 0.05f;
 
+    private float _feedRateZ = DefaultFeedRateZ;
     private float _travelRate = DefaultTravelRate;
+    private float _travelRateZ = DefaultTravelRateZ;
+    private bool _feedRateZRead;
     private bool _travelRateRead;
+    private bool _travelRateZRead;
 
-    // The speed of feeds and plunges in contact with material; the .nc file sets it in its header (T-215).
+    // The XY speed of feeds and plunges in contact with material; the .nc file sets it in its header (T-215).
     public float FeedRate { get; set; } = DefaultFeedRate;
 
-    // The speed of a feed or plunge that meets no material over its whole length (T-218); the .nc file
+    // The Z speed of the same moves (T-221); a move runs at the vector feed of both (mn_segment_rate).
+    public float FeedRateZ
+    {
+        get => _feedRateZ;
+        set
+        {
+            _feedRateZ = value;
+            _feedRateZRead = true;
+        }
+    }
+
+    // The XY speed of a feed or plunge that meets no material over its whole length (T-218); the .nc file
     // writes F only where the speed changes.
     public float TravelRate
     {
@@ -31,6 +48,17 @@ public sealed class CuttingParameters : IJsonOnDeserialized
         {
             _travelRate = value;
             _travelRateRead = true;
+        }
+    }
+
+    // The Z speed of those moves (T-221).
+    public float TravelRateZ
+    {
+        get => _travelRateZ;
+        set
+        {
+            _travelRateZ = value;
+            _travelRateZRead = true;
         }
     }
 
@@ -69,12 +97,23 @@ public sealed class CuttingParameters : IJsonOnDeserialized
 
     public static CuttingParameters Default() => new();
 
-    // Files written before T-218 have no travel rate: their travels ran at the feed rate, and still do.
+    // Files written before T-218 have no travel rate and files before T-221 no Z rates: their moves ran at
+    // the feed rate in every direction, and still do (the travel Z rate follows the file's travel rate).
     void IJsonOnDeserialized.OnDeserialized()
     {
         if (!_travelRateRead)
         {
             _travelRate = FeedRate;
+        }
+
+        if (!_feedRateZRead)
+        {
+            _feedRateZ = FeedRate;
+        }
+
+        if (!_travelRateZRead)
+        {
+            _travelRateZ = _travelRate;
         }
     }
 }

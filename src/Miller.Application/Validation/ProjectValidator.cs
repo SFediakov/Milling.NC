@@ -102,7 +102,9 @@ public static class ProjectValidator
         }
 
         Positive(errors, "Parameters.FeedRate", p.FeedRate);
+        Positive(errors, "Parameters.FeedRateZ", p.FeedRateZ);
         Positive(errors, "Parameters.TravelRate", p.TravelRate);
+        Positive(errors, "Parameters.TravelRateZ", p.TravelRateZ);
         Positive(errors, "Parameters.RapidRate", p.RapidRate);
         Positive(errors, "Parameters.SpindleRpm", p.SpindleRpm);
         NonNegative(errors, "Strategy.MinIslandVolume", project.MinIslandVolume);

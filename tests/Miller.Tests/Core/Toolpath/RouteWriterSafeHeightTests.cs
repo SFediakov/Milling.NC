@@ -109,8 +109,9 @@ public sealed class RouteWriterSafeHeightTests
     public void ATravel_TimesItsVerticalTravelAtTheZSpeed()
     {
         // 20 mm along the floor at 800 mm/min: 0.025 min. The retract: 10 mm up at 3000, 20 mm over at 3000,
-        // 10 mm down at 800, 0.0225 min when Z ran as fast as XY (the retract won); with Z three times
-        // slower 0.01 + 0.0067 + 0.0375 = 0.0542 min, so the travel stays on the floor.
+        // 10 mm down at 800, 0.0225 min when the rapid rose as fast as it moves in XY (the retract won); with
+        // rapid Z three times slower and the plunge at the milling Z rate (800, T-221) 0.01 + 0.0067 + 0.0125
+        // = 0.0292 min, so the travel stays on the floor.
         Assert.Equal(3f, RouteCost.XySpeedFactor / RouteCost.ZSpeedFactor);
         var flat = Row(new float[21]);
         var writer = new RouteWriter(TestContexts.Parameters(), SafeZ);

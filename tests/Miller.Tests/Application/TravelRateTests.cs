@@ -25,11 +25,14 @@ public sealed class TravelRateTests
     // Removal below this is float noise, the slack of the check (CollisionDetector.Tolerance).
     private const float Removed = 1e-4f;
 
+    // The Z rates equal the XY rates here (T-221), so every move of a kind runs at one rate.
     private static MillingProject Project(float travelRate)
     {
         var project = MillingProject.Default();
         project.Parameters.FeedRate = FeedRate;
+        project.Parameters.FeedRateZ = FeedRate;
         project.Parameters.TravelRate = travelRate;
+        project.Parameters.TravelRateZ = travelRate;
         project.Stock.SizeX = 40;
         project.Stock.SizeY = 40;
         project.Stock.SizeZ = 5;
@@ -58,14 +61,17 @@ public sealed class TravelRateTests
         Assert.Contains("\"TravelRate\": 600", json, StringComparison.Ordinal);
         Assert.Equal(TravelRate, ProjectSerializer.Deserialize(json).Parameters.TravelRate);
 
-        var old = Regex.Replace(json, @"\s*""TravelRate"": 600,", string.Empty);
+        // A file of T-215 has neither travel rate nor Z rates (T-221).
+        const string Newer = @"\s*""(TravelRate|TravelRateZ|FeedRateZ)"": [0-9.]+,";
+        var old = Regex.Replace(json, Newer, string.Empty);
         Assert.DoesNotContain("TravelRate", old, StringComparison.Ordinal);
         Assert.Equal(FeedRate, ProjectSerializer.Deserialize(old).Parameters.TravelRate);
+        Assert.Equal(FeedRate, ProjectSerializer.Deserialize(old).Parameters.TravelRateZ);
 
         var preset = MillingPreset.FromProject(project, "brass");
         Assert.Equal(TravelRate, MillingPreset.Clone(preset).Parameters.TravelRate);
         var presetJson = System.Text.Json.JsonSerializer.Serialize(preset, ProjectSerializer.Options);
-        var oldPreset = System.Text.Json.JsonSerializer.Deserialize<MillingPreset>(Regex.Replace(presetJson, @"\s*""TravelRate"": 600,", string.Empty), ProjectSerializer.Options)!;
+        var oldPreset = System.Text.Json.JsonSerializer.Deserialize<MillingPreset>(Regex.Replace(presetJson, Newer, string.Empty), ProjectSerializer.Options)!;
         Assert.Equal(FeedRate, oldPreset.Parameters.TravelRate);
     }
 

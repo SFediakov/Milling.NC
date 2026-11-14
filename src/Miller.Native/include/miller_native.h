@@ -98,6 +98,10 @@ typedef struct mn_parameters {
     /* The rate of a feed or plunge that meets no material over its whole length (T-218); the
      * generation's check decides it, every other feed and plunge runs at feed_rate. */
     float travel_rate;
+    /* T-221: feed_rate and travel_rate are the XY rates; these are the Z rates of the same moves. A move
+     * runs at the vector feed of mn_segment_rate. */
+    float feed_rate_z;
+    float travel_rate_z;
 } mn_parameters;
 
 /* Inclusive cell rectangle a sweep lowered; empty when i1 < i0 (DirtyRect). */
@@ -233,6 +237,10 @@ MN_API int32_t mn_route_solve(const mn_grid* grid, const float* floor, const flo
 MN_API float mn_route_path_cost(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, const int32_t* order, int32_t count);
 
 /* ---- writer ---- */
+/* The vector feed (mm/min) of a straight move whose XY travel may run at rate_xy and Z travel at rate_z
+ * (T-221): a pure XY move runs at rate_xy, a pure Z move at rate_z, any other move as fast as neither axis
+ * passes its rate and the move not faster than the larger rate. */
+MN_API float mn_segment_rate(const mn_segment* segment, float rate_xy, float rate_z);
 typedef struct mn_writer mn_writer;
 MN_API int32_t mn_writer_create(const mn_parameters* parameters, float safe_z, mn_writer** writer);
 MN_API int32_t mn_writer_travel(mn_writer* writer, const float* to, const mn_grid* grid, const float* floor);

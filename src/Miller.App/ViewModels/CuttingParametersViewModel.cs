@@ -10,13 +10,13 @@ public sealed class CuttingParametersViewModel : SettingsViewModelBase
 {
     private static readonly string[] BoundProperties =
     {
-        nameof(FeedRate), nameof(TravelRate), nameof(RapidRate), nameof(SpindleRpm), nameof(Stepover),
+        nameof(FeedRate), nameof(FeedRateZ), nameof(TravelRate), nameof(TravelRateZ), nameof(RapidRate), nameof(SpindleRpm), nameof(Stepover),
         nameof(Stepdown), nameof(FarStepdown), nameof(SafeHeight), nameof(CellSize), nameof(Tolerance), nameof(GridSizeText),
     };
 
     private static readonly string[] ErrorProperties =
     {
-        nameof(FeedRateError), nameof(TravelRateError), nameof(RapidRateError), nameof(SpindleRpmError), nameof(StepoverError),
+        nameof(FeedRateError), nameof(FeedRateZError), nameof(TravelRateError), nameof(TravelRateZError), nameof(RapidRateError), nameof(SpindleRpmError), nameof(StepoverError),
         nameof(StepdownError), nameof(FarStepdownError), nameof(FarStepdownWarning), nameof(SafeHeightError), nameof(CellSizeError), nameof(CellSizeWarning),
     };
 
@@ -28,7 +28,11 @@ public sealed class CuttingParametersViewModel : SettingsViewModelBase
 
     public float FeedRate { get => Current.Parameters.FeedRate; set => Edit(p => p.Parameters.FeedRate = value); }
 
+    public float FeedRateZ { get => Current.Parameters.FeedRateZ; set => Edit(p => p.Parameters.FeedRateZ = value); }
+
     public float TravelRate { get => Current.Parameters.TravelRate; set => Edit(p => p.Parameters.TravelRate = value); }
+
+    public float TravelRateZ { get => Current.Parameters.TravelRateZ; set => Edit(p => p.Parameters.TravelRateZ = value); }
 
     public float RapidRate { get => Current.Parameters.RapidRate; set => Edit(p => p.Parameters.RapidRate = value); }
 
@@ -56,7 +60,11 @@ public sealed class CuttingParametersViewModel : SettingsViewModelBase
 
     public string? FeedRateError => ErrorFor("Parameters.FeedRate");
 
+    public string? FeedRateZError => ErrorFor("Parameters.FeedRateZ");
+
     public string? TravelRateError => ErrorFor("Parameters.TravelRate");
+
+    public string? TravelRateZError => ErrorFor("Parameters.TravelRateZ");
 
     public string? RapidRateError => ErrorFor("Parameters.RapidRate");
 
