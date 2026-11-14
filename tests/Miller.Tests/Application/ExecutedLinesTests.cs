@@ -1,9 +1,12 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Numerics;
 using System.Text.RegularExpressions;
+using Miller.App.Rendering;
 using Miller.App.ViewModels;
 using Miller.Application.Services;
 using Miller.Core.Setup;
+using Miller.Core.Toolpaths;
 using Miller.Machine;
 using Miller.Machine.Grbl;
 using Miller.Machine.Links;
@@ -122,6 +125,61 @@ public sealed partial class ExecutedLinesTests : IDisposable
 
         await WaitForAsync(() => service.RunJob is { State: JobState.Done });
         Assert.Equal(service.RunJob!.Total, service.RunExecutedLines());
+    }
+
+    // T-220 (user request): everything else follows the executed lines as well: the progress bar, the line
+    // count with the file line of the move the tool is on, the part of the generated toolpath drawn as done
+    // and the next moves highlighted after it, and the listing row.
+    [Fact]
+    public async Task TheBarTheLineCountAndTheViewport_FollowTheExecutedLines()
+    {
+        // A plunge to Z -1 at X0, then 40 cuts of 1 mm along X. Every program line is acknowledged (the closing
+        // G4 P0 is held back) while the tool is halfway along the cut from X10 to X11: toolpath segment 11,
+        // program path segment 13 (after the two lead-in moves to safe Z and to the start).
+        var toolpath = new Toolpath();
+        toolpath.Add(new ToolpathSegment(new Vector3(0, 0, 5), new Vector3(0, 0, -1), MoveKind.Plunge, CuttingParameters.DefaultFeedRate));
+        for (var k = 1; k <= 40; k++)
+        {
+            toolpath.Add(new ToolpathSegment(new Vector3(k - 1, 0, -1), new Vector3(k, 0, -1), MoveKind.Feed, CuttingParameters.DefaultFeedRate));
+        }
+
+        var link = new FakeGrblLink { MachinePosition = AtWork(10.5), Respond = line => line == MachineJob.SyncLine ? null : "ok" };
+        using var service = new MachineService(_ => link, Fast);
+        var viewport = new ViewportViewModel();
+        viewport.SetToolpath(toolpath);
+        var vm = new MachineViewModel(service, new SettingsService(Path.Combine(_root, "vm-settings")), viewport, new FakeFileDialogService(), new FakeConfirmDialogService(),
+            () => toolpath, () => new MillingProject(), () => false, TestServices.Version);
+        try
+        {
+            await service.ConnectAsync(Settings);
+            await WaitForAsync(() => service.Snapshot!.Status.State == GrblStatus.Idle);
+            vm.UseToolpathCommand.Execute(null);
+            var program = service.Program!;
+            service.StartProgram();
+            var total = program.Grbl.Count + 1;
+            await WaitForAsync(() => service.RunJob is { Acknowledged: var acknowledged } && acknowledged == total - 1 && service.RunExecuting() == 13);
+            vm.Refresh();
+
+            var executed = service.RunExecutedLines();
+            Assert.Equal(program.Path.LineOf(12) + 1, executed);
+            Assert.True(executed < service.RunJob!.Acknowledged);
+            var source = program.Grbl.SourceLines[program.Path.LineOf(13)];
+            Assert.Equal(source, service.RunExecutingSourceLine());
+            Assert.Equal((float)executed / total, vm.Progress);
+            Assert.Equal($"{executed} of {total} lines, file line {source}", vm.ProgressText);
+
+            Assert.Equal(11, viewport.ToolpathProgressIndex);
+            Assert.Equal((11 * 2, Math.Min(ViewportViewModel.NextMoveCount, toolpath.Count - 11) * 2),
+                ToolpathRenderer.NextRange(viewport.ToolpathProgressIndex, toolpath.Count, ViewportViewModel.NextMoveCount));
+            Assert.Contains($"line {source} of", vm.Listing.Description, StringComparison.Ordinal);
+
+            vm.IsViewActive = true;
+            Assert.Equal(13, viewport.DisplayedProgressIndex);
+        }
+        finally
+        {
+            vm.Close();
+        }
     }
 
     [Fact]

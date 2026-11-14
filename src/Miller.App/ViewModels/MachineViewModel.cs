@@ -351,12 +351,13 @@ public sealed partial class MachineViewModel : ViewModelBase
             return;
         }
 
-        Progress = job.Total > 0 ? (float)job.Acknowledged / job.Total : 0;
-        ProgressText = $"{job.Acknowledged} of {job.Total} lines" + (job.SourceLine > 0 ? $", file line {job.SourceLine}" : string.Empty);
-        var elapsed = job.Elapsed;
-
-        // The time left scales with the lines the machine executed, not with the ones it received (T-219).
+        // The bar, the line count and the time left follow the lines the machine executed, not the ones it
+        // received (T-219, T-220); the file line is the one of the move the tool is on.
         var executed = _machine.RunExecutedLines();
+        var source = _machine.RunExecutingSourceLine();
+        Progress = job.Total > 0 ? (float)executed / job.Total : 0;
+        ProgressText = $"{executed} of {job.Total} lines" + (source > 0 ? $", file line {source}" : string.Empty);
+        var elapsed = job.Elapsed;
         var remaining = job.IsActive && executed > 0 && elapsed.TotalSeconds >= MinSecondsForEstimate
             ? $", about {Duration(elapsed * ((double)(job.Total - executed) / executed))} left"
             : string.Empty;
@@ -370,8 +371,9 @@ public sealed partial class MachineViewModel : ViewModelBase
         }
     }
 
-    // The marker shows the machine's work position; along the generated toolpath the part already
-    // answered is drawn as done. The simulation owns the marker while it plays.
+    // The marker shows the machine's work position; along the generated toolpath the part the machine
+    // executed is drawn as done and the next moves start at the move the tool is on (T-220). The
+    // simulation owns the marker while it plays.
     private void ShowOnViewport(MachineSnapshot? snapshot)
     {
         if (snapshot is not { IsReady: true })
@@ -387,10 +389,10 @@ public sealed partial class MachineViewModel : ViewModelBase
 
         var work = snapshot.Status.WorkPosition;
         var index = _viewport.ToolpathProgressIndex;
-        if (snapshot.Job is { Kind: MachineJobKind.Program } job && _machine.Program is { FromToolpath: true } program
+        if (_machine.Program is { FromToolpath: true } program && RunJobOf(program) is not null
             && _programToolpath is not null && ReferenceEquals(_programToolpath, _viewport.Toolpath))
         {
-            index = program.SegmentsDone(job.Acknowledged);
+            index = program.SegmentsDone(_machine.RunExecutedLines());
         }
 
         _viewport.SetMachinePosition(index, new Vector3((float)work.X, (float)work.Y, (float)work.Z));
@@ -412,7 +414,9 @@ public sealed partial class MachineViewModel : ViewModelBase
             new Vector3((float)work.X, (float)work.Y, (float)work.Z));
     }
 
-    // The row of the move the tool is on; the last acknowledged line before the first move and once done.
+    // The row of the move the tool is on. Before the first move the received lines are settings, which
+    // Grbl executes as it acknowledges them, so the last acknowledged line is the executed one; once done,
+    // the last line.
     private void ShowListingRow()
     {
         var program = _machine.Program;

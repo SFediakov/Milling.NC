@@ -28,9 +28,9 @@ public sealed record MachineProgram(GrblProgram Grbl, string Source, IReadOnlyLi
 
     public ProgramPath Path { get; } = ProgramPath.Of(Grbl);
 
-    // Segments behind the first `acknowledged` lines of the job (the job adds G4 P0 at the end).
-    public int SegmentsDone(int acknowledged)
-        => SegmentsAfterLine is null || acknowledged <= 0 ? 0 : SegmentsAfterLine[Math.Min(acknowledged, SegmentsAfterLine.Count) - 1];
+    // Toolpath segments behind the first `lines` lines of the job (the job adds G4 P0 at the end).
+    public int SegmentsDone(int lines)
+        => SegmentsAfterLine is null || lines <= 0 ? 0 : SegmentsAfterLine[Math.Min(lines, SegmentsAfterLine.Count) - 1];
 }
 
 // The gate between the application and the machine cluster: opens the link the settings name,
@@ -185,6 +185,21 @@ public sealed class MachineService : IDisposable
 
         var executing = RunExecuting();
         return Math.Min(executing > 0 ? program.Path.LineOf(executing - 1) + 1 : 0, job.Acknowledged);
+    }
+
+    // The file line of the move the tool is on in the latest run (T-220); 0 before its first move reached the
+    // machine and once the run is done.
+    public int RunExecutingSourceLine()
+    {
+        var program = RunProgram;
+        var job = RunJob;
+        if (program is null || job is null || job.State == JobState.Done)
+        {
+            return 0;
+        }
+
+        var executing = RunExecuting();
+        return executing < program.Path.SegmentsDone(job.Acknowledged) ? program.Grbl.SourceLines[program.Path.LineOf(executing)] : 0;
     }
 
     // Writes the program that finishes the interrupted run (GrblResume) from the executed lines to a new

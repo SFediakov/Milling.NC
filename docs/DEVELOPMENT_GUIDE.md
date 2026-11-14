@@ -2566,6 +2566,14 @@ check that decides done.
 - Acceptance: with every program line acknowledged and the tool on the move to X40, Save progress resumes from that move (it runs again from its start) and keeps the result after a reconnection; executed lines never pass the acknowledged ones and are every line once done; with the tool on the move to X50 of 304 job lines the time left is at least five times the elapsed time
 - Status: done
 
+#### T-220 Every machine progress display from the executed lines
+- Depends on: T-219
+- Files: `src/Miller.Application/Services/MachineService.cs`, `src/Miller.App/ViewModels/MachineViewModel.cs`, `tests/Miller.Tests/Application/ExecutedLinesTests.cs`
+- Input: user request (the progress bar, the "N of M lines" text, the next moves shown and everything else re-wired to the lines already executed)
+- Output: the bar and the line count from `RunExecutedLines`, the file line of the move the tool is on (`RunExecutingSourceLine`, none before the first move and once done), the generated toolpath drawn as done and its next moves from the executed lines; the machine view and the listing already followed the executing move (T-205). Acknowledged lines remain only where they bound what can have run: the tracker's window, the cap of the executed lines and the listing before the first move (settings Grbl executes as it acknowledges them)
+- Acceptance: with every line acknowledged and the tool on the cut from X10 to X11 of a 41-segment toolpath, the bar and the count show the executed lines, the file line is the one of that cut and equals the listing's, the toolpath is done up to segment 11 where the next moves start, the machine view at path segment 13; a finished run shows 100 percent and M of M lines
+- Status: done
+
 #### T-165 Head bottom down to half the cutter diameter
 - Depends on: T-135, T-162
 - Files: `src/Miller.Application/Validation/ProjectValidator.cs`, `src/Miller.Native/src/mn_profile.c`, `src/Miller.Native/src/mn_strategies.c`, `src/Miller.Native/src/mn_slicing.c`, `src/Miller.App/Rendering/ToolRenderer.cs`, `tests/Miller.Tests/Application/NarrowHeadTests.cs`
