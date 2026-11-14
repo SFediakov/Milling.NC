@@ -92,6 +92,11 @@ public sealed class MachineProgressTests : IDisposable
         Assert.Equal(MachineService.NoRunMessage, Assert.Throws<InvalidOperationException>(() => service.SaveProgress(output)).Message);
 
         var program = service.LoadFile(source);
+
+        // The tool stands on the X6 move (work position 5.5, 0, -1 under the fake's 0.5 work offset): the
+        // machine executed the 7 lines before it, while Grbl acknowledges more (T-219).
+        const int executed = 7;
+        links[^1].MachinePosition = new GrblPoint(6, 0.5, -0.5);
         service.StartProgram();
         Assert.Same(program, service.RunProgram);
         await WaitForAsync(() => service.RunJob is { Acknowledged: >= 10 });
@@ -99,14 +104,15 @@ public sealed class MachineProgressTests : IDisposable
 
         service.Stop();
         await WaitForAsync(() => service.Snapshot!.Job is { State: JobState.Stopped } && service.Snapshot.CanRun && service.Snapshot.Status.State == GrblStatus.Idle);
-        var executed = service.RunJob!.Acknowledged;
-        Assert.InRange(executed, 10, program.Grbl.Count - 1);
+        var acknowledged = service.RunJob!.Acknowledged;
+        Assert.InRange(acknowledged, 10, program.Grbl.Count - 1);
 
         // A jog replaces the snapshot's job; the run's progress stays.
         service.Jog(MachineAxis.Z, 1, 100);
         await WaitForAsync(() => service.Snapshot!.Job is { Kind: MachineJobKind.Command, IsActive: false });
-        Assert.Equal(executed, service.RunJob!.Acknowledged);
+        Assert.Equal(acknowledged, service.RunJob!.Acknowledged);
 
+        Assert.Equal(executed, service.RunExecutedLines());
         service.SaveProgress(output);
         Assert.Equal(GrblResume.Build(program.Grbl, executed), File.ReadAllText(output));
         Assert.Equal(MachineService.SameFileMessage, Assert.Throws<InvalidOperationException>(() => service.SaveProgress(source)).Message);
@@ -114,7 +120,7 @@ public sealed class MachineProgressTests : IDisposable
         service.Disconnect();
         await service.ConnectAsync(Settings);
         Assert.Equal(2, links.Count);
-        Assert.Equal(executed, service.RunJob!.Acknowledged);
+        Assert.Equal(acknowledged, service.RunJob!.Acknowledged);
 
         // Another loaded program does not change what ran.
         service.LoadFile(Write("other.nc", "G0 Z1\nG0 X1 Y1\n"));

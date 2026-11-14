@@ -216,6 +216,11 @@ public sealed class MachineProgramViewTests : IDisposable
         _dialogs.OpenResults.Enqueue(source);
         await _vm.OpenFileCommand.ExecuteAsync(null);
         Link.OkDelay = TimeSpan.FromMilliseconds(5);
+
+        // The tool stands on the X6 move (work position 5.5, 0, -1 under the fake's 0.5 work offset): the
+        // machine executed the 8 lines before it, while Grbl acknowledges more (T-219).
+        const int executed = 8;
+        Link.MachinePosition = new GrblPoint(6, 0.5, -0.5);
         _confirm.Confirmations.Enqueue(true);
         await _vm.StartCommand.ExecuteAsync(null);
         await UntilAsync(() => _service.RunJob is { Acknowledged: >= 12 });
@@ -229,7 +234,8 @@ public sealed class MachineProgramViewTests : IDisposable
         _dialogs.SaveResults.Enqueue(output);
         await _vm.SaveProgressCommand.ExecuteAsync(null);
         Assert.Equal(MachineViewModel.SaveProgressTitle, _dialogs.Titles[^1]);
-        Assert.Equal(GrblResume.Build(_service.RunProgram!.Grbl, _service.RunJob!.Acknowledged), File.ReadAllText(output));
+        Assert.Equal(executed, _service.RunExecutedLines());
+        Assert.Equal(GrblResume.Build(_service.RunProgram!.Grbl, executed), File.ReadAllText(output));
         Assert.Contains(output, status, StringComparison.Ordinal);
         Assert.Null(_vm.Message);
 
