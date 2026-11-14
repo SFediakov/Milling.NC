@@ -167,6 +167,33 @@ public sealed class FinishingTests
         Assert.True(diagonal.Sum(s => s.Length) > 0.5f * runs.Sum(s => s.Length), "the passes must run along the diagonal");
     }
 
+    // Every cut scope, with and without a far stepdown, on the CPU and the GPU: no collision, no gouge, and on
+    // the stock the roughing leaves the passes cut no more than the tolerance.
+    [Theory]
+    [InlineData(CutScope.Everything, 0f, CollisionMode.Backwards)]
+    [InlineData(CutScope.Separation, 0f, CollisionMode.Backwards)]
+    [InlineData(CutScope.Everything, 4f, CollisionMode.Backwards)]
+    [InlineData(CutScope.Separation, 4f, CollisionMode.Backwards)]
+    [InlineData(CutScope.Everything, 0f, CollisionMode.Backwards_GPU)]
+    public void ThePasses_AreSafeInEveryScope_AndCutOnlyTheSlack(CutScope scope, float farStepdown, CollisionMode mode)
+    {
+        Assert.SkipWhen(mode == CollisionMode.Backwards_GPU && !Miller.Core.Native.GpuDevice.Available, "No OpenCL GPU.");
+        var project = Project(2, FinishingPattern.CrossRows);
+        project.CutScope = scope;
+        project.CollisionMode = mode;
+        project.Stock.SizeZ = 9;
+        project.Parameters.FarStepdown = farStepdown;
+        project.Parameters.Stepover = 1f;
+        var result = new PipelineService().Run(project, new[] { TestMeshes.Box(10, 10, 4) }, null, CancellationToken.None);
+        Assert.Empty(result.Collisions.Report!.Events);
+        Assert.Empty(GougeChecker.Verify(result.Toolpath, result.EffectiveTip, result.Tolerance));
+        Assert.True(result.FinishingFirstSegment < result.Toolpath.Count - 1, "the passes must run");
+        var (stock, engine) = AfterRoughing(result);
+        var rough = stock.Clone();
+        engine.RunToEnd(TestContext.Current.CancellationToken);
+        Assert.True(MostRemoved(rough, stock) <= result.Tolerance + Noise, $"the finishing removed {MostRemoved(rough, stock)} mm");
+    }
+
     [Fact]
     public void TheSettings_AreSavedLoadedAndValidated()
     {
