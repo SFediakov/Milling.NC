@@ -47,7 +47,7 @@
       <TextBlock Classes="validation" Text="{Binding CellSizeError}" IsVisible="{Binding CellSizeError, Converter={x:Static ObjectConverters.IsNotNull}}" />
       <TextBlock Classes="warning" Text="{Binding CellSizeWarning}" IsVisible="{Binding CellSizeWarning, Converter={x:Static ObjectConverters.IsNotNull}}" TextWrapping="Wrap" />
       <TextBlock Name="GridSizeText" Text="{Binding GridSizeText}" TextWrapping="Wrap" />
-      <TextBlock Classes="label" Text="Tolerance (mm; below the cell size every wall is traced cell by cell)" />
+      <TextBlock Classes="label" Text="Tolerance (mm; below the cell size every wall is traced cell by cell)" TextWrapping="Wrap" />
       <c:NumericBox Name="ToleranceBox" Classes="numeric" Value="{Binding Tolerance}" HorizontalAlignment="Left" />
 
       <TextBlock Classes="header" Text="Finishing" />

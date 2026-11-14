@@ -53,4 +53,31 @@ public sealed class CuttingFinishingViewTests
             }
         }
     }
+
+    // A label that does not wrap is cut at the panel edge; the tolerance label was until the render check of T-222.
+    [AvaloniaFact]
+    public void EveryLabelOfTheCuttingTab_FitsTheWidthOfThePanel()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"miller-labels-{Guid.NewGuid():N}");
+        var window = new MainWindow { DataContext = TestServices.MainWindowViewModel(root), Width = RenderCaptureTests.Width, Height = RenderCaptureTests.Height };
+        try
+        {
+            window.Show();
+            window.FindControl<TabControl>("SettingsTabs")!.SelectedItem = window.FindControl<TabItem>("CuttingTab");
+            Dispatcher.UIThread.RunJobs();
+            var panel = window.GetLogicalDescendants().OfType<CuttingParametersView>().Distinct().Single();
+            var labels = panel.GetLogicalDescendants().OfType<TextBlock>().Where(t => t.IsVisible && t.Classes.Contains("label")).ToList();
+            Assert.Contains(labels, t => t.Text!.StartsWith("Tolerance", StringComparison.Ordinal));
+            Assert.All(labels, t => Assert.True(t.TextLayout.WidthIncludingTrailingWhitespace <= t.Bounds.Width + 0.5,
+                $"'{t.Text}' is {t.TextLayout.WidthIncludingTrailingWhitespace:F0} px wide in {t.Bounds.Width:F0} px"));
+        }
+        finally
+        {
+            window.Close();
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
+    }
 }
