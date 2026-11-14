@@ -470,7 +470,8 @@ Uncuttable classification (`UncuttableRegions`):
   (the plunge rate went too, so a travel weighs the retract against the
   polyline at the feed rate), the statistics, the simulation and the .nc file
   carry that one rate, and the machine's planner slows at the corners by its
-  own acceleration settings.
+  own acceleration settings. Since T-218 a feed or plunge that meets no
+  material runs at `TravelRate` (below).
 - Layers (`ToolpathLayer`, `mn_result_layers`, T-154): the strategies mark the
   first segment of every run of consecutive routes at one plan level (every
   far block step and every cave block); a mark at the level of the previous one
@@ -658,7 +659,23 @@ Uncuttable classification (`UncuttableRegions`):
   polyline are feeds; a descent steeper than `MaxRampSlope` (2, about 63
   degrees) is a feed over the lower point and a plunge. A travel between two
   routes takes the polyline or a retract to safe Z, a rapid and a plunge,
-  whichever the rates make faster.
+  whichever is faster when vertical travel takes three times as long as XY
+  travel at the same rate (T-217, user request: the time up to the safe height
+  and down again counts with the Z speed coefficient of the route solver,
+  `MN_Z_TIME_FACTOR` = `XySpeedFactor / ZSpeedFactor`).
+- Safe height margin (T-216, user request: the safe height 1 mm before the
+  cutter meets the protected material, the same for landing back, as early or
+  as late as the move allows): a move whose surface polyline reaches the safe
+  plane (the floor of never-cut stock, `lift_uncut`) is on the plane from
+  `MN_SAFE_MARGIN` (1 mm) of its XY travel before the first vertex on the plane
+  to 1 mm after the last one; where the move's own start or end lies nearer,
+  the tool rises or lands in place there, and stretches whose widened ends
+  meet stay on the plane between them. The rise and the landing stand on
+  points of the original polyline, so nothing comes lower than before. One
+  function (`mn_trace`) gives the polyline to the solver's cost and to the
+  writer, without allocation (a lead walk finds the stretches, a feed walk
+  emits behind it); moves that never reach the plane keep their polyline bit
+  for bit.
 - Vector output: every run of consecutive feed segments at one rate is reduced
   by Douglas-Peucker so that no dropped vertex lies farther than `Tolerance`
   from its chord, a merge pass drops kept vertices whose neighbours' chord still
@@ -676,8 +693,16 @@ Uncuttable classification (`UncuttableRegions`):
 - `Stepover`: valid range `(0, CutterDiameter]`.
 - `SafeHeight`: clearance above the stock top for rapid moves. The absolute rapid Z is
   stock top + `SafeHeight`; the value must be > 0 and does not depend on the origin mode.
-- Feed kinds: `Feed` and `Plunge` use `FeedRate` (T-215), `Rapid` uses
-  `RapidRate` (only for time estimation and simulation; G-code emits `G0`).
+- Feed kinds: `Feed` and `Plunge` use `FeedRate` where they meet material and
+  `TravelRate` where they meet none over their whole length (T-218, user
+  request: different speeds for milling and travelling, set apart in the
+  Cutting tab). The generation's check walks the final toolpath over the stock
+  and decides it per segment: a removal of more than the check tolerance
+  (1e-4 mm) from a cell or a head or rapid hit is contact; the check therefore
+  runs before the statistics (stages 9 and 10). `TravelRate` defaults to the
+  default feed rate; files written before load with their own feed rate.
+  `Rapid` uses `RapidRate` (only for time estimation and simulation; G-code
+  emits `G0`).
 
 ### 6.5 G-code (Grbl post-processor)
 
@@ -692,6 +717,8 @@ G0 Z<stock top + SafeHeight>
 G0 X.. Y..
 G1 Z..
 G1 X.. Y.. Z..
+G1 X.. Y.. Z.. F<TravelRate>    (only where the rate changes, T-218)
+G1 X.. Y.. Z.. F<FeedRate>
 ...
 G0 Z<stock top + SafeHeight>
 M5
@@ -2505,6 +2532,38 @@ check that decides done.
 - Input: user request (the speed reduction is for path evaluation only and must not be saved as F commands in the .nc; the speed is set only at the beginning of the file); user decision: one F, plunges at the feed rate, the plunge rate removed
 - Output: the slow zones price the routes only; every feed and plunge runs at `FeedRate`; the Grbl file writes `F<FeedRate>` once after the spindle and no `G1` carries `F`; a toolpath with another feed rate is refused by the post-processor; old files drop `PlungeRate` on load
 - Acceptance: the box fixture's feeds and plunges all at the feed rate, its estimated time equal to length over rate and to the simulated time, its .nc with one `F` before the first move, a resume program keeping it; the solver tests unchanged; the heart golden regenerated (Backwards, 1,878 segments, 2.1 min); the user's heart at 0.05 mm cells 575.0 to 174.9 estimated minutes with zero events and the same 1,061 unreached cells; 922 tests pass
+- Status: done
+
+#### T-216 Safe height 1 mm before and after the protected material
+- Depends on: T-119, T-215
+- Files: `src/Miller.Native/src/mn_route.c`, `mn_internal.h`, `mn_strategies.c`, `mn_solver.c`, `mn_writer.c`, `include/miller_native.h`, `src/Miller.Core/Native/CoreNative.cs`, `src/Miller.Core/Toolpath/RouteWriter.cs`, `tests/Miller.Tests/Core/Toolpath/RouteWriterSafeHeightTests.cs`
+- Input: user request (safe height applied not immediately before the protected material but 1 mm before the cutter meets it, as early as possible where the dimensions do not allow it; the same for landing back)
+- Output: the safe height margin of section 6.4; `mn_route_grid.safe_z`, `MN_SAFE_MARGIN`, `mn_route_safe_margin`, `RouteWriter.SafeMargin`
+- Acceptance: lifted cells [4, 6) on 1 mm cells: rise at 3, landing at 7 (within 0.001); start and end 0.5 mm from them: rise and landing in place; stretches widened to [2, 5] and [5, 8] join, [1, 4] and [6, 9] land between; a move below the safe plane keeps the plain polyline; the heart golden unchanged; with T-217 the suite gave 925 passed, 2 skipped (live project) and 1 failed, `SplitCave`, whose expectation T-217 changes
+- Status: done
+
+#### T-217 Safe height up and down timed with the Z speed
+- Depends on: T-118, T-215
+- Files: `src/Miller.Native/src/mn_writer.c`, `mn_internal.h`, `tests/Miller.Tests/Core/Toolpath/RouteWriterSafeHeightTests.cs`
+- Input: user request (the time up to the safe height and down again counts in the path execution time with the Z speed coefficient)
+- Output: the writer's travel time counts vertical travel `MN_Z_TIME_FACTOR` (3) times as long as XY travel at the same rate; the solver's cost already did (XY / 3 + climb)
+- Acceptance: a 20 mm floor travel under a 10 mm safe height stays on the floor (0.025 against 0.054 min; the retract won with 0.0225 before); the 9 mm ridge still retracts; the split cave of `ZLayerByLayerStrategyTests` climbs over the wall top (0.035 against 0.048 min) instead of retracting
+- Status: done
+
+#### T-218 Travel rate for moves without material contact
+- Depends on: T-147, T-215
+- Files: `src/Miller.Core/Setup/CuttingParameters.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, the Cutting tab, `src/Miller.Native/src/mn_collision.c`, `mn_pipeline.c`, `mn_simulate.c`, `mn_internal.h`, `include/miller_native.h`, `src/Miller.Core/Native/CoreNative.cs`, `src/Miller.Core/GCode/GrblPostProcessor.cs`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Application/Services/PipelineService.cs`, tests
+- Input: user request (different speeds for milling and travelling, travelling being no material contact during the whole command, set apart in the Cutting tab)
+- Output: `CuttingParameters.TravelRate`; the check's per segment contact (banded walk with one contact array per band); feeds and plunges without contact at the travel rate; check before statistics; F on change in the Grbl file, a third rate refused
+- Acceptance: on the box fixture at feed 150 and travel 600 every travel removes nothing and every other feed or plunge removes material (segment by segment simulation), both rates occur, the estimated time is length over both rates and equals the simulated time and falls below the one-rate time; F only where the rate changes and every G1 at its segment's rate; equal rates give one F; old project and preset files travel at their feed rate; the validator refuses 0, negative and NaN; the Cutting tab field binds and shows its error
+- Status: done
+
+#### T-219 Machine tab: time left and Save progress from the executed lines
+- Depends on: T-200, T-205
+- Files: `src/Miller.Application/Services/MachineService.cs`, `src/Miller.App/ViewModels/MachineViewModel.cs`, `src/Miller.Machine/Grbl/GrblResume.cs`, `tests/Miller.Tests/Application/ExecutedLinesTests.cs`, `tests/Miller.Tests/Fixtures/FakeGrblLink.cs`
+- Input: user request (for the time estimation and the save feature count the commands already executed, not the ones transferred to the machine)
+- Output: `MachineService.RunExecuting` (the tracker of T-205 in the gate) and `RunExecutedLines` (lines up to the last finished move, at most the acknowledged ones, all once done); the time left and Save progress use them
+- Acceptance: with every program line acknowledged and the tool on the move to X40, Save progress resumes from that move (it runs again from its start) and keeps the result after a reconnection; executed lines never pass the acknowledged ones and are every line once done; with the tool on the move to X50 of 304 job lines the time left is at least five times the elapsed time
 - Status: done
 
 #### T-165 Head bottom down to half the cutter diameter
