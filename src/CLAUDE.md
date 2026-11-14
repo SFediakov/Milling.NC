@@ -104,9 +104,8 @@
 - The program path view and the resume program (T-199, T-200) are not clusters of their own: `GrblMotion`
   (the one modal G-code walk, also behind `GrblBounds`) and `GrblResume` live in the machine cluster's
   `Grbl` folder, gated by `MachineService`; a separate cluster would need the modal walk twice.
-- Save progress deviates from the literal request where the literal file would mill wrongly: "executed" is
-  the lines Grbl acknowledged (accepted into its planner, which can run several moves ahead of the
-  tool), a resume line without a Z word gets its Z written in (else it runs at the retract height), and
+- Save progress deviates from the literal request where the literal file would mill wrongly: a resume line
+  without a Z word gets its Z written in (else it runs at the retract height), and
   an arc, G91, probe or G28/G30/G53 line at the resume point, an unknown position, or an executed G92,
   G10 L20, G28.1 or G30.1 is refused with the line instead of written.
 - Console lines during a paused program (T-202) are not a cluster of their own: they must share the one
@@ -129,6 +128,13 @@
   both are stages of the native generation between the simplifier and the statistics (user request:
   all generation in the C library), and the layer stepping is part of the simulation cluster
   (`SimulationService`, `SimulationViewModel`), which already owns every seek.
+- The safe height margin (T-216), the Z time of travels (T-217), the travel rates with the contact of each
+  move (T-218, T-221) and the finishing passes (T-222) are not clusters of their own: they change the route
+  trace, the writer's time model, the check's walk and the Z layer's routes inside the generation library
+  (user request: all generation in the C library); a separate cluster would need the walk or the routing twice.
+- The executed lines of the Machine tab (T-219, T-220) are not a cluster of their own: `ExecutionTracker`
+  moved from the view model into `MachineService`, the machine cluster's gate, so the save, the bar, the time
+  left and the move list read one tracker. Until T-219 "executed" meant the lines Grbl acknowledged.
 
 ## Placeholder convention (architecture delivered without implementation)
 
@@ -841,12 +847,24 @@
   the strategy alone now runs the backward check, so the tall wall's far block leaves cells beside the raised
   positions to the walk. The affected tests were changed under the user's standing approval, each with the
   numbers in its comment.
-- T-215 (user request, plunge decision by the user): every feed and plunge runs at `FeedRate` and the Grbl file
-  sets `F` once in its header. The writer chooses retract or surface travel by time, so a faster plunge makes
-  the retract win more often (the split cave of `ZLayerByLayerStrategyTests` now retracts between its
-  sub-caves). The post-processor refuses a feed or plunge at another rate instead of writing it.
+- T-215 (user request, plunge decision by the user): every feed and plunge ran at `FeedRate` with one `F` in the
+  header. Since T-218 and T-221 a move runs at the milling or travel rates of its axes and a G1 line carries `F`
+  where the rate changes (one `F` when all four rates are equal); the post-processor refuses any other rate.
+  The split cave of `ZLayerByLayerStrategyTests` retracted under T-215 and climbs over the wall top since T-217
+  (0.02658 against 0.02675 min): a test that pins a travel choice breaks with any change of the time model.
 - `GrblResume` joins its output with the line ending of the program it resumes; a generated program uses LF,
   a file saved on Windows CRLF. Split resume text on `'\n'` in tests.
 - `ParallelGenerationTests.Heart_StageTimes_AreReported_AndParallelIsNotSlower` compares wall times and failed
   once in three full runs on 2026-10-26 (route stage 950 ms with all workers under the load of the other tests,
   294 ms alone); it passed alone three times. Rerun before suspecting the code.
+- Bug that existed before this session, fixed: the Tolerance label of the Cutting tab did not wrap and was cut
+  at the panel edge (since 2026-10-03); `EveryLabelOfTheCuttingTab_FitsTheWidthOfThePanel` guards the tab.
+- A move's rate comes from the contact the check finds, so the check runs before the statistics (stages 9 and
+  10 swapped, T-218); whatever reads a segment's `FeedRate` must run after the check.
+- Finishing rows need every cut cell of a row as a node: with nodes a stepover apart the solver ran across the
+  rows over the square lattice they form (T-222).
+- `FakeGrblLink` reports machine position (1, 2, 3) by default, which the tracker puts on the first move; a test
+  of executed lines sets `MachinePosition` on a move (work position = machine position - 0.5).
+- `StageProgressTests.OnePass_NamesNoPass_AndTheBarNeverMovesBack` and
+  `SimulationSessionTests.Heart_RunToEnd_IsMeasured_AndNotSlowerThanPerSample` failed once each under full-suite
+  load on 2026-11-14 and passed alone 3 of 3, like the wall-time test above.
