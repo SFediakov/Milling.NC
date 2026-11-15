@@ -72,7 +72,7 @@ public sealed class ZLayerByLayerStrategyTests
     }
 
     [Fact]
-    public void SplitCave_FinishesOneSubtreeBeforeTheOther_AndRisesOnlyToTheSplitLevel()
+    public void SplitCave_FinishesOneSubtreeBeforeTheOther_AndTravelsByTheFasterWay()
     {
         // A 3 mm wall: one cave at level 3 (the wall top is reachable), two below it.
         var context = WallInStock(3f);
@@ -84,16 +84,19 @@ public sealed class ZLayerByLayerStrategyTests
 
         var path = Strategy.Generate(context, null, TestContext.Current.CancellationToken);
         Assert.Empty(GougeChecker.Verify(path, context.EffectiveTip, context.Parameters.Tolerance));
-        // The 3 between the sub-caves is the crossing over the wall top, cut at level 3 before.
-        Assert.Equal(new[] { 3f, 1f, 0f, 3f, 1f, 0f }, LevelSequence(path, levels));
+        // The first sub-cave down to the floor, then the second one from level 1: no level 3 between them.
+        Assert.Equal(new[] { 3f, 1f, 0f, 1f, 0f }, LevelSequence(path, levels));
 
-        // Between the first and the second sub-cave the tool crosses the wall at its top, 3.
+        // Between the sub-caves the writer takes the faster of the climb over the wall top (feeds at 800 up
+        // 3, over 10 and down 2 mm: about 0.0225 min) and the retract (rapids at 3000 up to safe Z and over,
+        // then a 9 mm plunge at 800: about 0.019 min). Plunges run at the feed rate since T-215, so the
+        // retract wins; with the former plunge rate of 200 the tool crossed at the wall top instead.
         var floorMoves = path.Segments.Select((s, k) => (s, k)).Where(p => p.s.Kind != MoveKind.Rapid && MathF.Abs(p.s.End.Z) < 1e-3f).Select(p => p.k).ToList();
         var firstBottom = floorMoves.First();
         var secondStart = floorMoves.First(k => path.Segments[k].End.X > 15f != path.Segments[firstBottom].End.X > 15f);
         var crossing = path.Segments.Skip(firstBottom).Take(secondStart - firstBottom).ToList();
-        Assert.True(crossing.Max(s => MathF.Max(s.Start.Z, s.End.Z)) <= 3f + 1e-3f, "the tool rose above the split level between the sub-caves");
-        Assert.DoesNotContain(crossing, s => s.Kind == MoveKind.Rapid);
+        Assert.Contains(crossing, s => s.Kind == MoveKind.Rapid && MathF.Abs(s.End.Z - context.SafeZ) < 1e-3f);
+        Assert.All(crossing.Where(s => s.Kind == MoveKind.Plunge), s => Assert.Equal(context.Parameters.FeedRate, s.FeedRate));
     }
 
     [Fact]

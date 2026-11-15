@@ -54,8 +54,6 @@ int mn_reach_needed(int n, double percent);
 int mn_reach_compute(const mn_grid* g, const float* model, const float* stock, const mn_offset* offsets, int count, float floor, float percent, float tolerance, const mn_monitor* monitor, float* reach);
 int mn_head_limit_compute(const mn_grid* g, const float* remaining, const mn_offset* annulus, int count, float cutter_length, float* limit);
 void mn_apply_limit(const float* tip, const float* limit, int cells, float* effective);
-int mn_mark_should_cut(const mn_grid* g, const float* tip, const float* model, const float* cut_to, const float* remaining, const float* limit, const mn_offset* annulus, int count,
-    float cutter_length, float tolerance, uint8_t* should_cut);
 int mn_distance_transform(const uint8_t* mask, int width, int height, float cell_size, float* distances);
 /* In place: values[c] becomes min over q of values[q] + |c - q|^2 in cells (INFINITY where no source);
  * a source value may be negative (a power distance). */
@@ -134,6 +132,8 @@ int mn_lattice(const uint8_t* inside, int width, int height, int step, mn_ints* 
 /* mn_lattice over the cells of `box` only: the same nodes in the same order when every cell of the
  * region lies in the box and `inside` is zero around it. */
 int mn_lattice_in(const uint8_t* inside, int width, int height, int step, mn_box box, mn_ints* nodes);
+int mn_lattice_rows_in(const uint8_t* inside, int width, int height, int row_step, int column_step, mn_box box, mn_ints* nodes);
+int mn_lattice_column_step(int row_step, float cutter_radius, float cell_size);
 int mn_outline(const uint8_t* inside, int width, int height, int i, int j);
 
 /* `floor` is what a move through a cell stays above, `touch` what a point on a cell's edge or corner
@@ -161,18 +161,19 @@ float mn_cost_exact(const mn_route_grid* grid, mn_v3 a, mn_v3 b);
 
 #define MN_XY_SPEED_FACTOR 3.0f
 #define MN_Z_SPEED_FACTOR 1.0f
-#define MN_BUDGET_MAX_EVALUATIONS 40000000LL
+/* The move evaluations a route's local search may spend per node (T-211). The former fixed total of
+ * 40,000,000 for a whole generation stopped 268 of the 320 routes of the user's heart (914,248 nodes,
+ * 44 evaluations each) before the search had found its gains; without the cap every route converged at
+ * 73 evaluations per node on average and the estimated machining fell from 966.5 to 711.6 minutes. The
+ * allowance only stops a search that keeps finding gains far beyond that. */
+#define MN_EVALUATIONS_PER_NODE 1000LL
 
-/* Precedence pairs (T-150): before[k] is visited ahead of after[k]. pair_count 0 means none. */
 typedef struct mn_problem {
     mn_route_grid grid;
     const float* x;
     const float* y;
     const float* z;
     int count;
-    const int* before;
-    const int* after;
-    int pair_count;
     /* Backwards_GPU (T-177): the start walks are joined by tours built on the GPU. */
     int gpu_tours;
 } mn_problem;
@@ -197,8 +198,8 @@ static inline int mn_far_levels(const mn_parameters* p)
 
 static inline mn_v3 mn_problem_node(const mn_problem* p, int k) { return mn_v3_make(p->x[k], p->y[k], p->z[k]); }
 
-/* TurnFine constants: the slow zones of a movement run at MN_SLOW_SPEED_FACTOR of the speed (three
- * times slower); the fine per slow millimetre is computed in double from the float factor and rounded
+/* TurnFine constants: the route solver prices the slow zones of a movement at MN_SLOW_SPEED_FACTOR of
+ * the speed (three times slower; T-215: the toolpath itself runs at the feed rate); the fine per slow millimetre is computed in double from the float factor and rounded
  * once, exactly as TurnFine.PerSlowMillimetre is. */
 #define MN_SLOW_SPEED_FACTOR (1.0f / 3.0f)
 #define MN_PER_SLOW_MILLIMETRE ((float)((1.0 / (double)MN_SLOW_SPEED_FACTOR - 1.0) / (double)MN_XY_SPEED_FACTOR))
@@ -242,7 +243,7 @@ void mn_segments_free(mn_segments* list);
 float mn_segment_length(const mn_segment* s);
 
 /* Layer marks: the index of the first segment of every run of consecutive routes at one plan level,
- * with that level. The simplifier and the slow zones rewrite the indices for their output. */
+ * with that level. The simplifier rewrites the indices for its output. */
 typedef struct mn_marks {
     int* segment;
     float* level;
@@ -257,10 +258,6 @@ void mn_marks_free(mn_marks* list);
  * joins it (the same layer), a mark at the index of the previous one replaces it (an empty route). */
 int mn_writer_mark(mn_writer* writer, float level);
 int mn_writer_travel_to(mn_writer* writer, mn_v3 to, const mn_route_grid* grid);
-/* One run (T-150): a travel along the surface polyline is taken only when the head clears
- * `material` along it (sampled every max(cell, cutter radius)); otherwise the writer retracts.
- * The pointers stay owned by the caller. NULL material switches the rule off. */
-void mn_writer_guard(mn_writer* writer, const float* material, const mn_profile* profile, float cutter_radius, float cutter_length);
 int mn_writer_follow_to(mn_writer* writer, mn_v3 to, const mn_route_grid* grid);
 int mn_writer_has_position(const mn_writer* writer, mn_v3* position);
 /* Finish: the retract to safe Z, then the segments move to `result` and the marks to `marks` (NULL
@@ -273,7 +270,7 @@ void mn_writer_place(mn_writer* writer, mn_v3 position);
 int mn_writer_release(mn_writer* writer, mn_segments* result, mn_marks* marks);
 int mn_writer_append(mn_writer* writer, const mn_segments* path, const mn_marks* marks);
 
-/* ---- collision check and resolution (T-147, T-148) ---- */
+/* ---- collision check (T-147) ---- */
 
 typedef struct mn_collisions {
     mn_collision* items;
@@ -288,11 +285,10 @@ void mn_collisions_free(mn_collisions* list);
  * cell. STOCK: removable, the cell's closing (the lowest height any position brings it to, the
  * standing stock of the cut scope included) plus the tolerance lies below the tool surface that
  * hit it. MODEL: not removable, the model or kept stock stops the removal short of the surface.
- * REPEAT: removable stock that was already SHOULD_REMOVE and still stood in the way. SURFACE: the
- * tool surface lay below the model surface (the report's Model contact, the simulation's rule). */
+ * SURFACE: the tool surface lay below the model surface (the report's Model contact, the simulation's
+ * rule). */
 #define MN_HIT_STOCK 1
 #define MN_HIT_MODEL 2
-#define MN_HIT_REPEAT 4
 #define MN_HIT_SURFACE 8
 
 typedef struct mn_hits {
@@ -339,16 +335,6 @@ typedef struct mn_uncut {
  * (NaN where no position covers a cell); with a GPU session from the masks it holds. */
 int mn_intended_compute(const mn_plan* plan, const mn_profile* profile, struct mn_gpu_session* gpu, float* deepest, float* intended);
 void mn_uncut_of(const mn_grid* g, const float* final_stock, const float* intended, float tolerance, mn_uncut* uncut);
-
-/* Resolution of one check (recursion mode): entered removable stock becomes SHOULD_REMOVE without
- * COLLISION; a position whose head hit unremovable cells is forbidden (its tip in `raised` lifted
- * until the head clears what stays, FORBIDDEN set) unless the model cells only it finishes outnumber
- * the hit ones by more than `ratio` times; a position blocked by stock that was already
- * SHOULD_REMOVE is forbidden as well. `effective` is the tip map of the positions (the reach tip under
- * the raises), `material` the same with the standing stock of the cut scope, which is what stays.
- * Returns how many marks were added. */
-int mn_resolve(const mn_grid* g, const mn_profile* profile, float cutter_length, const float* model, const float* effective, const float* material, float floor, float tolerance,
-    float ratio, const mn_hits* hits, uint8_t* status, float* raised);
 
 /* ---- holding bridges (separation scope) ---- */
 
@@ -397,14 +383,10 @@ int mn_backwards_settled(mn_backwards* check, const mn_plan** reached, const flo
  * was aborted, the unreached positions and the model cells summed over the levels, and the sweeps it
  * took to settle. */
 int mn_backwards_finish(mn_backwards* check, int abort, int64_t* unreached, int64_t* model_cells, int* sweeps);
-int mn_three_axis_freedom(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks);
 int mn_is_clear(const mn_segment* segment, const mn_grid* g, const float* effective_tip, float tolerance);
 /* `marks` (NULL allowed) ends a feed run at every marked segment and gets its indices rewritten for
  * the result. */
 int mn_simplify_path(const mn_segments* input, const mn_grid* g, const float* effective_tip, float tolerance, mn_marks* marks, mn_segments* result);
-/* Slow zones (mn_slow.c): the first and last MN_SLOW_ZONE of every movement at MN_SLOW_SPEED_FACTOR
- * of the rate, a movement being a run of feeds straight on in XY (mn_turn_between); `marks` as above. */
-int mn_slow_zones(const mn_segments* input, mn_marks* marks, mn_segments* result);
 void mn_statistics_of(const mn_segment* segments, int count, float rapid_rate, mn_statistics* statistics);
 
 #endif

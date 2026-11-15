@@ -10,7 +10,7 @@ namespace Miller.Solver;
 // zones. Short steps therefore run slow along their whole length and the solver keeps long straight
 // moves. A node straight on (sine of the change within StraightSine, reversing excluded) is not
 // fined. The fine is charged on XY travel; Z travel keeps the Z speed of RouteCost. Computed by the
-// native library, which also writes the zones into the toolpath (SlowZones in Miller.Core).
+// native library. The zones price the routes only (T-215): the toolpath runs at the feed rate.
 public static class TurnFine
 {
     public const float SlowZone = 5f;

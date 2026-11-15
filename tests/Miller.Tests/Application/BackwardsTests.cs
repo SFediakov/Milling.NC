@@ -303,25 +303,6 @@ public sealed class BackwardsTests
         Assert.Equal(levels[1], result.Layers[0].Level);
     }
 
-    // T-193: where the check leaves nothing unreached, Backwards routes the plan of the pass by the Z layer's
-    // rules and gives the established toolpath bit for bit: the one Recursion keeps after its first pass.
-    [Theory]
-    [InlineData(0f)]
-    [InlineData(4f)]
-    public void WhereNothingIsUnreached_TheToolpathIsTheZLayers(float farStepdown)
-    {
-        var backwards = RunWall(farStepdown);
-        Assert.Equal(0, backwards.Unreached!.Value.Unreached);
-        var recursion = Wall(farStepdown);
-        recursion.CollisionMode = CollisionMode.Recursion;
-        var reference = new PipelineService().Run(recursion, new[] { TestMeshes.Box(40, 4, WallTop) }, null, CancellationToken.None);
-        Assert.Equal(1, reference.Passes);
-        Assert.Equal(reference.Toolpath.Segments, backwards.Toolpath.Segments);
-        Assert.Equal(reference.Layers, backwards.Layers);
-        Assert.Equal(reference.RouteUnitEntries, backwards.RouteUnitEntries);
-        Assert.Equal(reference.FarStepdown.Milled.Cast<bool>(), backwards.FarStepdown.Milled.Cast<bool>());
-    }
-
     // T-193: the far stepdown takes only positions reached at the bottom level of their slab and at least the
     // stepover from every obstacle there, the model, the stock it stands above and every position the check
     // leaves unreached at that level; the ring the frustum head cannot reach beside the box stays out.
@@ -395,12 +376,12 @@ public sealed class BackwardsTests
         Assert.Empty(result.Collisions.Report!.Events);
     }
 
-    // Where nothing is unreached Backwards removes what the established Z layer removes: the wall's final
-    // stock equals the one of Recursion within the simplifier's slack, with or without far goes.
+    // Where nothing is unreached the far stepdown changes the order, not what is removed: the wall's final
+    // stock with far goes equals the one without them within the simplifier's slack.
     [Theory]
     [InlineData(0f)]
     [InlineData(4f)]
-    public void TheWall_EndsAtTheStockOfRecursion(float farStepdown)
+    public void TheWall_EndsAtTheStockWithoutAFarStepdown(float farStepdown)
     {
         static SimulationService Finished(PipelineResult result)
         {
@@ -411,9 +392,8 @@ public sealed class BackwardsTests
         }
 
         var backwards = RunWall(farStepdown);
-        var recursion = Wall(0f);
-        recursion.CollisionMode = CollisionMode.Recursion;
-        var reference = new PipelineService().Run(recursion, new[] { TestMeshes.Box(40, 4, WallTop) }, null, CancellationToken.None);
+        Assert.Equal(0, backwards.Unreached!.Value.Unreached);
+        var reference = RunWall(0f);
         var ours = Finished(backwards);
         var theirs = Finished(reference);
         Assert.Empty(ours.Events);
@@ -491,15 +471,18 @@ public sealed class BackwardsTests
         Assert.Empty(RunFrustum(4f).Collisions.Report!.Events);
     }
 
+    // T-214: the strategy on its own runs the backward check too (the one collision handling); a mode
+    // outside the two is refused by the native library.
     [Fact]
-    public void Backwards_NeedsTheZLayer()
+    public void TheStrategyAlone_RunsTheBackwardCheck_AndRefusesAnUnknownMode()
     {
-        var project = Wall(0f);
-        Assert.DoesNotContain(ProjectValidator.Validate(project, null).Errors, e => e.Field == "Strategy.CollisionMode");
-        project.RoutingStrategyId = ThreeAxisFreedomStrategy.StrategyId;
-        Assert.Contains(ProjectValidator.Validate(project, null).Errors, e => e.Field == "Strategy.CollisionMode");
-        var context = TestContexts.BoxInStock() with { CollisionMode = CollisionMode.Backwards };
-        Assert.Throws<ArgumentException>(() => new ThreeAxisFreedomStrategy().Generate(context, null, TestContext.Current.CancellationToken));
+        Assert.DoesNotContain(ProjectValidator.Validate(Wall(0f), null).Errors, e => e.Field == "Strategy.CollisionMode");
+        var context = TestContexts.BoxInStock();
+        Assert.Equal(CollisionMode.Backwards, context.CollisionMode);
+        Assert.NotEmpty(new ZLayerByLayerStrategy().Generate(context, null, TestContext.Current.CancellationToken).Segments);
+        var unknown = context with { CollisionMode = (CollisionMode)5 };
+        var error = Assert.Throws<ArgumentException>(() => new ZLayerByLayerStrategy().Generate(unknown, null, TestContext.Current.CancellationToken));
+        Assert.Contains("Unknown collision mode 5", error.Message);
     }
 
     // A far stepdown deeper than the cutter length: the far block steps within the cutter length as in every

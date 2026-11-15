@@ -94,6 +94,35 @@ public sealed class MainWindowViewModelTests : IDisposable
         Assert.True(viewport.MeshVersion > meshVersion);
     }
 
+    // T-213: the cutter is in the viewport from the start, before any project is opened or edited, so a
+    // connected machine shows it in the machine view; it follows the Tool tab and a new project.
+    [Fact]
+    public void Viewport_HasTheToolFromTheStart_AndShowsItInTheMachineView()
+    {
+        var vm = Create();
+        var viewport = vm.Viewport;
+        Assert.Same(vm.Project.Current.Tool, viewport.Tool);
+        Assert.True(viewport.ToolVersion > 0);
+        Assert.False(viewport.DisplayTool);
+        Assert.Empty(viewport.Meshes);
+        Assert.False(viewport.FitPending);
+
+        viewport.ShowMachineView(Array.Empty<Miller.Core.Toolpaths.ToolpathSegment>(), 0, System.Numerics.Vector3.Zero);
+        Assert.True(viewport.DisplayTool);
+        viewport.HideMachineView();
+        viewport.SetMachinePosition(0, new System.Numerics.Vector3(1, 2, 3));
+        Assert.True(viewport.DisplayTool);
+        Assert.Equal(new System.Numerics.Vector3(1, 2, 3), viewport.DisplayedToolPosition);
+
+        var version = viewport.ToolVersion;
+        vm.Tool.CutterDiameter = 4f;
+        Assert.True(viewport.ToolVersion > version);
+        Assert.Equal(4f, viewport.Tool!.CutterDiameter);
+        vm.NewProjectCommand.Execute(null);
+        Assert.Same(vm.Project.Current.Tool, viewport.Tool);
+        Assert.Equal(6f, viewport.Tool!.CutterDiameter);
+    }
+
     [Fact]
     public async Task Generate_InvalidProject_GoesToTheErrorDialog()
     {

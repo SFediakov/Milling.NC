@@ -24,11 +24,14 @@ public sealed class MillingPreset
 
     public float ReachPercent { get; set; } = HeightMaps.ReachMap.DefaultPercent;
 
-    public CollisionMode CollisionMode { get; set; } = CollisionMode.Recursion;
+    public CollisionMode CollisionMode { get; set; } = CollisionMode.Backwards;
 
-    public float RecursionRatio { get; set; } = MillingProject.DefaultCollisionRatio;
+    // Ratios of the collision modes removed in T-214: read for migration, never written back.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public float? RecursionRatio { get; set; }
 
-    public float OneRunRatio { get; set; } = MillingProject.DefaultCollisionRatio;
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public float? OneRunRatio { get; set; }
 
     public float BridgeCount { get; set; } = MillingProject.DefaultBridgeCount;
 
@@ -54,8 +57,6 @@ public sealed class MillingPreset
             MinIslandVolume = project.MinIslandVolume,
             ReachPercent = project.ReachPercent,
             CollisionMode = project.CollisionMode,
-            RecursionRatio = project.RecursionRatio,
-            OneRunRatio = project.OneRunRatio,
             BridgeCount = project.BridgeCount,
             BridgeWidth = project.BridgeWidth,
             BridgeHeight = project.BridgeHeight,
@@ -76,8 +77,6 @@ public sealed class MillingPreset
         project.MinIslandVolume = copy.MinIslandVolume;
         project.ReachPercent = copy.ReachPercent;
         project.CollisionMode = copy.CollisionMode;
-        project.RecursionRatio = copy.RecursionRatio;
-        project.OneRunRatio = copy.OneRunRatio;
         project.BridgeCount = copy.BridgeCount;
         project.BridgeWidth = copy.BridgeWidth;
         project.BridgeHeight = copy.BridgeHeight;

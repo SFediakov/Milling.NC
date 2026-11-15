@@ -7,12 +7,9 @@
   <ScrollViewer>
     <StackPanel Margin="8" Spacing="4">
       <TextBlock Classes="header" Text="Speeds" />
-      <TextBlock Classes="label" Text="Feed rate (mm/min)" />
+      <TextBlock Classes="label" Text="Feed rate of feeds and plunges (mm/min)" />
       <c:NumericBox Name="FeedRateBox" Classes="numeric" Value="{Binding FeedRate}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding FeedRateError}" IsVisible="{Binding FeedRateError, Converter={x:Static ObjectConverters.IsNotNull}}" />
-      <TextBlock Classes="label" Text="Plunge rate (mm/min)" />
-      <c:NumericBox Name="PlungeRateBox" Classes="numeric" Value="{Binding PlungeRate}" HorizontalAlignment="Left" />
-      <TextBlock Classes="validation" Text="{Binding PlungeRateError}" IsVisible="{Binding PlungeRateError, Converter={x:Static ObjectConverters.IsNotNull}}" />
       <TextBlock Classes="label" Text="Rapid rate (mm/min)" />
       <c:NumericBox Name="RapidRateBox" Classes="numeric" Value="{Binding RapidRate}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding RapidRateError}" IsVisible="{Binding RapidRateError, Converter={x:Static ObjectConverters.IsNotNull}}" />
@@ -24,9 +21,6 @@
       <TextBlock Classes="label" Text="Stepover of Z layer by layer (mm)" />
       <c:NumericBox Name="StepoverBox" Classes="numeric" Value="{Binding Stepover}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding StepoverError}" IsVisible="{Binding StepoverError, Converter={x:Static ObjectConverters.IsNotNull}}" />
-      <TextBlock Classes="label" Text="Stepover of 3 axis freedom (mm)" />
-      <c:NumericBox Name="FinishingStepoverBox" Classes="numeric" Value="{Binding FinishingStepover}" HorizontalAlignment="Left" />
-      <TextBlock Classes="validation" Text="{Binding FinishingStepoverError}" IsVisible="{Binding FinishingStepoverError, Converter={x:Static ObjectConverters.IsNotNull}}" />
       <TextBlock Classes="label" Text="Stepdown per level (mm)" />
       <c:NumericBox Name="StepdownBox" Classes="numeric" Value="{Binding Stepdown}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding StepdownError}" IsVisible="{Binding StepdownError, Converter={x:Static ObjectConverters.IsNotNull}}" />

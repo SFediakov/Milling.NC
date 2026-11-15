@@ -8,9 +8,7 @@
  * and the sweeps along X and along Y that turn only between lines; the cheapest one is improved by
  * 2-opt and Or-opt until no move improves or the allowance is spent. The fine change of a move is
  * exact: a status depends on a node and its two neighbours, so only the nodes at the joins change
- * status, and the fine window adds the overlap of their zones with the events up to 10 mm away.
- * Precedence pairs (T-150) make the walks visit a node only once its predecessors are visited, and
- * a move is applied only when the route it produces keeps every pair. */
+ * status, and the fine window adds the overlap of their zones with the events up to 10 mm away. */
 
 #define MN_CANDIDATES 10
 #define MN_TARGET_PER_BUCKET 4.0f
@@ -297,91 +295,6 @@ static float candidates_cached(const mn_candidates* c, int u, int v)
     return NAN;
 }
 
-/* ---- precedence pairs ---- */
-
-/* Successor lists of the pairs and, per node, how many predecessors are still unvisited. */
-typedef struct mn_order {
-    int* succ_start;
-    int* succ_items;
-    int* pending;
-    int pairs;
-} mn_order;
-
-static void order_free(mn_order* o)
-{
-    free(o->succ_start);
-    free(o->succ_items);
-    free(o->pending);
-    memset(o, 0, sizeof(*o));
-}
-
-static int order_init(mn_order* o, const mn_problem* problem)
-{
-    int n = problem->count;
-    memset(o, 0, sizeof(*o));
-    o->pairs = problem->pair_count;
-    o->succ_start = (int*)mn_alloc((size_t)n + 1, sizeof(int));
-    o->succ_items = (int*)mn_alloc((size_t)(o->pairs > 0 ? o->pairs : 1), sizeof(int));
-    o->pending = (int*)mn_alloc((size_t)n, sizeof(int));
-    int* fill = (int*)mn_alloc((size_t)n, sizeof(int));
-    if (o->succ_start == NULL || o->succ_items == NULL || o->pending == NULL || fill == NULL) {
-        free(fill);
-        order_free(o);
-        return mn_fail(MN_ERR_MEMORY, "Out of memory for the precedence pairs.");
-    }
-    for (int k = 0; k < o->pairs; k++) {
-        o->succ_start[problem->before[k] + 1]++;
-        o->pending[problem->after[k]]++;
-    }
-    for (int k = 0; k < n; k++) {
-        o->succ_start[k + 1] += o->succ_start[k];
-    }
-    for (int k = 0; k < o->pairs; k++) {
-        int a = problem->before[k];
-        o->succ_items[o->succ_start[a] + fill[a]++] = problem->after[k];
-    }
-    free(fill);
-    return MN_OK;
-}
-
-static int order_ready(const mn_order* o, int node) { return o->pending[node] == 0; }
-
-static void order_visit(mn_order* o, int node)
-{
-    for (int k = o->succ_start[node]; k < o->succ_start[node + 1]; k++) {
-        o->pending[o->succ_items[k]]--;
-    }
-}
-
-/* The nearest unvisited node that is ready, by the lower bound; -1 when none is left. */
-static int nearest_ready(const mn_problem* problem, const mn_order* o, const uint8_t* visited, mn_v3 from)
-{
-    int best = -1;
-    float best_cost = INFINITY;
-    for (int k = 0; k < problem->count; k++) {
-        if (visited[k] || !order_ready(o, k)) {
-            continue;
-        }
-        float c = mn_cost_lower_bound(from, mn_problem_node(problem, k));
-        if (c < best_cost) {
-            best_cost = c;
-            best = k;
-        }
-    }
-    return best;
-}
-
-/* Where the walk finds its next node when no candidate is left: the bucket search without pairs,
- * the ready scan with them. */
-static int next_alive(const mn_problem* problem, mn_buckets* buckets, const mn_order* o, const uint8_t* visited, mn_v3 from, int* node)
-{
-    if (o->pairs == 0) {
-        return buckets_nearest_alive(buckets, from, visited, node);
-    }
-    *node = nearest_ready(problem, o, visited, from);
-    return *node >= 0 ? MN_OK : mn_fail(MN_ERR_ARGUMENT, "The precedence pairs leave no node to visit.");
-}
-
 /* ---- path cost ---- */
 
 float mn_path_cost(const mn_problem* problem, const int* order, int count)
@@ -395,7 +308,7 @@ float mn_path_cost(const mn_problem* problem, const int* order, int count)
 
 /* ---- start walks ---- */
 
-static int nearest_neighbour(const mn_problem* problem, mn_buckets* buckets, const mn_candidates* candidates, mn_order* o, int start, int* order)
+static int nearest_neighbour(const mn_problem* problem, mn_buckets* buckets, const mn_candidates* candidates, int start, int* order)
 {
     int n = problem->count;
     uint8_t* visited = (uint8_t*)mn_alloc((size_t)n, 1);
@@ -405,7 +318,6 @@ static int nearest_neighbour(const mn_problem* problem, mn_buckets* buckets, con
     int current = start;
     order[0] = start;
     visited[start] = 1;
-    order_visit(o, start);
     buckets_remove(buckets, start);
     int status = MN_OK;
     for (int step = 1; step < n && status == MN_OK; step++) {
@@ -418,20 +330,19 @@ static int nearest_neighbour(const mn_problem* problem, mn_buckets* buckets, con
             if (c < 0) {
                 break;
             }
-            if (!visited[c] && order_ready(o, c) && costs[m] < best_cost) {
+            if (!visited[c] && costs[m] < best_cost) {
                 best_cost = costs[m];
                 best = c;
             }
         }
         if (best < 0) {
-            status = next_alive(problem, buckets, o, visited, mn_problem_node(problem, current), &best);
+            status = buckets_nearest_alive(buckets, mn_problem_node(problem, current), visited, &best);
             if (status != MN_OK) {
                 break;
             }
         }
         order[step] = best;
         visited[best] = 1;
-        order_visit(o, best);
         buckets_remove(buckets, best);
         current = best;
     }
@@ -448,7 +359,7 @@ static float prefix_term(mn_window* window, mn_view* view, const int* order, con
 
 /* Every candidate is scored by its step and the cheapest step after it, fine increase included; a
  * candidate whose own candidates are all visited by the lower bound to the nearest unvisited node. */
-static int smooth_walk(const mn_problem* problem, mn_buckets* buckets, const mn_candidates* candidates, mn_order* o, int start, int* order)
+static int smooth_walk(const mn_problem* problem, mn_buckets* buckets, const mn_candidates* candidates, int start, int* order)
 {
     int n = problem->count;
     int status = MN_OK;
@@ -479,7 +390,6 @@ static int smooth_walk(const mn_problem* problem, mn_buckets* buckets, const mn_
     int current = start;
     order[0] = start;
     visited[start] = 1;
-    order_visit(o, start);
     buckets_remove(buckets, start);
     for (int step = 1; step < n; step++) {
         int count = 0;
@@ -498,7 +408,7 @@ static int smooth_walk(const mn_problem* problem, mn_buckets* buckets, const mn_
             if (c < 0) {
                 break;
             }
-            if (visited[c] || !order_ready(o, c)) {
+            if (visited[c]) {
                 continue;
             }
             order[step] = c;
@@ -513,7 +423,7 @@ static int smooth_walk(const mn_problem* problem, mn_buckets* buckets, const mn_
                     if (d < 0) {
                         break;
                     }
-                    if (visited[d] || !order_ready(o, d)) {
+                    if (visited[d]) {
                         continue;
                     }
                     order[step + 1] = d;
@@ -523,13 +433,11 @@ static int smooth_walk(const mn_problem* problem, mn_buckets* buckets, const mn_
             }
             if (isinf(next) && next > 0) {
                 int alive = -1;
-                if (step + 1 < n && o->pairs == 0) {
+                if (step + 1 < n) {
                     status = buckets_nearest_alive(buckets, mn_problem_node(problem, c), visited, &alive);
                     if (status != MN_OK) {
                         goto done;
                     }
-                } else if (step + 1 < n) {
-                    alive = nearest_ready(problem, o, visited, mn_problem_node(problem, c));
                 }
                 next = (prefix_term(&window, &view, order, lengths, problem, &cache, step) - before) * per_mm
                     + (alive >= 0 ? mn_cost_lower_bound(mn_problem_node(problem, c), mn_problem_node(problem, alive)) : 0.0f);
@@ -542,7 +450,7 @@ static int smooth_walk(const mn_problem* problem, mn_buckets* buckets, const mn_
             }
         }
         if (best < 0) {
-            status = next_alive(problem, buckets, o, visited, mn_problem_node(problem, current), &best);
+            status = buckets_nearest_alive(buckets, mn_problem_node(problem, current), visited, &best);
             if (status != MN_OK) {
                 goto done;
             }
@@ -550,7 +458,6 @@ static int smooth_walk(const mn_problem* problem, mn_buckets* buckets, const mn_
         order[step] = best;
         lengths[step - 1] = mn_cost_planar(mn_problem_node(problem, current), mn_problem_node(problem, best));
         visited[best] = 1;
-        order_visit(o, best);
         buckets_remove(buckets, best);
         cache.until = step;
         if (step >= 2) {
@@ -611,17 +518,15 @@ static int append_run(int* seq, int count, const sweep_key* keys, int from, int 
  * per grid column, axis 1), every line run end to end from the end the previous one stopped at, so
  * the route turns only between lines. It starts at `start`, runs the start's line to its nearer
  * end, sweeps the lines on one side, then the rest of the start's line and the lines on the other
- * side. With precedence pairs a node that is not ready waits and the next ready node in sweep order
- * goes first. */
-static int sweep_walk(const mn_problem* problem, mn_order* o, int start, int axis, int* order)
+ * side. */
+static int sweep_walk(const mn_problem* problem, int start, int axis, int* order)
 {
     int n = problem->count;
     const mn_grid* g = &problem->grid.g;
     sweep_key* keys = (sweep_key*)mn_alloc((size_t)n, sizeof(sweep_key));
     int* seq = (int*)mn_alloc((size_t)n, sizeof(int));
-    uint8_t* visited = (uint8_t*)mn_alloc((size_t)n, 1);
     int status = MN_OK;
-    if (keys == NULL || seq == NULL || visited == NULL) {
+    if (keys == NULL || seq == NULL) {
         status = mn_fail(MN_ERR_MEMORY, "Out of memory for the sweep walk.");
         goto done;
     }
@@ -684,30 +589,11 @@ static int sweep_walk(const mn_problem* problem, mn_order* o, int start, int axi
         k = b - 1;
     }
 
-    int pointer = 0;
-    for (int step = 0; step < n; step++) {
-        while (pointer < n && visited[seq[pointer]]) {
-            pointer++;
-        }
-        int pick = -1;
-        for (int k = pointer; k < n && pick < 0; k++) {
-            if (!visited[seq[k]] && order_ready(o, seq[k])) {
-                pick = seq[k];
-            }
-        }
-        if (pick < 0) {
-            status = mn_fail(MN_ERR_ARGUMENT, "The precedence pairs leave no node to visit.");
-            goto done;
-        }
-        order[step] = pick;
-        visited[pick] = 1;
-        order_visit(o, pick);
-    }
+    memcpy(order, seq, (size_t)n * sizeof(int));
 
 done:
     free(keys);
     free(seq);
-    free(visited);
     return status;
 }
 
@@ -919,18 +805,6 @@ static float fine_change(mn_search* s, int removed_a, int removed_b, int removed
     return (after - before) * mn_per_slow_millimetre();
 }
 
-/* Whether the route in `moved` keeps every precedence pair. */
-static int feasible_move(const mn_search* s)
-{
-    const mn_problem* p = s->problem;
-    for (int k = 0; k < p->pair_count; k++) {
-        if (mn_view_position(&s->moved, s->pos[p->before[k]]) >= mn_view_position(&s->moved, s->pos[p->after[k]])) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
 static void moved_reset(mn_search* s)
 {
     mn_view_reset(&s->moved, s->order, s->len, s->problem->x, s->problem->y, &s->cache);
@@ -1006,7 +880,7 @@ static int two_opt(mn_search* s, int a)
                 }
                 added = cost(s, sn, cn);
             }
-            if (removed - dac - added - fine > MN_MIN_GAIN && feasible_move(s)) {
+            if (removed - dac - added - fine > MN_MIN_GAIN) {
                 reverse(s, i + 1, j);
                 set_edge(s, i);
                 set_edge(s, j);
@@ -1035,7 +909,7 @@ static int two_opt(mn_search* s, int a)
                 }
                 added = cost(s, cs, an);
             }
-            if (removed - dac - added - fine > MN_MIN_GAIN && feasible_move(s)) {
+            if (removed - dac - added - fine > MN_MIN_GAIN) {
                 reverse(s, j + 1, i);
                 set_edge(s, j);
                 set_edge(s, i);
@@ -1096,7 +970,7 @@ static int or_opt(mn_search* s, int a)
                     if (removed + removed_c - bridge_lower - dec - fine - (has_cs ? lower(s, other, cs) : 0.0f) > MN_MIN_GAIN) {
                         float bridge = has_next ? cost(s, p, nx) : 0.0f;
                         float tail = has_cs ? cost(s, other, cs) : 0.0f;
-                        if (removed + removed_c - bridge - dec - tail - fine > MN_MIN_GAIN && feasible_move(s)) {
+                        if (removed + removed_c - bridge - dec - tail - fine > MN_MIN_GAIN) {
                             move_segment(s, i, length, jc, end == 1);
                             push(s, p);
                             push(s, c);
@@ -1121,7 +995,7 @@ static int or_opt(mn_search* s, int a)
                     if (removed + removed_c - bridge_lower - dec - fine - lower(s, cp, other) > MN_MIN_GAIN) {
                         float bridge = has_next ? cost(s, p, nx) : 0.0f;
                         float head = cost(s, cp, other);
-                        if (removed + removed_c - bridge - dec - head - fine > MN_MIN_GAIN && feasible_move(s)) {
+                        if (removed + removed_c - bridge - dec - head - fine > MN_MIN_GAIN) {
                             move_segment(s, i, length, jc - 1, end == 0);
                             push(s, p);
                             push(s, c);
@@ -1263,7 +1137,6 @@ typedef struct walk_job {
     const mn_candidates* candidates;
     int start;
     int* orders[MN_START_WALKS];
-    mn_order orderings[MN_START_WALKS];
     int status[MN_START_WALKS];
 } walk_job;
 
@@ -1273,19 +1146,18 @@ static void walk_row(void* context, int w, void* scratch)
     (void)scratch;
     walk_job* walks = (walk_job*)context;
     const mn_problem* problem = walks->problem;
-    mn_order* ordering = &walks->orderings[w];
     int* order = walks->orders[w];
     int status = MN_OK;
     if (w == 0 || w == 1) {
         mn_buckets buckets;
         status = buckets_init(&buckets, problem);
         if (status == MN_OK) {
-            status = w == 0 ? nearest_neighbour(problem, &buckets, walks->candidates, ordering, walks->start, order)
-                            : smooth_walk(problem, &buckets, walks->candidates, ordering, walks->start, order);
+            status = w == 0 ? nearest_neighbour(problem, &buckets, walks->candidates, walks->start, order)
+                            : smooth_walk(problem, &buckets, walks->candidates, walks->start, order);
             buckets_free(&buckets);
         }
     } else {
-        status = sweep_walk(problem, ordering, walks->start, w - 2, order);
+        status = sweep_walk(problem, walks->start, w - 2, order);
     }
     walks->status[w] = status;
 }
@@ -1314,19 +1186,6 @@ int mn_solve(const mn_problem* problem, int start, int end, int64_t allowance, c
     if (end < -1 || end >= n || (end == start && n > 1)) {
         return mn_fail(MN_ERR_OUT_OF_RANGE, "End must be -1 or index one of the %d nodes other than the start %d, got %d.", n, start, end);
     }
-    if (problem->pair_count < 0 || (problem->pair_count > 0 && (problem->before == NULL || problem->after == NULL))) {
-        return mn_fail(MN_ERR_ARGUMENT, "Precedence pairs need both node lists.");
-    }
-    for (int k = 0; k < problem->pair_count; k++) {
-        int a = problem->before[k];
-        int b = problem->after[k];
-        if (a < 0 || a >= n || b < 0 || b >= n || a == b) {
-            return mn_fail(MN_ERR_OUT_OF_RANGE, "Precedence pair %d (%d before %d) must name two different nodes of the %d.", k, a, b, n);
-        }
-        if (a == end) {
-            return mn_fail(MN_ERR_ARGUMENT, "The end node %d must come after every node, but pair %d orders it before %d.", end, k, b);
-        }
-    }
     if (n == 1) {
         order[0] = start;
         return MN_OK;
@@ -1335,62 +1194,12 @@ int mn_solve(const mn_problem* problem, int start, int end, int64_t allowance, c
     int status = MN_OK;
     mn_buckets buckets;
     mn_candidates candidates = { 0 };
-    mn_order ordering;
-    int ordering_ready = 0;
     mn_gpu_tours_job* tour_job = NULL;
     int* smooth = (int*)mn_alloc((size_t)n, sizeof(int));
     if (smooth == NULL) {
         return mn_fail(MN_ERR_MEMORY, "Out of memory for a route of %d nodes.", n);
     }
-    status = order_init(&ordering, problem);
-    if (status != MN_OK) {
-        free(smooth);
-        return status;
-    }
-    ordering_ready = 1;
-    if (!order_ready(&ordering, start)) {
-        status = mn_fail(MN_ERR_ARGUMENT, "The start node %d has a predecessor.", start);
-        goto done;
-    }
-    if (ordering.pairs > 0) {
-        /* Kahn: every node must become ready once its predecessors are taken, or the pairs are cyclic. */
-        int* pending = (int*)mn_alloc((size_t)n, sizeof(int));
-        int* queue = (int*)mn_alloc((size_t)n, sizeof(int));
-        if (pending == NULL || queue == NULL) {
-            free(pending);
-            free(queue);
-            status = mn_fail(MN_ERR_MEMORY, "Out of memory for the precedence check.");
-            goto done;
-        }
-        memcpy(pending, ordering.pending, (size_t)n * sizeof(int));
-        int head = 0;
-        int tail = 0;
-        for (int k = 0; k < n; k++) {
-            if (pending[k] == 0) {
-                queue[tail++] = k;
-            }
-        }
-        while (head < tail) {
-            int v = queue[head++];
-            for (int k = ordering.succ_start[v]; k < ordering.succ_start[v + 1]; k++) {
-                int u = ordering.succ_items[k];
-                if (--pending[u] == 0) {
-                    queue[tail++] = u;
-                }
-            }
-        }
-        free(pending);
-        free(queue);
-        if (tail < n) {
-            status = mn_fail(MN_ERR_ARGUMENT, "The precedence pairs are cyclic.");
-            goto done;
-        }
-    }
     if (problem->gpu_tours && n >= MN_GPU_TOURS_MIN_NODES && n < MN_GPU_TOURS_MAX_NODES) {
-        if (problem->pair_count > 0) {
-            status = mn_fail(MN_ERR_ARGUMENT, "GPU start tours take no precedence pairs.");
-            goto done;
-        }
         status = mn_gpu_tours_begin(problem->x, problem->y, n, start, end, MN_GPU_TOURS, &tour_job);
         if (status != MN_OK) {
             goto done;
@@ -1413,7 +1222,7 @@ int mn_solve(const mn_problem* problem, int start, int end, int64_t allowance, c
         goto done;
     }
 
-    /* The four start walks are independent given their own buckets and orderings, so they run on
+    /* The four start walks are independent given their own buckets, so they run on
      * the worker pool (T-160); the cheapest is chosen afterwards in the fixed order nearest
      * neighbour, smooth walk, sweep along X, sweep along Y, which gives the tour of the sequential
      * version. */
@@ -1427,13 +1236,8 @@ int mn_solve(const mn_problem* problem, int start, int end, int64_t allowance, c
         walks.orders[1] = smooth;
         walks.orders[2] = (int*)mn_alloc((size_t)n, sizeof(int));
         walks.orders[3] = (int*)mn_alloc((size_t)n, sizeof(int));
-        int ready = 0;
         if (walks.orders[2] == NULL || walks.orders[3] == NULL) {
             status = mn_fail(MN_ERR_MEMORY, "Out of memory for a route of %d nodes.", n);
-        }
-        for (int w = 0; w < MN_START_WALKS && status == MN_OK; w++) {
-            status = order_init(&walks.orderings[w], problem);
-            ready += status == MN_OK ? 1 : 0;
         }
         if (status == MN_OK) {
             status = mn_rows_parallel(MN_START_WALKS, walk_row, &walks, NULL, mn_mini(MN_START_WALKS, mn_worker_count()));
@@ -1457,9 +1261,6 @@ int mn_solve(const mn_problem* problem, int start, int end, int64_t allowance, c
                     best = cost;
                 }
             }
-        }
-        for (int w = 0; w < ready; w++) {
-            order_free(&walks.orderings[w]);
         }
         free(walks.orders[2]);
         free(walks.orders[3]);
@@ -1503,15 +1304,12 @@ int mn_solve(const mn_problem* problem, int start, int end, int64_t allowance, c
 
 done:
     mn_gpu_tours_cancel(tour_job);
-    if (ordering_ready) {
-        order_free(&ordering);
-    }
     candidates_free(&candidates);
     free(smooth);
     return status;
 }
 
-MN_API int32_t mn_route_solve(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, int32_t count, int32_t start, int32_t end, const int32_t* before, const int32_t* after, int32_t pair_count, int64_t allowance, const volatile int32_t* cancel, int32_t* order, int64_t* evaluations)
+MN_API int32_t mn_route_solve(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, int32_t count, int32_t start, int32_t end, int64_t allowance, const volatile int32_t* cancel, int32_t* order, int64_t* evaluations)
 {
     mn_problem problem;
     memset(&problem, 0, sizeof(problem));
@@ -1522,9 +1320,6 @@ MN_API int32_t mn_route_solve(const mn_grid* grid, const float* floor, const flo
     problem.y = y;
     problem.z = z;
     problem.count = count;
-    problem.before = before;
-    problem.after = after;
-    problem.pair_count = pair_count;
     return mn_solve(&problem, start, end, allowance, cancel, order, evaluations);
 }
 
@@ -1539,9 +1334,6 @@ MN_API float mn_route_path_cost(const mn_grid* grid, const float* floor, const f
     problem.y = y;
     problem.z = z;
     problem.count = count;
-    problem.before = NULL;
-    problem.after = NULL;
-    problem.pair_count = 0;
     return mn_path_cost(&problem, order, count);
 }
 

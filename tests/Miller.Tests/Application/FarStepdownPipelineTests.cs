@@ -9,8 +9,7 @@ using Xunit;
 namespace Miller.Tests.Application;
 
 // The far stepdown through the pipeline: the same final stock as without it, no gouge, no collision
-// event in either collision mode, the layers of the far pass and the normal levels, and no effect on
-// "3 axis freedom".
+// event, and the layers of the far pass and the normal levels.
 public sealed class FarStepdownPipelineTests
 {
     private static PipelineResult Run(string strategy, float farStepdown, CollisionMode mode)
@@ -36,8 +35,7 @@ public sealed class FarStepdownPipelineTests
     }
 
     [Theory]
-    [InlineData(CollisionMode.Recursion)]
-    [InlineData(CollisionMode.OneRun)]
+    [InlineData(CollisionMode.Backwards)]
     public void ZLayer_EndsAtThePlainStock_WithoutGougesOrEvents(CollisionMode mode)
     {
         var far = Run(ZLayerByLayerStrategy.StrategyId, 4f, mode);
@@ -86,11 +84,9 @@ public sealed class FarStepdownPipelineTests
     }
 
     [Theory]
-    [InlineData(CollisionMode.Recursion, false)]
-    [InlineData(CollisionMode.OneRun, false)]
-    [InlineData(CollisionMode.Recursion, true)]
-    [InlineData(CollisionMode.OneRun, true)]
-    public void ShortCutter_FarBlockKeepsTheHeadClear_InBothModes(CollisionMode mode, bool frustum)
+    [InlineData(CollisionMode.Backwards, false)]
+    [InlineData(CollisionMode.Backwards, true)]
+    public void ShortCutter_FarBlockKeepsTheHeadClear(CollisionMode mode, bool frustum)
     {
         var far = RunShortCutter(8f, mode, frustum);
         var plain = RunShortCutter(0f, mode, frustum);
@@ -184,13 +180,5 @@ public sealed class FarStepdownPipelineTests
                 }
             }
         }
-    }
-
-    [Fact]
-    public void ThreeAxisFreedom_IgnoresTheFarStepdown()
-    {
-        var far = Run(ThreeAxisFreedomStrategy.StrategyId, 4f, CollisionMode.Recursion);
-        var plain = Run(ThreeAxisFreedomStrategy.StrategyId, 0f, CollisionMode.Recursion);
-        Assert.Equal(plain.Toolpath.Segments, far.Toolpath.Segments);
     }
 }

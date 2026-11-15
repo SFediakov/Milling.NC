@@ -12,7 +12,7 @@ namespace Miller.Tests.Application;
 public sealed class SimulationLayerTests
 {
     // 8 x 8 x 3 box on a 14 x 14 x 5 stock at 0.5 mm cells with a 2 mm tool: levels 3, 1 and 0, each
-    // with a route in both strategies.
+    // with a route.
     private static MillingProject Project(string strategy)
     {
         var project = MillingProject.Default();
@@ -40,7 +40,6 @@ public sealed class SimulationLayerTests
 
     [Theory]
     [InlineData(ZLayerByLayerStrategy.StrategyId)]
-    [InlineData(ThreeAxisFreedomStrategy.StrategyId)]
     public void Layers_StartAtZero_IncreaseAndChangeLevel_AtRealSegmentStarts(string strategy)
     {
         var result = Result(strategy);
@@ -56,14 +55,6 @@ public sealed class SimulationLayerTests
             Assert.NotEqual(layers[k - 1].Level, layers[k].Level);
             Assert.Equal(result.Toolpath.Segments[layers[k].FirstSegment - 1].End, result.Toolpath.Segments[layers[k].FirstSegment].Start);
         }
-    }
-
-    [Fact]
-    public void ThreeAxisFreedom_HasOneLayerPerLevel_Descending()
-    {
-        var result = Result(ThreeAxisFreedomStrategy.StrategyId);
-        var levels = result.Plan.Steps.Select(s => s.Level).ToList();
-        Assert.Equal(levels, result.Layers.Select(l => l.Level).ToList());
     }
 
     [Fact]

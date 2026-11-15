@@ -30,13 +30,10 @@ public sealed class PresetServiceTests : IDisposable
         project.Axes.CustomOffset = new Vector3(1, 2, 3);
         project.Parameters.FeedRate = 1200f;
         project.Parameters.Stepdown = 0.8f;
-        project.RoutingStrategyId = "three-axis-freedom";
         project.CutScope = CutScope.Separation;
         project.MinIslandVolume = 40f;
         project.ReachPercent = 66f;
-        project.CollisionMode = CollisionMode.OneRun;
-        project.RecursionRatio = 2f;
-        project.OneRunRatio = 3f;
+        project.CollisionMode = CollisionMode.Backwards_GPU;
         project.Stock.SizeX = 77f;
         project.Models.Add(new ModelPlacement { StlPath = "a.stl", Offset = new Vector3(4, 0, 0) });
         return project;
@@ -65,13 +62,37 @@ public sealed class PresetServiceTests : IDisposable
         Assert.Equal(TipType.Ball, brass.Tool.TipType);
         Assert.Equal(new Vector3(1, 2, 3), brass.Axes.CustomOffset);
         Assert.Equal(0.8f, brass.Parameters.Stepdown);
-        Assert.Equal("three-axis-freedom", brass.RoutingStrategyId);
+        Assert.Equal("z-layer-by-layer", brass.RoutingStrategyId);
         Assert.Equal(CutScope.Separation, brass.CutScope);
         Assert.Equal(40f, brass.MinIslandVolume);
         Assert.Equal(66f, brass.ReachPercent);
-        Assert.Equal(CollisionMode.OneRun, brass.CollisionMode);
-        Assert.Equal(2f, brass.RecursionRatio);
-        Assert.Equal(3f, brass.OneRunRatio);
+        Assert.Equal(CollisionMode.Backwards_GPU, brass.CollisionMode);
+        Assert.DoesNotContain("Ratio", File.ReadAllText(service.FilePath));
+    }
+
+    // T-214: a presets file written before names the removed strategy and modes; they load as Z layer by layer
+    // and Backwards and the dropped settings are not written back.
+    [Fact]
+    public void Load_PresetsWithTheRemovedStrategyAndModes_MigratesThem()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(Path.Combine(_root, PresetService.FileName),
+            "{ \"SchemaVersion\": 1, \"Presets\": [ { \"Name\": \"old\", \"RoutingStrategyId\": \"three-axis-freedom\", \"CollisionMode\": \"OneRun\", " +
+            "\"RecursionRatio\": 2, \"OneRunRatio\": 3, \"Parameters\": { \"Stepover\": 1.5, \"FinishingStepover\": 0.25 } } ] }");
+        var service = new PresetService(_root);
+        service.Load();
+        var old = Assert.Single(service.Presets);
+        Assert.Equal("z-layer-by-layer", old.RoutingStrategyId);
+        Assert.Equal(CollisionMode.Backwards, old.CollisionMode);
+        Assert.Null(old.RecursionRatio);
+        Assert.Null(old.OneRunRatio);
+        Assert.Null(old.Parameters.FinishingStepover);
+        Assert.Equal(1.5f, old.Parameters.Stepover);
+        service.Save(MillingPreset.FromProject(MillingProject.Default(), "new"));
+        var written = File.ReadAllText(service.FilePath);
+        Assert.DoesNotContain("three-axis", written);
+        Assert.DoesNotContain("OneRun", written);
+        Assert.DoesNotContain("FinishingStepover", written);
     }
 
     [Fact]
@@ -129,13 +150,11 @@ public sealed class PresetServiceTests : IDisposable
         Assert.Equal(3.175f, target.Tool.CutterDiameter);
         Assert.True(target.Axes.FlipZ);
         Assert.Equal(1200f, target.Parameters.FeedRate);
-        Assert.Equal("three-axis-freedom", target.RoutingStrategyId);
+        Assert.Equal("z-layer-by-layer", target.RoutingStrategyId);
         Assert.Equal(CutScope.Separation, target.CutScope);
         Assert.Equal(40f, target.MinIslandVolume);
         Assert.Equal(66f, target.ReachPercent);
-        Assert.Equal(CollisionMode.OneRun, target.CollisionMode);
-        Assert.Equal(2f, target.RecursionRatio);
-        Assert.Equal(3f, target.OneRunRatio);
+        Assert.Equal(CollisionMode.Backwards_GPU, target.CollisionMode);
         Assert.Equal(55f, target.Stock.SizeX);
         Assert.Equal("b.stl", Assert.Single(target.Models).StlPath);
 

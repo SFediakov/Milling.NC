@@ -105,7 +105,7 @@ public sealed class CollisionServiceTests
         {
             Assert.Equal(result.Model.Z[k] > result.Floor + 1e-4f, (status[k] & CellStatus.Model) != 0);
             Assert.Equal(report.Contacts[k] != CollisionContact.None, (status[k] & CellStatus.Collision) != 0);
-            Assert.Equal(CellStatus.None, status[k] & (CellStatus.ShouldRemove | CellStatus.Forbidden));
+            Assert.Equal(CellStatus.None, status[k] & ~(CellStatus.Model | CellStatus.Collision));
         }
 
         var check = CollisionService.Of(report);

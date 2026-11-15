@@ -455,8 +455,11 @@ public sealed class FarStepdownStepTests
         // At 3 the head bottom is at 5 and the column rises 4 above it: positions within the head radius at
         // that height plus the margin leave the far block, so their footprints no longer reach the material
         // between the near band (1.5 from the column) and that radius less the cutter radius; it keeps the
-        // group's top level 5, while every position beyond that radius is cut to 3. Under T-157 every far
-        // position (at least 4.5 from the column) was cut to 3 with the head inside the column.
+        // group's top level 5, while positions beyond that radius are cut to 3. Under T-157 every far
+        // position (at least 4.5 from the column) was cut to 3 with the head inside the column. Since T-214
+        // the strategy runs the backward check, whose raised positions beside the column are obstacles the
+        // far region keeps the stepover from (T-193, BackwardsTests), so not every cell beyond that radius
+        // is cut to 3 by the far block; the walk cuts the rest (the same final stock as without it, below).
         var margin = MathF.Sqrt(2f) * Cell + context.Parameters.Tolerance;
         var forbidden = HeadRadiusAt(tool, 9f - 3f - CutterLength) + margin;
         var stock = Simulate(context, path, walk);
@@ -473,9 +476,8 @@ public sealed class FarStepdownStepTests
                     Assert.True(stock[i, j] >= 5f - tolerance, $"cell ({i}, {j}) at {d} from the column was cut to {stock[i, j]} by the far block");
                     kept++;
                 }
-                else if (d >= forbidden + Cell)
+                else if (d >= forbidden + Cell && stock[i, j] <= 3f + tolerance)
                 {
-                    Assert.True(stock[i, j] <= 3f + tolerance, $"cell ({i}, {j}) at {d} from the column stands at {stock[i, j]} after the far block");
                     cut++;
                 }
             }

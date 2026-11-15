@@ -36,7 +36,7 @@ public sealed class StageProgressTests
     [Fact]
     public void Messages_NameTheStage_TheIteration_AndThePercent()
     {
-        var reports = Run(ThreeAxisFreedomStrategy.StrategyId);
+        var reports = Run(ZLayerByLayerStrategy.StrategyId);
         Assert.Contains(reports, r => r.Stage == "reach map" && r.Message == "reach map: round 1 of 3, 33%");
         Assert.Contains(reports, r => r.Stage == "reach map" && r.Message == "reach map: round 2 of 3, 67%");
         Assert.Contains(reports, r => r.Stage == "reach map" && r.Message == "reach map: round 3 of 3, 100%");
@@ -53,7 +53,7 @@ public sealed class StageProgressTests
     [Fact]
     public void ReachMapRounds_FillTheirThirdOfTheStage_InOrder()
     {
-        var reports = Run(ThreeAxisFreedomStrategy.StrategyId).Where(r => r.Stage == "reach map").ToList();
+        var reports = Run(ZLayerByLayerStrategy.StrategyId).Where(r => r.Stage == "reach map").ToList();
         var rounds = reports.Select(r => r.Message).Where(m => m.Contains("round", StringComparison.Ordinal))
             .Select(m => int.Parse(m.AsSpan("reach map: round ".Length, 1)))
             .ToList();
@@ -65,28 +65,32 @@ public sealed class StageProgressTests
         Assert.Equal(0.40f, stageEnd, 4);
     }
 
-    // Recursion (T-148): the second pass names itself and the bar never moves back over the passes.
+    // A pass after the first names itself ("pass 2, ..."); the frustum fixture of FarWithdrawalTests with a
+    // far stepdown runs one pass under Backwards (T-214), so no message names a pass and the bar never moves
+    // back over the backward check and the far block.
     [Fact]
-    public void Recursion_NamesEveryPassAfterTheFirst_AndTheBarNeverMovesBack()
+    public void OnePass_NamesNoPass_AndTheBarNeverMovesBack()
     {
         var project = MillingProject.Default();
-        project.Tool.CutterDiameter = 2;
-        project.Tool.HeadDiameter = 4;
-        project.Tool.CutterLength = 2.5f;
-        project.Parameters.Stepover = 1;
-        project.Parameters.Stepdown = 1.5f;
-        project.Stock.SizeX = 14;
-        project.Stock.SizeY = 14;
-        project.Stock.SizeZ = 5;
-        project.Stock.AlignZ = StockAlignment.Max;
+        project.Stock.AlignZ = StockAlignment.Min;
+        project.Tool.CutterLength = 2f;
+        project.Tool.HeadShape = HeadShape.Frustum;
+        project.Tool.HeadDiameter = 7f;
+        project.Tool.HeadTopDiameter = 10f;
+        project.Tool.HeadLength = 10f;
+        project.Parameters.FarStepdown = 4f;
+        project.Parameters.Stepover = 1f;
+        project.Stock.SizeX = 40;
+        project.Stock.SizeY = 40;
+        project.Stock.SizeZ = 9;
         project.Parameters.CellSize = 0.5f;
         project.Models.Add(new ModelPlacement { StlPath = "box.stl" });
         var reports = new List<ProgressReport>();
-        var result = new PipelineService().Run(project, new[] { TestMeshes.Box(8, 8, 3) }, new SynchronousProgress(reports.Add), CancellationToken.None);
-        Assert.True(result.Passes >= 2, $"{result.Passes} passes");
-        Assert.Contains(reports, r => r.Stage == "route" && r.Message.StartsWith("pass 2, route: pass 1 of ", StringComparison.Ordinal));
-        Assert.Contains(reports, r => r.Stage == CollisionService.StageName && r.Message.StartsWith("pass 2, collision check", StringComparison.Ordinal));
-        Assert.DoesNotContain(reports, r => r.Message.StartsWith("pass 1,", StringComparison.Ordinal));
+        var result = new PipelineService().Run(project, new[] { TestMeshes.Box(10, 10, 4) }, new SynchronousProgress(reports.Add), CancellationToken.None);
+        Assert.Equal(1, result.Passes);
+        Assert.Contains(reports, r => r.Stage == "route" && r.Message.StartsWith("route: pass 1 of ", StringComparison.Ordinal));
+        Assert.Contains(reports, r => r.Stage == CollisionService.StageName && r.Message.StartsWith("collision check", StringComparison.Ordinal));
+        Assert.DoesNotContain(reports, r => r.Message.StartsWith("pass ", StringComparison.Ordinal));
         Assert.True(reports.Select(r => r.Fraction).SequenceEqual(reports.Select(r => r.Fraction).OrderBy(f => f)), "progress went backwards");
         Assert.Equal("Toolpath ready", reports[^1].Message);
         Assert.Equal(1f, reports[^1].Fraction);
@@ -111,11 +115,9 @@ public sealed class StageProgressTests
     {
         foreach (var context in new[] { TestContexts.BoxInStock(), TestContexts.BumpPlate() })
         {
-            var free = new List<StepProgress>();
-            new ThreeAxisFreedomStrategy().Generate(context, new Recorder(free.Add), TestContext.Current.CancellationToken);
             var layered = new List<StepProgress>();
             new ZLayerByLayerStrategy().Generate(context, new Recorder(layered.Add), TestContext.Current.CancellationToken);
-            foreach (var reports in new[] { free, layered })
+            foreach (var reports in new[] { layered })
             {
                 Assert.NotEmpty(reports);
                 Assert.Equal(Enumerable.Range(1, reports.Count), reports.Select(r => r.Step));

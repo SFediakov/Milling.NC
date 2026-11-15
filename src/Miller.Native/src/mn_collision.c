@@ -1,13 +1,12 @@
 #include "mn_gpu.h"
 #include "mn_thread.h"
 
-/* Dynamic collision check (T-147) and its resolution (T-148). The check walks the toolpath over a
- * clone of the stock the way the simulation does (CollisionRecorder): feeds and plunges remove
- * material at CellSize / 2 along the segment, the head ring is tested against the stock as it stands
- * at every segment end and every max(CellSize, cutter radius) along it, the footprint of a rapid at
- * the same spacing. A cell already cut below the tool surface is no collision; the same cell uncut
- * is one. Every entered cell gets COLLISION; the resolution turns entered stock into SHOULD_REMOVE
- * and forbids positions whose head met the model or stock that cannot be removed.
+/* Dynamic collision check (T-147). The check walks the toolpath over a clone of the stock the way the
+ * simulation does (CollisionRecorder): feeds and plunges remove material at CellSize / 2 along the
+ * segment, the head ring is tested against the stock as it stands at every segment end and every
+ * max(CellSize, cutter radius) along it, the footprint of a rapid at the same spacing. A cell already
+ * cut below the tool surface is no collision; the same cell uncut is one. Every entered cell gets
+ * COLLISION.
  *
  * The walk runs in batches of segments on the workers (T-187), with the same result as one walk: every
  * worker walks the whole batch in order over its own grid rows (every `bands`-th row), so each cell
@@ -154,8 +153,7 @@ static void record_hit(mn_walk_state* w, int kind, mn_v3 tip, int position, int 
         mn_hits* h = w->hits;
         float closing = h->closing[c];
         int removable = !mn_isnan(closing) && closing + h->slack <= surface;
-        int repeat = removable && (w->status[c] & MN_CELL_SHOULD_REMOVE) != 0;
-        uint8_t flag = (uint8_t)(removable ? MN_HIT_STOCK : MN_HIT_MODEL) | (uint8_t)(repeat ? MN_HIT_REPEAT : 0) | (uint8_t)(model_hit ? MN_HIT_SURFACE : 0);
+        uint8_t flag = (uint8_t)(removable ? MN_HIT_STOCK : MN_HIT_MODEL) | (uint8_t)(model_hit ? MN_HIT_SURFACE : 0);
         if (h->cell_flags[c] == 0) {
             h->entered++;
         }
@@ -660,224 +658,6 @@ MN_API int32_t mn_collision_check(const mn_segment* segments, int32_t count, con
     *events = list.items != NULL ? list.items : (mn_collision*)mn_alloc(1, sizeof(mn_collision));
     *event_count = list.count;
     return MN_OK;
-}
-
-/* ---- resolution ---- */
-
-/* The closing of the effective tip per cell with the position that attains it and the next lowest
- * value from another position, so that raising one position gives the closing without it. */
-static int closing_with_runner_up(const mn_grid* g, const float* effective, const mn_profile* profile, float* lowest, int* lowest_by, float* runner_up)
-{
-    int cells = mn_cells(g);
-    for (int k = 0; k < cells; k++) {
-        lowest[k] = NAN;
-        lowest_by[k] = -1;
-        runner_up[k] = NAN;
-    }
-    for (int j = 0; j < g->height; j++) {
-        for (int i = 0; i < g->width; i++) {
-            int c = j * g->width + i;
-            for (int o = 0; o < profile->offset_count; o++) {
-                int qi = i - profile->offsets[o].dx;
-                int qj = j - profile->offsets[o].dy;
-                if (!mn_in_bounds(g, qi, qj)) {
-                    continue;
-                }
-                int q = qj * g->width + qi;
-                float t = effective[q];
-                if (mn_isnan(t)) {
-                    continue;
-                }
-                float value = t + profile->offsets[o].dz;
-                if (mn_isnan(lowest[c]) || value < lowest[c]) {
-                    runner_up[c] = lowest[c];
-                    lowest[c] = value;
-                    lowest_by[c] = q;
-                } else if (mn_isnan(runner_up[c]) || value < runner_up[c]) {
-                    runner_up[c] = value;
-                }
-            }
-        }
-    }
-    return MN_OK;
-}
-
-/* The X rule for one position over the material that stays (`lowest`, the closing of the tip map
- * with the raised positions): the unremovable cells its head meets at tip `z` against `heights`
- * (the standing heights the check saw, or the closing itself), the model cells its cutter finishes
- * there, and the tip that clears. Returns 1 when the position is forbidden, filling `need`. */
-static int forbid_position(const mn_grid* g, const mn_profile* profile, float cutter_length, const float* model, float floor, float tolerance, float ratio, int p, float z,
-    const float* heights, const uint8_t* cell_flags, const float* lowest, float* need)
-{
-    int i = p % g->width;
-    int j = p / g->width;
-    float raise = NAN;
-    int damaged = 0;
-    int repeat = 0;
-    for (int o = 0; o < profile->annulus_count; o++) {
-        int ii = i + profile->annulus[o].dx;
-        int jj = j + profile->annulus[o].dy;
-        if (!mn_in_bounds(g, ii, jj)) {
-            continue;
-        }
-        int c = jj * g->width + ii;
-        float h = heights[c];
-        float surface = z + cutter_length + profile->annulus[o].dz;
-        if (mn_isnan(h) || !(h > surface + tolerance)) {
-            continue;
-        }
-        float m = model[c];
-        float here;
-        int unremovable = cell_flags == NULL ? 1 : (cell_flags[c] & MN_HIT_MODEL) != 0;
-        if (unremovable) {
-            damaged++;
-            /* What stays: the closing at best, never below the model, the standing height where no
-             * position reaches the cell. */
-            float stays = mn_isnan(lowest[c]) ? h : mn_max(m, lowest[c]);
-            here = stays - profile->annulus[o].dz - cutter_length;
-        } else if ((cell_flags[c] & MN_HIT_REPEAT) != 0) {
-            repeat = 1;
-            here = h - profile->annulus[o].dz - cutter_length;
-        } else {
-            continue;
-        }
-        if (mn_isnan(raise) || here > raise) {
-            raise = here;
-        }
-    }
-    if ((damaged == 0 && !repeat) || mn_isnan(raise)) {
-        return 0;
-    }
-    int forbid = repeat;
-    if (damaged > 0 && !forbid) {
-        /* The model cells the cutter finishes at this position: its bottom reaches their surface. */
-        int finished = 0;
-        for (int o = 0; o < profile->offset_count; o++) {
-            int ii = i + profile->offsets[o].dx;
-            int jj = j + profile->offsets[o].dy;
-            if (!mn_in_bounds(g, ii, jj)) {
-                continue;
-            }
-            int c = jj * g->width + ii;
-            float m = model[c];
-            if (m > floor + MN_FLOOR_TOLERANCE && z + profile->offsets[o].dz <= m + tolerance) {
-                finished++;
-            }
-        }
-        forbid = !((float)finished > ratio * (float)damaged);
-    }
-    /* The next pass's path may run `tolerance` above its planned tip (simplifier) and the check
-     * allows MN_COLLISION_TOLERANCE, so the head clears what stays by both. */
-    *need = raise + tolerance + MN_COLLISION_TOLERANCE;
-    return forbid;
-}
-
-/* Every position whose head meets the model that stays at best under the raised tips (the closing
- * of the tip map without the standing stock, whose terraces the cut scope draws again every pass)
- * is a collision the next pass cannot avoid; the X rule decides it now, round by round, so a
- * forbidden wall is cleared in one pass instead of one ring of positions per pass. */
-#define MN_PROPAGATION_ROUNDS 8
-
-static int propagate(const mn_grid* g, const mn_profile* profile, float cutter_length, const float* model, const float* effective, float floor, float tolerance, float ratio,
-    uint8_t* status, float* raised, float* tip, float* lowest, int* lowest_by, float* runner_up, float* limit)
-{
-    int cells = mn_cells(g);
-    int changed = 0;
-    for (int round = 0; round < MN_PROPAGATION_ROUNDS; round++) {
-        mn_apply_limit(effective, raised, cells, tip);
-        closing_with_runner_up(g, tip, profile, lowest, lowest_by, runner_up);
-        int limit_status = mn_head_limit_compute(g, lowest, profile->annulus, profile->annulus_count, cutter_length, limit);
-        if (limit_status != MN_OK) {
-            changed = limit_status;
-            break;
-        }
-        int added = 0;
-        for (int p = 0; p < cells; p++) {
-            float z = tip[p];
-            if (mn_isnan(z) || mn_isnan(limit[p]) || !(limit[p] > z + MN_COLLISION_TOLERANCE)) {
-                continue;
-            }
-            float need;
-            if (!forbid_position(g, profile, cutter_length, model, floor, tolerance, ratio, p, z, lowest, NULL, lowest, &need)) {
-                continue;
-            }
-            if (mn_isnan(raised[p]) || need > raised[p]) {
-                raised[p] = need;
-                status[p] |= MN_CELL_FORBIDDEN;
-                added++;
-            }
-        }
-        changed += added;
-        if (added == 0) {
-            break;
-        }
-    }
-    return changed;
-}
-
-int mn_resolve(const mn_grid* g, const mn_profile* profile, float cutter_length, const float* model, const float* effective, const float* material, float floor, float tolerance,
-    float ratio, const mn_hits* hits, uint8_t* status, float* raised)
-{
-    int cells = mn_cells(g);
-    int changed = 0;
-    for (int c = 0; c < cells; c++) {
-        uint8_t flags = hits->cell_flags[c];
-        if (flags == 0 || (flags & MN_HIT_MODEL) != 0 || (flags & MN_HIT_REPEAT) != 0) {
-            continue;
-        }
-        /* Entered removable stock: should be removed, and no longer a collision. */
-        if ((status[c] & MN_CELL_SHOULD_REMOVE) == 0) {
-            changed++;
-        }
-        status[c] |= MN_CELL_SHOULD_REMOVE;
-        status[c] &= (uint8_t)~MN_CELL_COLLISION;
-    }
-
-    float* lowest = (float*)mn_alloc((size_t)cells, sizeof(float));
-    int* lowest_by = (int*)mn_alloc((size_t)cells, sizeof(int));
-    float* runner_up = (float*)mn_alloc((size_t)cells, sizeof(float));
-    float* tip = (float*)mn_alloc((size_t)cells, sizeof(float));
-    float* limit = (float*)mn_alloc((size_t)cells, sizeof(float));
-    if (lowest == NULL || lowest_by == NULL || runner_up == NULL || tip == NULL || limit == NULL) {
-        free(lowest);
-        free(lowest_by);
-        free(runner_up);
-        free(tip);
-        free(limit);
-        return mn_fail(MN_ERR_MEMORY, "Out of memory for the collision resolution.");
-    }
-    closing_with_runner_up(g, material, profile, lowest, lowest_by, runner_up);
-
-    /* The positions the check caught: forbidden by the X rule over the heights they met. */
-    for (int p = 0; p < cells; p++) {
-        uint8_t flags = hits->position_flags[p];
-        if ((flags & (MN_HIT_MODEL | MN_HIT_REPEAT)) == 0 || mn_isnan(effective[p])) {
-            continue;
-        }
-        float need;
-        if (!forbid_position(g, profile, cutter_length, model, floor, tolerance, ratio, p, hits->position_z[p], hits->cell_height, hits->cell_flags, lowest, &need)) {
-            continue;
-        }
-        if (!(need > effective[p] + MN_FLOOR_TOLERANCE)) {
-            continue;
-        }
-        if (mn_isnan(raised[p]) || need > raised[p]) {
-            raised[p] = need;
-            status[p] |= MN_CELL_FORBIDDEN;
-            changed++;
-        }
-    }
-
-    int propagated = propagate(g, profile, cutter_length, model, effective, floor, tolerance, ratio, status, raised, tip, lowest, lowest_by, runner_up, limit);
-    free(lowest);
-    free(lowest_by);
-    free(runner_up);
-    free(tip);
-    free(limit);
-    if (propagated < 0) {
-        return propagated;
-    }
-    return changed + propagated;
 }
 
 MN_API int32_t mn_far_withdraw(const uint8_t* places, int32_t width, int32_t height, float cell_size, float radius, uint8_t* allowed)

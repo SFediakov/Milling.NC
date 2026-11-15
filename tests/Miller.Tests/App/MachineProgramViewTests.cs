@@ -55,7 +55,7 @@ public sealed class MachineProgramViewTests : IDisposable
     {
         var toolpath = new Toolpath();
         var corners = new[] { new Vector3(0, 0, 1), new Vector3(10, 0, 1), new Vector3(10, 10, 1), new Vector3(0, 10, 1) };
-        toolpath.Add(new ToolpathSegment(new Vector3(0, 0, 5), corners[0], MoveKind.Plunge, 200));
+        toolpath.Add(new ToolpathSegment(new Vector3(0, 0, 5), corners[0], MoveKind.Plunge, 800));
         for (var k = 1; k < corners.Length; k++)
         {
             toolpath.Add(new ToolpathSegment(corners[k - 1], corners[k], MoveKind.Feed, 800));

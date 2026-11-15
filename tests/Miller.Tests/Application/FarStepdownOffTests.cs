@@ -28,18 +28,10 @@ public sealed class FarStepdownOffTests
     }
 
     [Theory]
-    [InlineData(ZLayerByLayerStrategy.StrategyId, CollisionMode.Recursion, CutScope.Everything)]
-    [InlineData(ZLayerByLayerStrategy.StrategyId, CollisionMode.Recursion, CutScope.Separation)]
-    [InlineData(ZLayerByLayerStrategy.StrategyId, CollisionMode.OneRun, CutScope.Everything)]
-    [InlineData(ZLayerByLayerStrategy.StrategyId, CollisionMode.OneRun, CutScope.Separation)]
     [InlineData(ZLayerByLayerStrategy.StrategyId, CollisionMode.Backwards, CutScope.Everything)]
     [InlineData(ZLayerByLayerStrategy.StrategyId, CollisionMode.Backwards, CutScope.Separation)]
     [InlineData(ZLayerByLayerStrategy.StrategyId, CollisionMode.Backwards_GPU, CutScope.Everything)]
     [InlineData(ZLayerByLayerStrategy.StrategyId, CollisionMode.Backwards_GPU, CutScope.Separation)]
-    [InlineData(ThreeAxisFreedomStrategy.StrategyId, CollisionMode.Recursion, CutScope.Everything)]
-    [InlineData(ThreeAxisFreedomStrategy.StrategyId, CollisionMode.Recursion, CutScope.Separation)]
-    [InlineData(ThreeAxisFreedomStrategy.StrategyId, CollisionMode.OneRun, CutScope.Everything)]
-    [InlineData(ThreeAxisFreedomStrategy.StrategyId, CollisionMode.OneRun, CutScope.Separation)]
     public void TheStepdownAsFarStepdown_MillsAsWithoutIt(string strategy, CollisionMode mode, CutScope scope)
     {
         Assert.SkipWhen(mode == CollisionMode.Backwards_GPU && !GpuDevice.Available, $"No OpenCL GPU: {GpuDevice.Description}");

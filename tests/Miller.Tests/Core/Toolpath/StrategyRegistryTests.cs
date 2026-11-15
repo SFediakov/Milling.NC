@@ -24,10 +24,10 @@ public sealed class StrategyRegistryTests
     }
 
     [Fact]
-    public void Registry_HoldsExactlyTheTwoRoutingStrategies()
+    public void Registry_HoldsExactlyTheZLayerStrategy()
     {
-        Assert.Equal(new[] { "z-layer-by-layer", "three-axis-freedom" }, StrategyRegistry.All.Select(s => s.Id));
-        Assert.Equal(new[] { "Z layer by layer", "3 axis freedom" }, StrategyRegistry.All.Select(s => s.DisplayName));
+        Assert.Equal(new[] { "z-layer-by-layer" }, StrategyRegistry.All.Select(s => s.Id));
+        Assert.Equal(new[] { "Z layer by layer" }, StrategyRegistry.All.Select(s => s.DisplayName));
         Assert.Equal(MillingProject.DefaultRoutingStrategyId, StrategyRegistry.All[0].Id);
     }
 

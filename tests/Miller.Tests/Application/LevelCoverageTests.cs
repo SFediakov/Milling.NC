@@ -23,7 +23,6 @@ public sealed class LevelCoverageTests
         project.Tool.CutterDiameter = 3f;
         project.Tool.HeadDiameter = 6f;
         project.Parameters.Stepover = stepover;
-        project.Parameters.FinishingStepover = stepover;
         project.Stock.SizeX = 30;
         project.Stock.SizeY = 30;
         project.Stock.SizeZ = 6;
@@ -35,9 +34,7 @@ public sealed class LevelCoverageTests
     // The stepover equals the cutter diameter (the largest the validator accepts): before the fix 19
     // cells stood above the plan, up to one stepdown high.
     [Theory]
-    [InlineData(ZLayerByLayerStrategy.StrategyId, CollisionMode.Recursion)]
-    [InlineData(ZLayerByLayerStrategy.StrategyId, CollisionMode.OneRun)]
-    [InlineData(ThreeAxisFreedomStrategy.StrategyId, CollisionMode.Recursion)]
+    [InlineData(ZLayerByLayerStrategy.StrategyId, CollisionMode.Backwards)]
     public void StepoverOfTheCutterDiameter_LeavesNoStockAboveThePlan(string strategy, CollisionMode mode)
     {
         var result = Run(strategy, 3f, mode);

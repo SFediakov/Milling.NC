@@ -137,7 +137,8 @@ public sealed class SimulationServiceTests
     }
 
     // T-103: a 1.5 mm cutter below a 4 mm head beside 3 mm walls; the strip the cutter leaves next
-    // to the walls must keep the head clear, so the planned path produces no head event.
+    // to the walls must keep the head clear, so the planned path produces no head event. Since T-214 the
+    // backward check leaves those positions out (unreached) instead of the recursion raising them.
     [Fact]
     public void ShortCutterBesideWalls_ProducesNoHeadCollision()
     {
@@ -153,7 +154,7 @@ public sealed class SimulationServiceTests
         project.Parameters.CellSize = 0.5f;
         project.Models.Add(new ModelPlacement { StlPath = "box.stl" });
         var result = new PipelineService().Run(project, new[] { TestMeshes.Box(8, 8, 3) }, null, CancellationToken.None);
-        Assert.Contains(result.HeadLimitedMask.Cast<bool>(), limited => limited);
+        Assert.True(result.Unreached!.Value.Unreached > 0, "the head must leave positions beside the walls unreached");
 
         var service = new SimulationService();
         service.Load(result);
@@ -162,8 +163,8 @@ public sealed class SimulationServiceTests
     }
 
     // T-135: the same fixture under a frustum head (4 mm bottom, 9 mm top over 2 mm): the planned
-    // path stays clear of the widening head, and the head limit never exceeds the one of a cylinder
-    // of the top diameter.
+    // path stays clear of the widening head, and the frustum leaves no more positions unreached than a
+    // cylinder of the top diameter (T-214: the backward check, not the recursion's head limit).
     [Fact]
     public void FrustumHeadBesideWalls_ProducesNoHeadCollision()
     {
@@ -187,14 +188,9 @@ public sealed class SimulationServiceTests
         var meshes = new[] { TestMeshes.Box(8, 8, 3) };
         var frustum = new PipelineService().Run(Project(t => { t.HeadShape = HeadShape.Frustum; t.HeadTopDiameter = 9; t.HeadLength = 2; }), meshes, null, CancellationToken.None);
         var wide = new PipelineService().Run(Project(t => t.HeadDiameter = 9), meshes, null, CancellationToken.None);
-        Assert.Contains(frustum.HeadLimitedMask.Cast<bool>(), limited => limited);
-        for (var j = 0; j < frustum.HeadLimit.Height; j++)
-        {
-            for (var i = 0; i < frustum.HeadLimit.Width; i++)
-            {
-                Assert.False(frustum.HeadLimit[i, j] > wide.HeadLimit[i, j], $"({i},{j})");
-            }
-        }
+        Assert.True(frustum.Unreached!.Value.Unreached > 0, "the frustum must leave positions beside the walls unreached");
+        Assert.True(frustum.Unreached.Value.Unreached <= wide.Unreached!.Value.Unreached,
+            $"frustum {frustum.Unreached.Value.Unreached} unreached against {wide.Unreached.Value.Unreached} under the wide cylinder");
 
         var service = new SimulationService();
         service.Load(frustum);

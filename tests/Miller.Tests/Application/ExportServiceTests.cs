@@ -22,7 +22,7 @@ public sealed class ExportServiceTests : IDisposable
     private static Toolpath OneMove()
     {
         var path = new Toolpath();
-        path.Add(new ToolpathSegment(new Vector3(0, 0, 5), new Vector3(0, 0, -1), MoveKind.Plunge, 200));
+        path.Add(new ToolpathSegment(new Vector3(0, 0, 5), new Vector3(0, 0, -1), MoveKind.Plunge, CuttingParameters.DefaultFeedRate));
         return path;
     }
 

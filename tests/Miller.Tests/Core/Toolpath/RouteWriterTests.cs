@@ -7,8 +7,9 @@ using Xunit;
 namespace Miller.Tests.Core.Toolpaths;
 
 // The writer starts with a plunge from safe Z, follows the surface polyline with feeds, ramps
-// down gentle slopes but plunges in place instead of dropping down a wall at feed rate, travels
-// along the surface or over safe Z by time, and ends with a retract.
+// down gentle slopes but plunges in place instead of dropping down a wall, travels along the
+// surface or over safe Z by time, and ends with a retract. Feeds and plunges run at the feed rate
+// (T-215: one speed in the whole program).
 public sealed class RouteWriterTests
 {
     private const float SafeZ = 10f;
@@ -23,7 +24,7 @@ public sealed class RouteWriterTests
         writer.Travel(new RoutePoint(0.5f, 0.5f, 2f), Row(0, 0, 0));
         var path = writer.Finish();
         Assert.Equal(2, path.Count);
-        Assert.Equal(new ToolpathSegment(new Vector3(0.5f, 0.5f, SafeZ), new Vector3(0.5f, 0.5f, 2f), MoveKind.Plunge, 200), path.Segments[0]);
+        Assert.Equal(new ToolpathSegment(new Vector3(0.5f, 0.5f, SafeZ), new Vector3(0.5f, 0.5f, 2f), MoveKind.Plunge, 800), path.Segments[0]);
         Assert.Equal(MoveKind.Rapid, path.Segments[1].Kind);
         Assert.Equal(SafeZ, path.Segments[1].End.Z);
     }
@@ -63,7 +64,7 @@ public sealed class RouteWriterTests
         var dropped = steep.Finish().Segments.Skip(1).SkipLast(1).ToList();
         Assert.Equal(2, dropped.Count);
         Assert.Equal(new ToolpathSegment(new Vector3(0.5f, 0.5f, 2f), new Vector3(0.7f, 0.5f, 2f), MoveKind.Feed, 800), dropped[0]);
-        Assert.Equal(new ToolpathSegment(new Vector3(0.7f, 0.5f, 2f), new Vector3(0.7f, 0.5f, 0f), MoveKind.Plunge, 200), dropped[1]);
+        Assert.Equal(new ToolpathSegment(new Vector3(0.7f, 0.5f, 2f), new Vector3(0.7f, 0.5f, 0f), MoveKind.Plunge, 800), dropped[1]);
         Assert.Throws<InvalidOperationException>(() => new RouteWriter(TestContexts.Parameters(), SafeZ).Follow(new RoutePoint(0, 0, 0), grid));
     }
 

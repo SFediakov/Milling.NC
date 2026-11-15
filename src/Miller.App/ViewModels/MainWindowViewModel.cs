@@ -108,6 +108,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             StatusText = message;
         };
         Project.ProjectChanged += (_, _) => UpdateViewportScene();
+        // The cutter is drawn at a connected machine before any project is opened or edited.
+        UpdateViewportScene();
     }
 
     public event EventHandler? ExitRequested;

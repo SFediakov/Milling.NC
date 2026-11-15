@@ -54,6 +54,13 @@ public sealed class PresetService
                 throw new InvalidDataException($"{FilePath} holds an empty or duplicate preset name '{preset.Name}'.");
             }
 
+            // T-214: as in ProjectSerializer.Deserialize.
+            preset.RoutingStrategyId = ProjectSerializer.CurrentStrategyId(preset.RoutingStrategyId);
+            preset.RecursionRatio = null;
+            preset.OneRunRatio = null;
+            preset.Parameters.FinishingStepover = null;
+            preset.Parameters.PlungeRate = null;
+
             _presets.Add(preset);
         }
 

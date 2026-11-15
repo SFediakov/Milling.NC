@@ -162,9 +162,8 @@ public sealed class BridgeTests
     }
 
     [Theory]
-    [InlineData(ThreeAxisFreedomStrategy.StrategyId, TipType.Ball, CollisionMode.OneRun)]
-    [InlineData(ThreeAxisFreedomStrategy.StrategyId, TipType.Flat, CollisionMode.Recursion)]
-    [InlineData(ZLayerByLayerStrategy.StrategyId, TipType.Ball, CollisionMode.OneRun)]
+    [InlineData(ZLayerByLayerStrategy.StrategyId, TipType.Ball, CollisionMode.Backwards)]
+    [InlineData(ZLayerByLayerStrategy.StrategyId, TipType.Flat, CollisionMode.Backwards)]
     public void EveryStrategyTipAndCollisionMode_KeepsTheBridges(string strategy, TipType tip, CollisionMode mode)
     {
         var project = BoxProject(strategy);

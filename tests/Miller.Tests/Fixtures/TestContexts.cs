@@ -18,12 +18,10 @@ public static class TestContexts
     {
         CellSize = cellSize,
         Stepover = 3f,
-        FinishingStepover = 0.5f,
         Stepdown = 2f,
         SafeHeight = 5f,
         Tolerance = 0.05f,
         FeedRate = 800f,
-        PlungeRate = 200f,
         RapidRate = 3000f,
     };
 

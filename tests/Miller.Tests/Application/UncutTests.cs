@@ -106,7 +106,7 @@ public sealed class UncutTests
     [Fact]
     public void NotCutCells_EqualTheSimulationAgainstThePlan()
     {
-        foreach (var result in new[] { RunWall(CollisionMode.Backwards), RunWall(CollisionMode.Recursion), RunFrustum(CollisionMode.Backwards, 0f), RunFrustum(CollisionMode.Backwards, 4f), RunFrustum(CollisionMode.OneRun, 0f) })
+        foreach (var result in new[] { RunWall(CollisionMode.Backwards), RunFrustum(CollisionMode.Backwards, 0f), RunFrustum(CollisionMode.Backwards, 4f) })
         {
             var expected = Reference(result);
             Assert.Equal(expected.Cells, result.Uncut.Cells);
@@ -116,24 +116,21 @@ public sealed class UncutTests
         }
     }
 
-    // The wall is cut to the plan in every mode; under the frustum the ring the head cannot reach stays,
-    // and Recursion, which forbids positions over several passes, leaves material as well.
+    // The wall is cut to the plan; under the frustum the ring the head cannot reach stays.
     [Fact]
     public void TheWallIsCutWhole_TheFrustumBoxIsNot()
     {
         Assert.Equal(0, RunWall(CollisionMode.Backwards).Uncut.Cells);
-        Assert.Equal(0, RunWall(CollisionMode.Recursion).Uncut.Cells);
         var backwards = RunFrustum(CollisionMode.Backwards, 0f);
         Assert.True(backwards.Uncut.Cells > 0, "the unreached ring must leave material");
         Assert.True(backwards.Uncut.VolumeMm3 > 0 && backwards.Uncut.MaxHeight > backwards.Tolerance);
-        Assert.True(RunFrustum(CollisionMode.Recursion, 0f).Uncut.Cells > 0, "the forbidden positions must leave material");
     }
 
     [Fact]
-    public void Report_NamesTheCells_AndInBackwardsTheUnreachedPositions()
+    public void Report_NamesTheCells_AndTheUnreachedPositions()
     {
-        var wall = RunWall(CollisionMode.Recursion);
-        Assert.Equal(UncutReport.NothingLeftText, UncutReport.Summarize(wall));
+        var wall = RunWall(CollisionMode.Backwards);
+        Assert.StartsWith(UncutReport.NothingLeftText + "\nUnreached positions (Backwards): 0 of ", UncutReport.Summarize(wall));
         Assert.Equal("not cut: 0 cells", UncutReport.StatusSuffix(wall));
 
         var frustum = RunFrustum(CollisionMode.Backwards, 0f);
@@ -145,6 +142,5 @@ public sealed class UncutTests
         Assert.Contains(string.Create(System.Globalization.CultureInfo.InvariantCulture,
             $"Unreached positions (Backwards): {unreached.Unreached} of {unreached.ModelCells} model cells, {unreached.Percent:0.00} %"), text);
         Assert.Equal(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"not cut: {uncut.Cells} cells"), UncutReport.StatusSuffix(frustum));
-        Assert.DoesNotContain("Unreached", UncutReport.Summarize(RunFrustum(CollisionMode.Recursion, 0f)));
     }
 }

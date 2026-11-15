@@ -81,16 +81,4 @@ public sealed class RouteSolverFixedEndTests
         Assert.Throws<ArgumentOutOfRangeException>(() => Solve(problem, 3, xs.Length));
         Assert.Throws<ArgumentOutOfRangeException>(() => Solve(problem, 3, -2));
     }
-
-    // A precedence pair that orders the end before another node contradicts the fixed end.
-    [Fact]
-    public void AnEndWithASuccessor_IsRejected()
-    {
-        var grid = Flat(30, 30, 1f);
-        var (xs, ys) = Lattice(grid, 2);
-        var problem = new RouteProblem(grid, xs, ys, new float[xs.Length]) { Before = new[] { 10 }, After = new[] { 20 } };
-        Assert.Throws<ArgumentException>(() => Solve(problem, 0, 10));
-        var order = Solve(problem, 0, 20);
-        Assert.Equal(20, order[^1]);
-    }
 }

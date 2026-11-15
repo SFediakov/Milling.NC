@@ -7,7 +7,6 @@ namespace Miller.Core.Toolpaths.Strategies;
 internal static class NativeStrategy
 {
     public const int ZLayer = 0;
-    public const int ThreeAxisFreedom = 1;
 
     public static unsafe Toolpath Generate(int strategy, ToolpathContext context, IProgress<StepProgress>? progress, CancellationToken cancellation)
     {
@@ -15,11 +14,9 @@ internal static class NativeStrategy
         using var plan = new CoreNative.NativePlan(context.Plan, context.EffectiveTip);
         using var callback = new CoreNative.Progress(progress);
         using var cancel = new CoreNative.CancelFlag(cancellation);
-        var shouldCut = context.ShouldCut is null ? null : CoreNative.Bytes(context.ShouldCut);
         CoreNative.Segment* segments = null;
         int count;
         fixed (float* model = context.Model.Z, tip = context.Tip.Z, effective = context.EffectiveTip.Z, limit = context.HeadLimit.Z, stock = context.Stock.Z)
-        fixed (byte* should = shouldCut)
         {
             var native = new CoreNative.Context
             {
@@ -29,15 +26,12 @@ internal static class NativeStrategy
                 EffectiveTip = effective,
                 HeadLimit = limit,
                 Stock = stock,
-                ShouldCut = should,
                 Plan = plan.Handle,
                 Tool = CoreNative.ToolOf(context.Tool),
                 Parameters = CoreNative.ParametersOf(context.Parameters),
                 StockTop = context.StockTop,
                 Floor = context.Floor,
                 CollisionMode = (int)context.CollisionMode,
-                Ratio = context.Ratio,
-                Raised = null,
                 FarAllowed = null,
                 FarArea = null,
             };
