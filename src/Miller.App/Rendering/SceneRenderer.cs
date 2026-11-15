@@ -2,7 +2,6 @@ using System.Numerics;
 using Avalonia.OpenGL;
 using Miller.App.ViewModels;
 using Miller.Core.Analysis;
-using Miller.Core.Toolpaths;
 
 namespace Miller.App.Rendering;
 
@@ -62,12 +61,7 @@ public sealed class SceneRenderer : IDisposable
         _selectionColor = ThemeColors.Get("SelectionColor");
         _toolpath = new ToolpathRenderer(
             gl,
-            new Dictionary<MoveKind, Vector4>
-            {
-                [MoveKind.Rapid] = ThemeColors.Get("ToolpathRapidColor"),
-                [MoveKind.Feed] = ThemeColors.Get("ToolpathFeedColor"),
-                [MoveKind.Plunge] = ThemeColors.Get("ToolpathPlungeColor"),
-            },
+            new ColorGradient(ThemeColors.GetGradient("ToolpathSpeedBrush")),
             _background,
             ThemeColors.Get("ToolpathNextColor"));
         _stockMap = new HeightMapRenderer(gl);
@@ -101,7 +95,7 @@ public sealed class SceneRenderer : IDisposable
         if (viewModel.ToolpathVersion != _toolpathVersion)
         {
             _toolpathVersion = viewModel.ToolpathVersion;
-            _toolpath.Upload(viewModel.DisplayedSegments);
+            _toolpath.Upload(viewModel.DisplayedSegments, viewModel.SpeedScale);
         }
 
         if (viewModel.StockMapVersion != _stockMapVersion)

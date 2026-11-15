@@ -4,11 +4,13 @@ using Miller.Core.Toolpaths;
 
 namespace Miller.App.Rendering;
 
-// Toolpath as lines colored by move kind. The done part (segments before the progress index) is
-// drawn from a bright buffer, the remaining part from a buffer whose colors are mixed towards the
-// background, so no blending state is needed. A third buffer holds every segment in the highlight
-// color, of which only the next moves after the progress index are drawn. Geometry building is
-// static so tests cover it without a GL context.
+// Toolpath as lines colored by the speed of each move (T-224): the move's fraction on the speed scale of
+// the shown path picks its color along the speed gradient, so the slowest move takes the gradient's first
+// color and the fastest its last. The done part (segments before the progress index) is drawn from a
+// bright buffer, the remaining part from a buffer whose colors are mixed towards the background, so no
+// blending state is needed. A third buffer holds every segment in the highlight color, of which only the
+// next moves after the progress index are drawn. Geometry building is static so tests cover it without a
+// GL context.
 public sealed class ToolpathRenderer : IDisposable
 {
     public const float RemainingMix = 0.5f;
@@ -18,24 +20,24 @@ public sealed class ToolpathRenderer : IDisposable
     private readonly VertexBuffer _dim;
     private readonly VertexBuffer _next;
     private readonly Vector4 _nextColor;
-    private readonly IReadOnlyDictionary<MoveKind, Vector4> _colors;
+    private readonly ColorGradient _speedColors;
     private readonly Vector4 _background;
 
-    public ToolpathRenderer(GlInterface gl, IReadOnlyDictionary<MoveKind, Vector4> colors, Vector4 background, Vector4 nextColor)
+    public ToolpathRenderer(GlInterface gl, ColorGradient speedColors, Vector4 background, Vector4 nextColor)
     {
         _bright = new VertexBuffer(gl, (GlShaders.PositionLocation, 3), (GlShaders.ColorLocation, 4));
         _dim = new VertexBuffer(gl, (GlShaders.PositionLocation, 3), (GlShaders.ColorLocation, 4));
         _next = new VertexBuffer(gl, (GlShaders.PositionLocation, 3), (GlShaders.ColorLocation, 4));
         _nextColor = nextColor;
-        _colors = colors ?? throw new ArgumentNullException(nameof(colors));
+        _speedColors = speedColors ?? throw new ArgumentNullException(nameof(speedColors));
         _background = background;
     }
 
     public int SegmentCount { get; private set; }
 
-    public void Upload(IReadOnlyList<ToolpathSegment> segments)
+    public void Upload(IReadOnlyList<ToolpathSegment> segments, ToolpathSpeedScale? scale)
     {
-        var (bright, dim) = BuildSegments(segments, _colors, _background);
+        var (bright, dim) = BuildSegments(segments, _speedColors, scale, _background);
         SegmentCount = bright.Length / (2 * FloatsPerVertex);
         _bright.Upload(bright, bright.Length, GlConsts.GL_STATIC_DRAW);
         _dim.Upload(dim, dim.Length, GlConsts.GL_STATIC_DRAW);
@@ -68,13 +70,15 @@ public sealed class ToolpathRenderer : IDisposable
         _next.Dispose();
     }
 
-    public static (float[] Bright, float[] Dim) Build(Toolpath? toolpath, IReadOnlyDictionary<MoveKind, Vector4> colors, Vector4 background)
-        => BuildSegments(toolpath?.Segments ?? Array.Empty<ToolpathSegment>(), colors, background);
+    public static (float[] Bright, float[] Dim) Build(Toolpath? toolpath, ColorGradient speedColors, ToolpathSpeedScale? scale, Vector4 background)
+        => BuildSegments(toolpath?.Segments ?? Array.Empty<ToolpathSegment>(), speedColors, scale, background);
 
-    // Two vertices per segment: position and color, bright and dimmed variants.
-    public static (float[] Bright, float[] Dim) BuildSegments(IReadOnlyList<ToolpathSegment> segments, IReadOnlyDictionary<MoveKind, Vector4> colors, Vector4 background)
+    // Two vertices per segment: position and color, bright and dimmed variants. Without a scale (no move
+    // has a known speed) every move takes the gradient's first color, as a move without a speed does.
+    public static (float[] Bright, float[] Dim) BuildSegments(IReadOnlyList<ToolpathSegment> segments, ColorGradient speedColors, ToolpathSpeedScale? scale, Vector4 background)
     {
         ArgumentNullException.ThrowIfNull(segments);
+        ArgumentNullException.ThrowIfNull(speedColors);
         if (segments.Count == 0)
         {
             return (Array.Empty<float>(), Array.Empty<float>());
@@ -85,7 +89,7 @@ public sealed class ToolpathRenderer : IDisposable
         var k = 0;
         foreach (var s in segments)
         {
-            var color = colors[s.Kind];
+            var color = speedColors.At(scale?.Fraction(s) ?? 0f);
             var dimmed = Dim(color, background);
             k = Put(bright, dim, k, s.Start, color, dimmed);
             k = Put(bright, dim, k, s.End, color, dimmed);

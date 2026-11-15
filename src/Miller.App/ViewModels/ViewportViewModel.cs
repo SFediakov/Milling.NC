@@ -67,6 +67,15 @@ public sealed partial class ViewportViewModel : ViewModelBase
 
     public int ToolpathVersion { get; private set; }
 
+    // The speed of rapids (the project's rapid rate: G0 has no F word), one input of the speed scale.
+    public float RapidRate { get; private set; } = CuttingParameters.DefaultRapidRate;
+
+    // The scale the shown path is colored on and the legend names (T-224); null while no shown move has a
+    // known speed. Computed when the shown path or the rapid rate changes, never per frame.
+    public ToolpathSpeedScale? SpeedScale { get; private set; }
+
+    public SpeedLegendViewModel SpeedLegend { get; } = new();
+
     public int ToolpathProgressIndex { get; private set; }
 
     public Vector3 ToolPosition { get; private set; }
@@ -320,7 +329,7 @@ public sealed partial class ViewportViewModel : ViewModelBase
     public void SetToolpath(Toolpath? toolpath)
     {
         Toolpath = toolpath;
-        ToolpathVersion++;
+        DisplayedPathChanged();
         ToolpathProgressIndex = 0;
         ToolPosition = toolpath is { Count: > 0 } ? toolpath.Segments[0].Start : Vector3.Zero;
         Invalidate();
@@ -383,7 +392,7 @@ public sealed partial class ViewportViewModel : ViewModelBase
         {
             MachineView = true;
             MachinePath = path;
-            ToolpathVersion++;
+            DisplayedPathChanged();
             if (path.Count > 0 && !ReferenceEquals(path, _fittedMachinePath))
             {
                 _fittedMachinePath = path;
@@ -404,8 +413,29 @@ public sealed partial class ViewportViewModel : ViewModelBase
         }
 
         MachineView = false;
-        ToolpathVersion++;
+        DisplayedPathChanged();
         Invalidate();
+    }
+
+    public void SetRapidRate(float rapidRate)
+    {
+        if (rapidRate.Equals(RapidRate))
+        {
+            return;
+        }
+
+        RapidRate = rapidRate;
+        DisplayedPathChanged();
+        Invalidate();
+    }
+
+    // Every change of what DisplayedSegments returns, or of the rapid rate, comes through here: the renderer
+    // uploads the path again with the new scale, and the legend names the same scale.
+    private void DisplayedPathChanged()
+    {
+        ToolpathVersion++;
+        SpeedScale = ToolpathSpeedScale.Of(DisplayedSegments, RapidRate);
+        SpeedLegend.Show(SpeedScale, ShowToolpath);
     }
 
     public void ClearMachine()
@@ -434,7 +464,11 @@ public sealed partial class ViewportViewModel : ViewModelBase
 
     partial void OnShowStockChanged(bool value) => Invalidate();
 
-    partial void OnShowToolpathChanged(bool value) => Invalidate();
+    partial void OnShowToolpathChanged(bool value)
+    {
+        SpeedLegend.Show(SpeedScale, value);
+        Invalidate();
+    }
 
     partial void OnShowToolChanged(bool value) => Invalidate();
 

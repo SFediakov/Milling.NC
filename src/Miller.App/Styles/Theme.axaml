@@ -1,5 +1,13 @@
 <Styles xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!-- Speed legend (T-224): one row per label; the bar is inset by half a row at both ends, so its ends
+       meet the centres of the first and the last label. -->
+  <Styles.Resources>
+    <x:Double x:Key="LegendRowHeight">18</x:Double>
+    <Thickness x:Key="LegendBarMargin">0,9,6,9</Thickness>
+    <x:Double x:Key="LegendBarWidth">12</x:Double>
+    <x:Double x:Key="LegendFontSize">12</x:Double>
+  </Styles.Resources>
   <!-- Every color here comes from Colors.axaml. -->
   <Style Selector="Window">
     <Setter Property="Background" Value="{DynamicResource WindowBackgroundBrush}" />
@@ -66,5 +74,32 @@
     <Setter Property="Background" Value="{DynamicResource PanelBackgroundBrush}" />
     <Setter Property="Padding" Value="8" />
     <Setter Property="CornerRadius" Value="4" />
+  </Style>
+  <Style Selector="Border.legend">
+    <Setter Property="Background" Value="{DynamicResource LegendBackgroundBrush}" />
+    <Setter Property="Padding" Value="8,6" />
+    <Setter Property="CornerRadius" Value="4" />
+  </Style>
+  <Style Selector="TextBlock.legend-title">
+    <Setter Property="FontSize" Value="{StaticResource LegendFontSize}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+  <Style Selector="Panel.legend-row">
+    <Setter Property="Height" Value="{StaticResource LegendRowHeight}" />
+  </Style>
+  <Style Selector="TextBlock.legend-value">
+    <Setter Property="FontSize" Value="{StaticResource LegendFontSize}" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+  <Style Selector="Border.legend-bar">
+    <Setter Property="Width" Value="{StaticResource LegendBarWidth}" />
+    <Setter Property="Margin" Value="{StaticResource LegendBarMargin}" />
+    <Setter Property="CornerRadius" Value="2" />
+  </Style>
+  <Style Selector="Border.legend-swatch">
+    <Setter Property="Width" Value="{StaticResource LegendBarWidth}" />
+    <Setter Property="Height" Value="{StaticResource LegendBarWidth}" />
+    <Setter Property="Margin" Value="0,0,6,0" />
+    <Setter Property="VerticalAlignment" Value="Center" />
   </Style>
 </Styles>

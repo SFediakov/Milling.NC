@@ -1,0 +1,28 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Miller.App.ViewModels"
+             x:Class="Miller.App.Views.SpeedLegendView"
+             x:DataType="vm:SpeedLegendViewModel"
+             IsVisible="{Binding IsShown}"
+             IsHitTestVisible="False">
+  <!-- T-224: the speeds of the shown path from the slowest (top) to the fastest (bottom). The bar draws the
+       brush the toolpath lines take their colors from; it lies over the viewport and takes no pointer input. -->
+  <Border Classes="legend">
+    <StackPanel Spacing="2">
+      <TextBlock Name="LegendTitle" Classes="legend-title" Text="Speed, mm/min" />
+      <Grid ColumnDefinitions="Auto,Auto">
+        <Border Name="SpeedBar" Classes="legend-bar" Background="{DynamicResource ToolpathSpeedBrush}" IsVisible="{Binding !IsSingleSpeed}" />
+        <Border Name="SpeedSwatch" Classes="legend-swatch" Background="{DynamicResource ToolpathSlowBrush}" IsVisible="{Binding IsSingleSpeed}" />
+        <ItemsControl Name="SpeedLabels" Grid.Column="1" ItemsSource="{Binding Labels}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="x:String">
+              <Panel Classes="legend-row">
+                <TextBlock Classes="legend-value" Text="{Binding}" />
+              </Panel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Grid>
+    </StackPanel>
+  </Border>
+</UserControl>

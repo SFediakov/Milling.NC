@@ -16,22 +16,19 @@ public sealed class RendererGeometryTests
     private static readonly Vector4 Blue = new(0, 0, 1, 1);
     private static readonly Vector4 Background = new(0.1f, 0.1f, 0.1f, 1);
 
-    private static readonly Dictionary<MoveKind, Vector4> Colors = new()
-    {
-        [MoveKind.Rapid] = Red,
-        [MoveKind.Feed] = Green,
-        [MoveKind.Plunge] = Blue,
-    };
+    // T-224 (user approved): the lines take their color from the speed gradient, the slowest move (the plunge
+    // below) its first stop.
+    private static readonly ColorGradient Colors = new(new[] { (0f, Blue), (0.5f, Green), (1f, Red) });
 
     [Fact]
-    public void Toolpath_TwoVerticesPerSegment_BrightAndDimmedByKind()
+    public void Toolpath_TwoVerticesPerSegment_BrightAndDimmedBySpeed()
     {
         var path = new Toolpath();
         path.Add(new ToolpathSegment(new Vector3(0, 0, 5), new Vector3(1, 0, 5), MoveKind.Rapid, 1000));
         path.Add(new ToolpathSegment(new Vector3(1, 0, 5), new Vector3(1, 0, 0), MoveKind.Plunge, 100));
         path.Add(new ToolpathSegment(new Vector3(1, 0, 0), new Vector3(2, 0, 0), MoveKind.Feed, 500));
 
-        var (bright, dim) = ToolpathRenderer.Build(path, Colors, Background);
+        var (bright, dim) = ToolpathRenderer.Build(path, Colors, ToolpathSpeedScale.Of(path.Segments, 1000), Background);
         Assert.Equal(3 * 2 * ToolpathRenderer.FloatsPerVertex, bright.Length);
         Assert.Equal(bright.Length, dim.Length);
         // Second segment, end vertex: position then color.
@@ -59,8 +56,8 @@ public sealed class RendererGeometryTests
     [Fact]
     public void Toolpath_EmptyOrNull_ProducesNoGeometry()
     {
-        Assert.Empty(ToolpathRenderer.Build(null, Colors, Background).Bright);
-        Assert.Empty(ToolpathRenderer.Build(new Toolpath(), Colors, Background).Dim);
+        Assert.Empty(ToolpathRenderer.Build(null, Colors, null, Background).Bright);
+        Assert.Empty(ToolpathRenderer.Build(new Toolpath(), Colors, null, Background).Dim);
     }
 
     [Theory]

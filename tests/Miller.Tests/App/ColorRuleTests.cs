@@ -53,7 +53,7 @@ public sealed partial class ColorRuleTests
         foreach (var name in new[]
         {
             "WindowBackground", "PanelBackground", "Text", "Accent", "Error", "Warning", "ViewportBackground", "Model", "Stock",
-            "ToolpathRapid", "ToolpathFeed", "ToolpathPlunge", "ToolCutter", "ToolHead", "CategoryOk", "CategoryRestMaterial",
+            "ToolpathSlow", "ToolpathMedium", "ToolpathFast", "ToolCutter", "ToolHead", "CategoryOk", "CategoryRestMaterial",
             "CategoryGouge", "CategoryOverhang", "CategoryHeadLimited", "CategoryCornerLimited", "AxisX", "AxisY", "AxisZ",
         })
         {
