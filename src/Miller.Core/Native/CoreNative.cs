@@ -75,6 +75,11 @@ internal static unsafe class CoreNative
         public float CellSize;
         public float Tolerance;
         public float FarStepdown;
+        public float TravelRate;
+        public float FeedRateZ;
+        public float TravelRateZ;
+        public int FinishingPasses;
+        public int FinishingPattern;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -248,6 +253,9 @@ internal static unsafe class CoreNative
     [DllImport(Library)] public static extern int mn_writer_count(IntPtr writer);
     [DllImport(Library)] public static extern int mn_writer_finish(IntPtr writer, Segment** segments, int* count);
     [DllImport(Library)] public static extern void mn_writer_free(IntPtr writer);
+    [DllImport(Library)] public static extern float mn_route_safe_margin();
+    [DllImport(Library)] public static extern float mn_segment_rate(Segment* segment, float rateXy, float rateZ);
+    [DllImport(Library)] public static extern int mn_result_finishing_first(IntPtr result);
 
     [DllImport(Library)] public static extern int mn_strategy_generate(int strategy, Context* context, IntPtr progress, IntPtr progressContext, int* cancel, Segment** segments, int* count);
     [DllImport(Library)] public static extern int mn_gouge_verify(Segment* segments, int count, Grid* grid, float* effectiveTip, float tolerance, int** segmentIndex, float** positions, float** depths, int* violationCount);
@@ -390,6 +398,11 @@ internal static unsafe class CoreNative
         CellSize = p.CellSize,
         Tolerance = p.Tolerance,
         FarStepdown = p.FarStepdown,
+        TravelRate = p.TravelRate,
+        FeedRateZ = p.FeedRateZ,
+        TravelRateZ = p.TravelRateZ,
+        FinishingPasses = (int)p.FinishingPasses,
+        FinishingPattern = (int)p.FinishingPattern,
     };
 
     public static Offset[] OffsetsOf(ProfileOffset[] offsets)

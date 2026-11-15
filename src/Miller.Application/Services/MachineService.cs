@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Numerics;
 using Miller.Application.Macros;
 using Miller.Core.GCode;
 using Miller.Core.Setup;
@@ -27,9 +28,9 @@ public sealed record MachineProgram(GrblProgram Grbl, string Source, IReadOnlyLi
 
     public ProgramPath Path { get; } = ProgramPath.Of(Grbl);
 
-    // Segments behind the first `acknowledged` lines of the job (the job adds G4 P0 at the end).
-    public int SegmentsDone(int acknowledged)
-        => SegmentsAfterLine is null || acknowledged <= 0 ? 0 : SegmentsAfterLine[Math.Min(acknowledged, SegmentsAfterLine.Count) - 1];
+    // Toolpath segments behind the first `lines` lines of the job (the job adds G4 P0 at the end).
+    public int SegmentsDone(int lines)
+        => SegmentsAfterLine is null || lines <= 0 ? 0 : SegmentsAfterLine[Math.Min(lines, SegmentsAfterLine.Count) - 1];
 }
 
 // The gate between the application and the machine cluster: opens the link the settings name,
@@ -47,6 +48,7 @@ public sealed class MachineService : IDisposable
 
     private readonly Func<MachineConnectionSettings, IMachineLink> _openLink;
     private readonly MachineTiming _timing;
+    private readonly ExecutionTracker _tracker = new();
     private MachineController? _controller;
     private long _runStart;
     private JobProgress? _keptRun;
@@ -147,7 +149,61 @@ public sealed class MachineService : IDisposable
         _keptRun = null;
     }
 
-    // Writes the program that finishes the interrupted run (GrblResume) to a new file.
+    // The segment of RunProgram's path the tool is on in its latest run (ExecutionTracker), from the reported
+    // work position; the view calls it on every refresh, so the tracker follows the whole run.
+    public int RunExecuting()
+    {
+        var program = RunProgram;
+        var job = RunJob;
+        if (program is null || job is null)
+        {
+            return 0;
+        }
+
+        Vector3? position = Snapshot is { IsReady: true } ready
+            ? new Vector3((float)ready.Status.WorkPosition.X, (float)ready.Status.WorkPosition.Y, (float)ready.Status.WorkPosition.Z)
+            : null;
+        return _tracker.Executing(program.Path, job, position);
+    }
+
+    // Job lines of the latest run the machine executed (T-219, user request: not the lines it received): the
+    // lines up to the last move the tool finished, never more than the acknowledged ones; every line once
+    // the run is done.
+    public int RunExecutedLines()
+    {
+        var program = RunProgram;
+        var job = RunJob;
+        if (program is null || job is null)
+        {
+            return 0;
+        }
+
+        if (job.State == JobState.Done)
+        {
+            return job.Total;
+        }
+
+        var executing = RunExecuting();
+        return Math.Min(executing > 0 ? program.Path.LineOf(executing - 1) + 1 : 0, job.Acknowledged);
+    }
+
+    // The file line of the move the tool is on in the latest run (T-220); 0 before its first move reached the
+    // machine and once the run is done.
+    public int RunExecutingSourceLine()
+    {
+        var program = RunProgram;
+        var job = RunJob;
+        if (program is null || job is null || job.State == JobState.Done)
+        {
+            return 0;
+        }
+
+        var executing = RunExecuting();
+        return executing < program.Path.SegmentsDone(job.Acknowledged) ? program.Grbl.SourceLines[program.Path.LineOf(executing)] : 0;
+    }
+
+    // Writes the program that finishes the interrupted run (GrblResume) from the executed lines to a new
+    // file: the move the tool was on runs again from its start.
     public void SaveProgress(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -164,7 +220,7 @@ public sealed class MachineService : IDisposable
             throw new InvalidOperationException(SameFileMessage);
         }
 
-        File.WriteAllText(path, GrblResume.Build(program.Grbl, Math.Min(job.Acknowledged, program.Grbl.Count)));
+        File.WriteAllText(path, GrblResume.Build(program.Grbl, Math.Min(RunExecutedLines(), program.Grbl.Count)));
     }
 
     public void Pause() => Controller.Realtime(GrblRealtime.FeedHold);

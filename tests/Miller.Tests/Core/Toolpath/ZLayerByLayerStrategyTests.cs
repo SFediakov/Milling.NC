@@ -75,7 +75,8 @@ public sealed class ZLayerByLayerStrategyTests
     public void SplitCave_FinishesOneSubtreeBeforeTheOther_AndTravelsByTheFasterWay()
     {
         // A 3 mm wall: one cave at level 3 (the wall top is reachable), two below it.
-        var context = WallInStock(3f);
+        const float wallTop = 3f;
+        var context = WallInStock(wallTop);
         var levels = context.Plan.Steps.Select(s => s.Level).ToList();
         var tree = CaveTree.Build(context.Plan.Steps);
         var root = Assert.Single(tree.Roots);
@@ -84,18 +85,21 @@ public sealed class ZLayerByLayerStrategyTests
 
         var path = Strategy.Generate(context, null, TestContext.Current.CancellationToken);
         Assert.Empty(GougeChecker.Verify(path, context.EffectiveTip, context.Parameters.Tolerance));
-        // The first sub-cave down to the floor, then the second one from level 1: no level 3 between them.
-        Assert.Equal(new[] { 3f, 1f, 0f, 1f, 0f }, LevelSequence(path, levels));
+        // The first sub-cave down to the floor, then the second one from level 1. The 3 between them is the
+        // travel over the wall top, which stands at level 3, not a cut of that level.
+        Assert.Equal(new[] { 3f, 1f, 0f, 3f, 1f, 0f }, LevelSequence(path, levels));
 
-        // Between the sub-caves the writer takes the faster of the climb over the wall top (feeds at 800 up
-        // 3, over 10 and down 2 mm: about 0.0225 min) and the retract (rapids at 3000 up to safe Z and over,
-        // then a 9 mm plunge at 800: about 0.019 min). Plunges run at the feed rate since T-215, so the
-        // retract wins; with the former plunge rate of 200 the tool crossed at the wall top instead.
+        // Between the sub-caves the writer takes the faster of the climb over the wall top (feeds at 800: up 3,
+        // over 16.25 and down 2 mm, 0.02658 min) and the retract (a 10 mm rise at the rapid Z speed, 3000 / 3
+        // since T-217, 16.5 mm at 3000 and a 9 mm plunge at 800: 0.02675 min). The climb wins since the rise
+        // counts at the Z speed; with the rise at the full rapid rate the retract won.
         var floorMoves = path.Segments.Select((s, k) => (s, k)).Where(p => p.s.Kind != MoveKind.Rapid && MathF.Abs(p.s.End.Z) < 1e-3f).Select(p => p.k).ToList();
         var firstBottom = floorMoves.First();
         var secondStart = floorMoves.First(k => path.Segments[k].End.X > 15f != path.Segments[firstBottom].End.X > 15f);
         var crossing = path.Segments.Skip(firstBottom).Take(secondStart - firstBottom).ToList();
-        Assert.Contains(crossing, s => s.Kind == MoveKind.Rapid && MathF.Abs(s.End.Z - context.SafeZ) < 1e-3f);
+        Assert.DoesNotContain(crossing, s => s.Kind == MoveKind.Rapid);
+        Assert.Contains(crossing, s => s.Kind == MoveKind.Feed && MathF.Abs(s.Start.Z - wallTop) < 1e-3f && MathF.Abs(s.End.Z - wallTop) < 1e-3f
+            && MathF.Min(s.Start.X, s.End.X) <= 15f && MathF.Max(s.Start.X, s.End.X) >= 15f);
         Assert.All(crossing.Where(s => s.Kind == MoveKind.Plunge), s => Assert.Equal(context.Parameters.FeedRate, s.FeedRate));
     }
 

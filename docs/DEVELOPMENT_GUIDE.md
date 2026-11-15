@@ -470,7 +470,8 @@ Uncuttable classification (`UncuttableRegions`):
   (the plunge rate went too, so a travel weighs the retract against the
   polyline at the feed rate), the statistics, the simulation and the .nc file
   carry that one rate, and the machine's planner slows at the corners by its
-  own acceleration settings.
+  own acceleration settings. Since T-218 a feed or plunge that meets no
+  material runs at `TravelRate` (below).
 - Layers (`ToolpathLayer`, `mn_result_layers`, T-154): the strategies mark the
   first segment of every run of consecutive routes at one plan level (every
   far block step and every cave block); a mark at the level of the previous one
@@ -658,7 +659,23 @@ Uncuttable classification (`UncuttableRegions`):
   polyline are feeds; a descent steeper than `MaxRampSlope` (2, about 63
   degrees) is a feed over the lower point and a plunge. A travel between two
   routes takes the polyline or a retract to safe Z, a rapid and a plunge,
-  whichever the rates make faster.
+  whichever is faster when vertical travel takes three times as long as XY
+  travel at the same rate (T-217, user request: the time up to the safe height
+  and down again counts with the Z speed coefficient of the route solver,
+  `MN_Z_TIME_FACTOR` = `XySpeedFactor / ZSpeedFactor`).
+- Safe height margin (T-216, user request: the safe height 1 mm before the
+  cutter meets the protected material, the same for landing back, as early or
+  as late as the move allows): a move whose surface polyline reaches the safe
+  plane (the floor of never-cut stock, `lift_uncut`) is on the plane from
+  `MN_SAFE_MARGIN` (1 mm) of its XY travel before the first vertex on the plane
+  to 1 mm after the last one; where the move's own start or end lies nearer,
+  the tool rises or lands in place there, and stretches whose widened ends
+  meet stay on the plane between them. The rise and the landing stand on
+  points of the original polyline, so nothing comes lower than before. One
+  function (`mn_trace`) gives the polyline to the solver's cost and to the
+  writer, without allocation (a lead walk finds the stretches, a feed walk
+  emits behind it); moves that never reach the plane keep their polyline bit
+  for bit.
 - Vector output: every run of consecutive feed segments at one rate is reduced
   by Douglas-Peucker so that no dropped vertex lies farther than `Tolerance`
   from its chord, a merge pass drops kept vertices whose neighbours' chord still
@@ -676,8 +693,41 @@ Uncuttable classification (`UncuttableRegions`):
 - `Stepover`: valid range `(0, CutterDiameter]`.
 - `SafeHeight`: clearance above the stock top for rapid moves. The absolute rapid Z is
   stock top + `SafeHeight`; the value must be > 0 and does not depend on the origin mode.
-- Feed kinds: `Feed` and `Plunge` use `FeedRate` (T-215), `Rapid` uses
-  `RapidRate` (only for time estimation and simulation; G-code emits `G0`).
+- Feed kinds: `Feed` and `Plunge` use the milling rates `FeedRate` (XY) and
+  `FeedRateZ` (Z) where they meet material and the travel rates `TravelRate` and
+  `TravelRateZ` where they meet none over their whole length (T-218, T-221, user
+  request: different speeds for milling and travelling, set apart in the
+  Cutting tab). The generation's check walks the final toolpath over the stock
+  and decides it per segment: a removal of more than the check tolerance
+  (1e-4 mm) from a cell or a head or rapid hit is contact; the check therefore
+  runs before the statistics (stages 9 and 10). A move runs at the vector feed
+  of its two rates (`mn_segment_rate`): a pure XY move at the XY rate, a pure Z
+  move at the Z rate, any other one as fast as neither axis passes its rate and
+  not faster than the larger rate, so equal rates give that rate in every
+  direction. The rates default to the default feed rate; files written before
+  load the travel rate from their feed rate and each Z rate from its XY rate.
+  The finishing passes keep the milling rates (T-222).
+- Finishing passes (`FinishingPasses` 0 to 5, `FinishingPattern`, T-222, user
+  request: passes over the lowest material already cut that clean what the first
+  milling left, on a pattern other than the roughing's): after the route units
+  every pass k of n routes the positions the roughing cut (planned floor below
+  the stock) at the final level it took each one to, every cut cell on its lines
+  a node: lines of the roughing's row step moved by k / (n + 1) of it (half a
+  step for one pass), parallel to the roughing rows (ShiftedRows), across them
+  (CrossRows) or along the 45 degree diagonal at the same spacing
+  (DiagonalRows). One route per pass over the floors as the roughing left them,
+  never-cut positions on the safe plane. On material milled as planned a pass
+  cuts at most the simplifier's slack; what the machine left (deflection, lost
+  steps) is not in the simulated stock, so the passes always run at the milling
+  rates. The finishing path is simplified apart from the roughing and its first
+  segment is reported (`FinishingFirstSegment`); 0 passes is the former toolpath.
+  The program runs as with 0 passes until the passes begin (T-223, user request):
+  the hits the check finds on the finishing segments show in the events and the
+  contacts but count for no decision of the generation passes (far withdrawal,
+  kept pass), so the .nc file is the 0-pass file byte for byte up to its final
+  retract, then the passes, their final retract and the same end.
+  `Rapid` uses `RapidRate` (only for time estimation and simulation; G-code
+  emits `G0`).
 
 ### 6.5 G-code (Grbl post-processor)
 
@@ -692,6 +742,8 @@ G0 Z<stock top + SafeHeight>
 G0 X.. Y..
 G1 Z..
 G1 X.. Y.. Z..
+G1 X.. Y.. Z.. F<TravelRate>    (only where the rate changes, T-218)
+G1 X.. Y.. Z.. F<FeedRate>
 ...
 G0 Z<stock top + SafeHeight>
 M5
@@ -2506,6 +2558,71 @@ check that decides done.
 - Output: the slow zones price the routes only; every feed and plunge runs at `FeedRate`; the Grbl file writes `F<FeedRate>` once after the spindle and no `G1` carries `F`; a toolpath with another feed rate is refused by the post-processor; old files drop `PlungeRate` on load
 - Acceptance: the box fixture's feeds and plunges all at the feed rate, its estimated time equal to length over rate and to the simulated time, its .nc with one `F` before the first move, a resume program keeping it; the solver tests unchanged; the heart golden regenerated (Backwards, 1,878 segments, 2.1 min); the user's heart at 0.05 mm cells 575.0 to 174.9 estimated minutes with zero events and the same 1,061 unreached cells; 922 tests pass
 - Status: done
+
+#### T-216 Safe height 1 mm before and after the protected material
+- Depends on: T-119, T-215
+- Files: `src/Miller.Native/src/mn_route.c`, `mn_internal.h`, `mn_strategies.c`, `mn_solver.c`, `mn_writer.c`, `include/miller_native.h`, `src/Miller.Core/Native/CoreNative.cs`, `src/Miller.Core/Toolpath/RouteWriter.cs`, `tests/Miller.Tests/Core/Toolpath/RouteWriterSafeHeightTests.cs`
+- Input: user request (safe height applied not immediately before the protected material but 1 mm before the cutter meets it, as early as possible where the dimensions do not allow it; the same for landing back)
+- Output: the safe height margin of section 6.4; `mn_route_grid.safe_z`, `MN_SAFE_MARGIN`, `mn_route_safe_margin`, `RouteWriter.SafeMargin`
+- Acceptance: lifted cells [4, 6) on 1 mm cells: rise at 3, landing at 7 (within 0.001); start and end 0.5 mm from them: rise and landing in place; stretches widened to [2, 5] and [5, 8] join, [1, 4] and [6, 9] land between; a move below the safe plane keeps the plain polyline; the heart golden unchanged; with T-217 the suite gave 925 passed, 2 skipped (live project) and 1 failed, `SplitCave`, whose expectation T-217 changes
+- Status: done
+
+#### T-217 Safe height up and down timed with the Z speed
+- Depends on: T-118, T-215
+- Files: `src/Miller.Native/src/mn_writer.c`, `mn_internal.h`, `tests/Miller.Tests/Core/Toolpath/RouteWriterSafeHeightTests.cs`
+- Input: user request (the time up to the safe height and down again counts in the path execution time with the Z speed coefficient)
+- Output: the writer's travel time counts vertical travel `MN_Z_TIME_FACTOR` (3) times as long as XY travel at the same rate; the solver's cost already did (XY / 3 + climb)
+- Acceptance: a 20 mm floor travel under a 10 mm safe height stays on the floor (0.025 against 0.054 min; the retract won with 0.0225 before); the 9 mm ridge still retracts; the split cave of `ZLayerByLayerStrategyTests` climbs over the wall top (0.035 against 0.048 min) instead of retracting
+- Status: done
+
+#### T-218 Travel rate for moves without material contact
+- Depends on: T-147, T-215
+- Files: `src/Miller.Core/Setup/CuttingParameters.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, the Cutting tab, `src/Miller.Native/src/mn_collision.c`, `mn_pipeline.c`, `mn_simulate.c`, `mn_internal.h`, `include/miller_native.h`, `src/Miller.Core/Native/CoreNative.cs`, `src/Miller.Core/GCode/GrblPostProcessor.cs`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Application/Services/PipelineService.cs`, tests
+- Input: user request (different speeds for milling and travelling, travelling being no material contact during the whole command, set apart in the Cutting tab)
+- Output: `CuttingParameters.TravelRate`; the check's per segment contact (banded walk with one contact array per band); feeds and plunges without contact at the travel rate; check before statistics; F on change in the Grbl file, a third rate refused
+- Acceptance: on the box fixture at feed 150 and travel 600 every travel removes nothing and every other feed or plunge removes material (segment by segment simulation), both rates occur, the estimated time is length over both rates and equals the simulated time and falls below the one-rate time; F only where the rate changes and every G1 at its segment's rate; equal rates give one F; old project and preset files travel at their feed rate; the validator refuses 0, negative and NaN; the Cutting tab field binds and shows its error
+- Status: done
+
+#### T-219 Machine tab: time left and Save progress from the executed lines
+- Depends on: T-200, T-205
+- Files: `src/Miller.Application/Services/MachineService.cs`, `src/Miller.App/ViewModels/MachineViewModel.cs`, `src/Miller.Machine/Grbl/GrblResume.cs`, `tests/Miller.Tests/Application/ExecutedLinesTests.cs`, `tests/Miller.Tests/Fixtures/FakeGrblLink.cs`
+- Input: user request (for the time estimation and the save feature count the commands already executed, not the ones transferred to the machine)
+- Output: `MachineService.RunExecuting` (the tracker of T-205 in the gate) and `RunExecutedLines` (lines up to the last finished move, at most the acknowledged ones, all once done); the time left and Save progress use them
+- Acceptance: with every program line acknowledged and the tool on the move to X40, Save progress resumes from that move (it runs again from its start) and keeps the result after a reconnection; executed lines never pass the acknowledged ones and are every line once done; with the tool on the move to X50 of 304 job lines the time left is at least five times the elapsed time
+- Status: done
+
+#### T-220 Every machine progress display from the executed lines
+- Depends on: T-219
+- Files: `src/Miller.Application/Services/MachineService.cs`, `src/Miller.App/ViewModels/MachineViewModel.cs`, `tests/Miller.Tests/Application/ExecutedLinesTests.cs`
+- Input: user request (the progress bar, the "N of M lines" text, the next moves shown and everything else re-wired to the lines already executed)
+- Output: the bar and the line count from `RunExecutedLines`, the file line of the move the tool is on (`RunExecutingSourceLine`, none before the first move and once done), the generated toolpath drawn as done and its next moves from the executed lines; the machine view and the listing already followed the executing move (T-205). Acknowledged lines remain only where they bound what can have run: the tracker's window, the cap of the executed lines and the listing before the first move (settings Grbl executes as it acknowledges them)
+- Acceptance: with every line acknowledged and the tool on the cut from X10 to X11 of a 41-segment toolpath, the bar and the count show the executed lines, the file line is the one of that cut and equals the listing's, the toolpath is done up to segment 11 where the next moves start, the machine view at path segment 13; a finished run shows 100 percent and M of M lines
+- Status: done
+
+#### T-221 XY and Z rates for milling and travel
+- Depends on: T-218
+- Files: `src/Miller.Native/src/mn_writer.c`, `mn_pipeline.c`, `include/miller_native.h`, `src/Miller.Core/Setup/CuttingParameters.cs`, `src/Miller.Core/Toolpath/ToolpathSegment.cs`, `src/Miller.Core/GCode/GrblPostProcessor.cs`, `src/Miller.Core/Native/CoreNative.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, the Cutting tab, tests
+- Input: user request (the milling and the travel speed divided per XY and Z, as the speeds differ there)
+- Output: `FeedRateZ`, `TravelRateZ`; `mn_segment_rate` (vector feed) for the check's rates, the writer's travel time and the post-processor's rate guard; old files take their XY rates for Z
+- Acceptance: pure moves at their axis rate, a 45 degree ramp at 200 / sin 45 under 800 XY and 200 Z, equal rates exactly that rate in every direction; on the box fixture every move at the vector feed of its rates with no axis above its rate, every G1 of the file at its segment's rate; equal rates give one F; old files take their XY rates; the validator refuses Z rates of 0, negative or NaN; the 9 mm ridge travel retracts at 800 mm/min of Z and stays on the surface at 2000
+- Status: done
+
+#### T-222 Finishing passes over the cut floors
+- Depends on: T-210, T-218, T-221
+- Files: `src/Miller.Native/src/mn_strategies.c`, `mn_pipeline.c`, `mn_internal.h`, `include/miller_native.h`, `src/Miller.Core/Setup/FinishingPattern.cs`, `src/Miller.Core/Setup/CuttingParameters.cs`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `src/Miller.Application/Services/PipelineService.cs`, `src/Miller.Application/Validation/ProjectValidator.cs`, the Cutting tab, tests
+- Input: user request (a finishing setting in Cutting: passes on the lowest material already cut that mill only the artifacts of the first milling, a settable number of additional passes with 0 as standard, a pattern different from the first pass, for example parallel and moved by half a pass, and a pattern selection)
+- Output: the finishing passes of section 6.4; `z_finishing`, `MN_FINISHING_*`, `mn_result_finishing_first`
+- Acceptance: 0 passes keep the toolpath and the heart golden byte for byte; one pass on the box fixture: no collision, no gouge, every feed and plunge at the milling rate, at most the tolerance removed from the stock the roughing left, the roughing identical to the one without finishing, a 0.6 mm bump on the floor under a row cut down to its level; shifted rows on lines 2 of every 4, two passes on 1 and 3, cross rows across, diagonal rows at 45 degrees; settings saved, loaded (old files: none) and validated; the Cutting tab binds them; the heart sample with two cross-row passes 2,172 segments, 3.4 min (1,878, 2.1 min without)
+- Status: done
+
+#### T-223 Finishing passes after the program as with 0 passes
+- Depends on: T-222
+- Files: `src/Miller.Native/src/mn_collision.c`, `mn_internal.h`, `mn_pipeline.c`, `src/Miller.Core/Generation/ToolpathGeneration.cs`, `tests/Miller.Tests/App/FinishingIntegrationTests.cs`
+- Input: user request (an integration test: with 1 or more passes the code is byte for byte identical until the passes begin; first execute as for 0 passes, then add the passes only to the final layer)
+- Output: `mn_hits.reported_from` and `reported_flags`: the hits of the finishing segments mark the contacts and steer no generation pass; `FinishingIntegrationTests`
+- Acceptance: project to exported file for 1, 2 and 5 passes in every pattern (box with different milling and travel rates, so F words are compared), both cut scopes, far stepdown off and on, Backwards and Backwards_GPU, and the heart sample against its golden file: the 0-pass file up to its final retract starts the file with passes byte for byte, one line per finishing segment follows, then the final retract and M5, M30; generation passes, entered cells, far and withdrawn cells and the roughing's events equal; the passes remove at most the tolerance and reach the lowest level. Finishing made to collide (probe build, far stepdown 4): before 2 generation passes and all 5,300 far cells withdrawn, after 1 pass as with 0 passes and the 237 events still reported. A roughing rate changed only with passes fails the test at line 60. Heart check time 13.6 against 13.2 ms (median of 7)
+- Status: done
+
 
 #### T-165 Head bottom down to half the cutter diameter
 - Depends on: T-135, T-162

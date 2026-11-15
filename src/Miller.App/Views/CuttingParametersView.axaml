@@ -7,9 +7,18 @@
   <ScrollViewer>
     <StackPanel Margin="8" Spacing="4">
       <TextBlock Classes="header" Text="Speeds" />
-      <TextBlock Classes="label" Text="Feed rate of feeds and plunges (mm/min)" />
+      <TextBlock Classes="label" Text="Milling rate XY: feeds in contact with material (mm/min)" TextWrapping="Wrap" />
       <c:NumericBox Name="FeedRateBox" Classes="numeric" Value="{Binding FeedRate}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding FeedRateError}" IsVisible="{Binding FeedRateError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Classes="label" Text="Milling rate Z: plunges and climbs in contact with material (mm/min)" TextWrapping="Wrap" />
+      <c:NumericBox Name="FeedRateZBox" Classes="numeric" Value="{Binding FeedRateZ}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding FeedRateZError}" IsVisible="{Binding FeedRateZError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Classes="label" Text="Travel rate XY: feeds without material contact over the whole move (mm/min)" TextWrapping="Wrap" />
+      <c:NumericBox Name="TravelRateBox" Classes="numeric" Value="{Binding TravelRate}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding TravelRateError}" IsVisible="{Binding TravelRateError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Classes="label" Text="Travel rate Z: plunges and climbs without material contact (mm/min)" TextWrapping="Wrap" />
+      <c:NumericBox Name="TravelRateZBox" Classes="numeric" Value="{Binding TravelRateZ}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding TravelRateZError}" IsVisible="{Binding TravelRateZError, Converter={x:Static ObjectConverters.IsNotNull}}" />
       <TextBlock Classes="label" Text="Rapid rate (mm/min)" />
       <c:NumericBox Name="RapidRateBox" Classes="numeric" Value="{Binding RapidRate}" HorizontalAlignment="Left" />
       <TextBlock Classes="validation" Text="{Binding RapidRateError}" IsVisible="{Binding RapidRateError, Converter={x:Static ObjectConverters.IsNotNull}}" />
@@ -38,8 +47,15 @@
       <TextBlock Classes="validation" Text="{Binding CellSizeError}" IsVisible="{Binding CellSizeError, Converter={x:Static ObjectConverters.IsNotNull}}" />
       <TextBlock Classes="warning" Text="{Binding CellSizeWarning}" IsVisible="{Binding CellSizeWarning, Converter={x:Static ObjectConverters.IsNotNull}}" TextWrapping="Wrap" />
       <TextBlock Name="GridSizeText" Text="{Binding GridSizeText}" TextWrapping="Wrap" />
-      <TextBlock Classes="label" Text="Tolerance (mm; below the cell size every wall is traced cell by cell)" />
+      <TextBlock Classes="label" Text="Tolerance (mm; below the cell size every wall is traced cell by cell)" TextWrapping="Wrap" />
       <c:NumericBox Name="ToleranceBox" Classes="numeric" Value="{Binding Tolerance}" HorizontalAlignment="Left" />
+
+      <TextBlock Classes="header" Text="Finishing" />
+      <TextBlock Classes="label" Text="Finishing passes over the cut floors at their final level (0: none)" TextWrapping="Wrap" />
+      <c:NumericBox Name="FinishingPassesBox" Classes="numeric" Value="{Binding FinishingPasses}" HorizontalAlignment="Left" />
+      <TextBlock Classes="validation" Text="{Binding FinishingPassesError}" IsVisible="{Binding FinishingPassesError, Converter={x:Static ObjectConverters.IsNotNull}}" TextWrapping="Wrap" />
+      <TextBlock Classes="label" Text="Finishing pattern (rows moved by part of the stepover per pass)" TextWrapping="Wrap" />
+      <ComboBox Name="FinishingPatternBox" ItemsSource="{x:Static vm:CuttingParametersViewModel.FinishingPatterns}" SelectedItem="{Binding FinishingPattern}" Width="260" HorizontalAlignment="Left" />
     </StackPanel>
   </ScrollViewer>
 </UserControl>

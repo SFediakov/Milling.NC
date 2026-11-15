@@ -102,6 +102,19 @@ public static class ProjectValidator
         }
 
         Positive(errors, "Parameters.FeedRate", p.FeedRate);
+        Positive(errors, "Parameters.FeedRateZ", p.FeedRateZ);
+        Positive(errors, "Parameters.TravelRate", p.TravelRate);
+        Positive(errors, "Parameters.TravelRateZ", p.TravelRateZ);
+        if (!(p.FinishingPasses >= 0 && p.FinishingPasses <= CuttingParameters.MaxFinishingPasses && p.FinishingPasses == MathF.Floor(p.FinishingPasses)))
+        {
+            errors.Add(new ValidationMessage("Parameters.FinishingPasses",
+                $"Finishing passes must be a whole number from 0 to {F(CuttingParameters.MaxFinishingPasses)}, got {F(p.FinishingPasses)}."));
+        }
+
+        if (!Enum.IsDefined(p.FinishingPattern))
+        {
+            errors.Add(new ValidationMessage("Parameters.FinishingPattern", $"Unknown finishing pattern {(int)p.FinishingPattern}."));
+        }
         Positive(errors, "Parameters.RapidRate", p.RapidRate);
         Positive(errors, "Parameters.SpindleRpm", p.SpindleRpm);
         NonNegative(errors, "Strategy.MinIslandVolume", project.MinIslandVolume);

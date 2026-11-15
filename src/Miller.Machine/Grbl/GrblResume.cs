@@ -3,7 +3,8 @@ using System.Globalization;
 namespace Miller.Machine.Grbl;
 
 // The program that finishes an interrupted run (user request T-200). The executed lines are the lines
-// the controller acknowledged minus ReplayedLines, which run again. An executed line keeps every word
+// the machine executed (T-219: up to the last move the tool finished, MachineService) minus
+// ReplayedLines, which run again, so the move the tool was on runs again from its start. An executed line keeps every word
 // that sets a state (units, distance mode, plane, feed, spindle, coolant, work system, dwell) and loses
 // what moves the axes: X Y Z I J K R, the motion words G0 G1 G2 G3 G38.x G80, G28 G30 G53, $H and $J=.
 // Before the first remaining move: a rapid to the highest Z of the whole program, a rapid to the XY of
@@ -22,7 +23,7 @@ public static class GrblResume
     private const string JogPrefix = "$J=";
     private const string CrLf = "\r\n";
 
-    // executedLines: program lines the controller acknowledged (0 to Count).
+    // executedLines: program lines the machine executed (0 to Count).
     public static string Build(GrblProgram program, int executedLines)
     {
         ArgumentNullException.ThrowIfNull(program);

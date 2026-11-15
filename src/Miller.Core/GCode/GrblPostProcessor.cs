@@ -4,11 +4,12 @@ using Miller.Core.Toolpaths;
 namespace Miller.Core.GCode;
 
 // Grbl v1.1 subset, template in docs/DEVELOPMENT_GUIDE.md 6.5: header comments, G21 G90 G94 G17,
-// spindle on, the feed rate once (T-215, user request: the speed is set at the start and never changed;
-// the slow zones of the turn fine only price the routes), G0 to safe Z and the start point, then one line
-// per segment end (G0 for rapids, G1 for feeds and plunges, without F), spindle off, M30. Line endings are
-// LF regardless of the OS. A toolpath whose feeds or plunges carry another rate than the project's feed
-// rate cannot be written as one feed and is refused.
+// spindle on, the feed rate (T-215: the slow zones of the turn fine only price the routes), G0 to safe Z
+// and the start point, then one line per segment end (G0 for rapids, G1 for feeds and plunges), spindle
+// off, M30. A G1 line carries F only where its rate differs from the modal one: the travel rates of a move
+// without material contact (T-218), the vector feed of the XY and Z rates of a move with a Z part (T-221);
+// with all rates equal no G1 line carries F. Line endings are LF regardless of the OS. A feed or plunge at
+// a rate neither the milling nor the travel rates give its direction is refused.
 public sealed class GrblPostProcessor : IPostProcessor
 {
     public const string ProcessorId = "grbl";
@@ -28,14 +29,22 @@ public sealed class GrblPostProcessor : IPostProcessor
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentException.ThrowIfNullOrWhiteSpace(appVersion);
 
-        var feed = project.Parameters.FeedRate;
+        var p = project.Parameters;
+        var feed = p.FeedRate;
         for (var k = 0; k < toolpath.Count; k++)
         {
             var s = toolpath.Segments[k];
-            if (s.Kind != MoveKind.Rapid && s.FeedRate != feed)
+            if (s.Kind == MoveKind.Rapid)
+            {
+                continue;
+            }
+
+            var milling = s.RateAt(p.FeedRate, p.FeedRateZ);
+            var travel = s.RateAt(p.TravelRate, p.TravelRateZ);
+            if (s.FeedRate != milling && s.FeedRate != travel)
             {
                 throw new ArgumentException(
-                    $"Segment {k} ({s.Kind}) runs at {GCodeFormatter.Format(s.FeedRate)} mm/min, but the program sets one feed rate, {GCodeFormatter.Format(feed)} mm/min.",
+                    $"Segment {k} ({s.Kind}) runs at {GCodeFormatter.Format(s.FeedRate)} mm/min, but its direction runs at {GCodeFormatter.Format(milling)} (milling) or {GCodeFormatter.Format(travel)} mm/min (travel).",
                     nameof(toolpath));
             }
         }
@@ -56,10 +65,23 @@ public sealed class GrblPostProcessor : IPostProcessor
             var start = toolpath.Segments[0].Start;
             Line(writer, $"G0 {GCodeFormatter.Word('Z', start.Z)}");
             Line(writer, $"G0 {GCodeFormatter.Word('X', start.X)} {GCodeFormatter.Word('Y', start.Y)}");
+            var modal = feed;
             foreach (var s in toolpath.Segments)
             {
                 var xyz = $"{GCodeFormatter.Word('X', s.End.X)} {GCodeFormatter.Word('Y', s.End.Y)} {GCodeFormatter.Word('Z', s.End.Z)}";
-                Line(writer, s.Kind == MoveKind.Rapid ? $"G0 {xyz}" : $"G1 {xyz}");
+                if (s.Kind == MoveKind.Rapid)
+                {
+                    Line(writer, $"G0 {xyz}");
+                }
+                else if (s.FeedRate == modal)
+                {
+                    Line(writer, $"G1 {xyz}");
+                }
+                else
+                {
+                    modal = s.FeedRate;
+                    Line(writer, $"G1 {xyz} {GCodeFormatter.Word('F', modal)}");
+                }
             }
         }
 

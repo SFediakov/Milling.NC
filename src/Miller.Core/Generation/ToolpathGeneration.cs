@@ -17,7 +17,8 @@ namespace Miller.Core.Generation;
 // the toolpath (ToolpathLayer); FarStepdown the far positions of the first and the kept pass and those
 // withdrawn around collisions (T-164); RouteUnitEntries where every route unit after the first begins and
 // the one before it ends (T-166); Unreached the counts of the backward check, null unless the collision
-// mode was Backwards (T-172); Uncut the cells the toolpath leaves above what the plan intended (T-173).
+// mode was Backwards (T-172); Uncut the cells the toolpath leaves above what the plan intended (T-173);
+// FinishingFirstSegment the first segment of the finishing passes, the segment count without them (T-222).
 public sealed record GenerationResult(
     Mesh MachineMesh,
     StockGeometry Stock,
@@ -42,7 +43,8 @@ public sealed record GenerationResult(
     IReadOnlyList<Vector3> RouteUnitEntries,
     UnreachedCells? Unreached,
     UncutCells Uncut,
-    ProcessTimes Times);
+    ProcessTimes Times,
+    int FinishingFirstSegment);
 
 // The process times of a generation in seconds (T-176, mn_result_timings): the wall time of every stage
 // over all passes, then the parts inside them; the solver parts are summed over route units that run on
@@ -51,7 +53,7 @@ public sealed record ProcessTimes(IReadOnlyList<double> Seconds)
 {
     public static readonly IReadOnlyList<string> Names = new[]
     {
-        "transform", "stock", "model map", "reach map", "head clearance", "slice", "route", "simplify", "statistics", "collision check",
+        "transform", "stock", "model map", "reach map", "head clearance", "slice", "route", "simplify", "collision check", "statistics",
         "intended surface", "backward closings", "backward level tests", "backward reached plan", "solver waiting for the check", "level groups",
         "route units", "solver candidate lists", "solver start walks", "solver local search", "route floors", "route writing",
         "GPU setup", "GPU transfers", "GPU start tours", "check bands", "check walk",
@@ -72,7 +74,8 @@ public readonly record struct UnreachedCells(long Unreached, long ModelCells, in
     public double Percent => ModelCells > 0 ? 100.0 * Unreached / ModelCells : 0.0;
 }
 
-// What one generation pass's check found: the distinct entered cells and the events; with a far
+// What one generation pass's check found: the distinct cells its roughing entered (the finishing passes'
+// hits are in the events and the contacts only, T-223) and the events; with a far
 // stepdown the positions the pass milled with it and those withdrawn around its collisions (T-164).
 public readonly record struct PassCollisions(int EnteredCells, int Events, int FarCells, int WithdrawnCells);
 
@@ -87,10 +90,11 @@ public readonly record struct BridgeReport(int Parts, int Wanted, int Placed);
 
 // The whole toolpath generation in one call of the native library (mn_generate): transform, stock,
 // model map, reach map, then per pass slicing and cut scope, the holding bridges of the separation
-// scope, the backward check, routing, simplification, statistics and the dynamic collision check; with a
-// far stepdown the pass repeats while the far withdrawal takes positions and the collisions decrease.
+// scope, the backward check, routing, simplification, the dynamic collision check (which gives the moves
+// without material contact the travel rate, T-218) and the statistics; with a far stepdown the pass
+// repeats while the far withdrawal takes positions and the collisions decrease.
 // The placement of the models (machine matrices) and the stock box come from the setup classes, which the viewport shares; the progress reports carry the pass and
-// the stage index of the pipeline table (1 transform .. 10 collision check).
+// the stage index of the pipeline table (1 transform .. 9 collision check, 10 statistics).
 public static class ToolpathGeneration
 {
     public static unsafe GenerationResult Run(MillingProject project, IReadOnlyList<Mesh> meshes, Action<int, int, StepProgress>? progress, CancellationToken cancellation)
@@ -391,6 +395,7 @@ public static class ToolpathGeneration
             entries,
             unreached,
             uncut,
-            new ProcessTimes(timings));
+            new ProcessTimes(timings),
+            CoreNative.mn_result_finishing_first(result));
     }
 }

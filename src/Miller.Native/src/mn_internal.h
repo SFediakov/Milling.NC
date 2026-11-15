@@ -138,12 +138,22 @@ int mn_outline(const uint8_t* inside, int width, int height, int i, int j);
 
 /* `floor` is what a move through a cell stays above, `touch` what a point on a cell's edge or corner
  * stays above: over uncut stock the strategies put `floor` on the safe plane and `touch` on what must
- * remain there, so a diagonal step between neighbouring nodes past an uncut corner does not rise. */
+ * remain there, so a diagonal step between neighbouring nodes past an uncut corner does not rise.
+ * `safe_z` is that safe plane (T-216): a move that reaches it is on it from MN_SAFE_MARGIN before the
+ * first lifted cell to MN_SAFE_MARGIN after the last; INFINITY for plain floors without a safe plane
+ * (the polyline, cost and solver exports the C# facades call). */
 typedef struct mn_route_grid {
     mn_grid g;
     const float* floor;
     const float* touch;
+    float safe_z;
 } mn_route_grid;
+
+/* The XY distance along a move between the point where the tool reaches the safe plane and the first
+ * cell lifted onto it, and between the last such cell and the landing (T-216, user request: the safe
+ * height 1 mm before the cutter meets the protected material, the same for landing back). Where a
+ * move's own start or end lies nearer, the tool rises or lands in place there. */
+#define MN_SAFE_MARGIN 1.0f
 
 typedef struct mn_points {
     mn_v3* items;
@@ -161,6 +171,10 @@ float mn_cost_exact(const mn_route_grid* grid, mn_v3 a, mn_v3 b);
 
 #define MN_XY_SPEED_FACTOR 3.0f
 #define MN_Z_SPEED_FACTOR 1.0f
+/* How many times longer a millimetre of vertical travel takes than one of XY travel at the same rate:
+ * the route solver's Z speed. The writer times a travel's climbs, retracts and plunges with it (T-217,
+ * user request: the time up to the safe height and down again counts with the Z speed coefficient). */
+#define MN_Z_TIME_FACTOR (MN_XY_SPEED_FACTOR / MN_Z_SPEED_FACTOR)
 /* The move evaluations a route's local search may spend per node (T-211). The former fixed total of
  * 40,000,000 for a whole generation stopped 268 of the 320 routes of the user's heart (914,248 nodes,
  * 44 evaluations each) before the search had found its gains; without the cap every route converged at
@@ -301,6 +315,10 @@ typedef struct mn_hits {
     uint8_t* cell_flags;
     int entered;            /* distinct entered cells */
     int unremovable;        /* entered cells flagged MODEL */
+    /* T-223: the hits of segments from `reported_from` on (the finishing passes) only mark `reported_flags`:
+     * they show in the contacts and steer no pass decision. INT_MAX: every hit steers. */
+    int reported_from;
+    uint8_t* reported_flags;
 } mn_hits;
 
 int mn_hits_init(mn_hits* hits, int cells);
@@ -311,16 +329,18 @@ void mn_model_bits(const float* model, int cells, float floor, uint8_t* status);
 
 /* Clears MN_CELL_COLLISION, walks the segments over a clone of `stock` and sets it again on every
  * entered cell; `hits` may be NULL, otherwise its closing map must be set. Events hold one collision
- * per segment and kind. `final_stock` (cells, may be NULL) receives the clone as the walk leaves it. */
+ * per segment and kind. `final_stock` (cells, may be NULL) receives the clone as the walk leaves it.
+ * `contact` (count entries, zero at the call, may be NULL) receives 1 for every segment that met
+ * material: removed more than `tolerance` from a cell or entered one with the head or a rapid (T-218). */
 int mn_check_path(const mn_segment* segments, int count, const mn_grid* g, const float* stock, const float* model, float floor, const mn_profile* profile, float cutter_radius,
-    float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, float* final_stock);
+    float cutter_length, float tolerance, uint8_t* status, mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, float* final_stock, uint8_t* contact);
 
 /* The check's walk with its inputs kept (T-207): opened once, run over any segment range in place on a
  * stock, closed when done. The grid and the profile's offsets must outlive the walker. */
 typedef struct mn_walker mn_walker;
 int mn_walker_open(const mn_grid* g, const mn_profile* profile, float cutter_radius, float cutter_length, float tolerance, int first_hit_only, mn_walker** walker);
 int mn_walker_run(mn_walker* walker, const mn_segment* segments, int first_segment, int count, float* stock, const float* model, float floor, uint8_t* status,
-    mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, double* probing_seconds, double* walking_seconds);
+    mn_hits* hits, mn_collisions* events, const mn_monitor* monitor, double* probing_seconds, double* walking_seconds, uint8_t* contact);
 void mn_walker_close(mn_walker* walker);
 
 /* Not cut (T-173): the cells whose material after the toolpath stands more than the tolerance above
@@ -355,6 +375,8 @@ int mn_bridges_place(const mn_grid* g, const float* stock, const float* model, c
 float mn_distance_to(mn_v3 p, mn_v3 a, mn_v3 b);
 
 /* `marks` (NULL allowed) receives the layer marks of the routes. */
+/* `finishing` receives the finishing passes (T-222) and the final retract, `result` everything before
+ * them; without finishing passes `result` ends with the retract and `finishing` stays empty. */
 /* `entries` (may be NULL) receives the entry of every route unit after the first (T-166). */
 /* `unreached` (may be NULL) receives the counts of the backward check when the collision mode is
  * MN_COLLISION_BACKWARDS (T-170). */
@@ -365,7 +387,7 @@ typedef struct mn_unreached {
     int sweeps;
 } mn_unreached;
 
-int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks, mn_points* entries, mn_unreached* unreached);
+int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_segments* finishing, mn_marks* marks, mn_points* entries, mn_unreached* unreached);
 
 /* ---- backward check (T-170, mn_backwards.c) ---- */
 

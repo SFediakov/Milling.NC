@@ -306,6 +306,9 @@ static int cover_gaps(const uint8_t* inside, const mn_grid* g, const mn_profile*
     return MN_OK;
 }
 
+/* The plane rapids and every move over uncut stock run on: the stock top plus the safe height. */
+static float safe_plane(const mn_context* context) { return context->stock_top + context->parameters.safe_height; }
+
 /* The route floor and touch floor (`lifted`, cells each) over material no route has taken, whose
  * floor still stands at its stock height. A move through such a cell would run on the stock top, so
  * the cell rises to the safe plane (stock top plus the safe height). A point on its edge or corner, a
@@ -318,7 +321,7 @@ static void lift_uncut(const mn_context* context, const float* floor, mn_box box
     int width = context->grid.width;
     int cells = mn_cells(&context->grid);
     const float* stock = context->stock;
-    float safe = context->stock_top + context->parameters.safe_height;
+    float safe = safe_plane(context);
     float* touch = lifted + cells;
     for (int j = box.j0; j <= box.j1; j++) {
         for (int i = box.i0; i <= box.i1; i++) {
@@ -406,7 +409,7 @@ static int route_nodes(const mn_context* context, const mn_route_grid* grid, mn_
     lift_uncut(context, grid->floor, box, lifted_floor);
     mn_time_add(MN_TIME_FLOORS, mn_seconds() - started);
     int status = MN_OK;
-    mn_route_grid lifted = { grid->g, lifted_floor, lifted_floor + mn_cells(&grid->g) };
+    mn_route_grid lifted = { grid->g, lifted_floor, lifted_floor + mn_cells(&grid->g), grid->safe_z };
     mn_problem problem;
     problem.grid = lifted;
     problem.x = x;
@@ -430,7 +433,7 @@ static int route_nodes(const mn_context* context, const mn_route_grid* grid, mn_
     return status;
 }
 
-static int writer_for(const mn_context* context, mn_writer** writer) { return mn_writer_create(&context->parameters, context->stock_top + context->parameters.safe_height, writer); }
+static int writer_for(const mn_context* context, mn_writer** writer) { return mn_writer_create(&context->parameters, safe_plane(context), writer); }
 
 /* The exit of a route unit (T-166) as one more node after the route's own; returns the new count. */
 static int append_exit(float* xs, float* ys, float* zs, int count, const mn_v3* exit)
@@ -980,7 +983,7 @@ static int z_level_block(mn_z_state* s, float level, const int* region, int regi
         for (int m = 0; m < region_count; m++) {
             s->clearance[region[m]] = level;
         }
-        mn_route_grid grid = { *g, s->clearance, s->clearance };
+        mn_route_grid grid = { *g, s->clearance, s->clearance, safe_plane(context) };
         int end = exit_index(s->xs, s->ys, s->zs, count, exit);
         status = route_nodes(context, &grid, box, s->lifted, s->xs, s->ys, s->zs, count, end, &s->budget, s->nodes_left, s->monitor != NULL ? s->monitor->cancel : NULL, s->writer);
         s->nodes_left -= nodes->count;
@@ -1825,7 +1828,109 @@ static int z_groups_prepare(mn_z_state* s, mn_z_group* groups, int group_count, 
 /* The routes of the Z layer over the context's plan and strategy tip, in groups of `group_size` levels
  * (far stepdown slabs when `far_on`): every group's far block and cave walk, in route units. Backwards
  * gives it the plan and tip of its check (T-193). */
-static int z_layer_route(const mn_context* context, const mn_monitor* monitor, int group_size, int far_on, mn_segments* result, mn_marks* marks, mn_points* entries)
+/* ---- finishing passes (T-222) ---- */
+
+/* The rows of finishing pass `k` of `passes` (user request: a pattern other than the roughing's, the rows
+ * moved by half a pass for one pass): lines `spacing` cells apart, the roughing's row step, moved by
+ * k / (passes + 1) of it; parallel to the roughing rows (constant j), across them (constant i) or along the
+ * diagonal (constant i + j, spaced like the rows, so sqrt 2 times the step in i + j). Every cut cell on a
+ * line is a node: the nodes of a row lie a cell apart, so the route runs along the rows and turns at their
+ * ends (a node every row step would let it run across them as well). */
+typedef struct mn_finishing_rows {
+    int pattern;
+    int spacing;
+    int offset;
+} mn_finishing_rows;
+
+static mn_finishing_rows finishing_rows(int pattern, int k, int passes, int step)
+{
+    mn_finishing_rows rows;
+    rows.pattern = pattern;
+    rows.spacing = pattern == MN_FINISHING_DIAGONAL_ROWS ? mn_maxi(1, mn_f2i(rintf((float)step * sqrtf(2.0f)))) : step;
+    rows.offset = mn_f2i(rintf((float)rows.spacing * (float)k / (float)(passes + 1))) % rows.spacing;
+    return rows;
+}
+
+static int finishing_node(const mn_finishing_rows* rows, int i, int j)
+{
+    int line = rows->pattern == MN_FINISHING_CROSS_ROWS ? i : rows->pattern == MN_FINISHING_DIAGONAL_ROWS ? i + j : j;
+    return (line - rows->offset) % rows->spacing == 0;
+}
+
+/* T-222 (user request): the finishing passes after the roughing. Each visits the positions the roughing cut
+ * (whose planned floor lies below the stock) at the final level the roughing took them to, the lowest cut
+ * material there, on the rows of its pattern, in one route over the floors as the roughing left them (the
+ * positions it never cut lifted to the safe plane). Where the material stands as planned it cuts nothing;
+ * what the roughing left above the final level under its rows it removes. */
+static int z_finishing(mn_z_state* s, mn_writer* writer)
+{
+    const mn_context* context = s->context;
+    const mn_grid* g = &context->grid;
+    int width = g->width;
+    int cells = mn_cells(g);
+    int passes = context->parameters.finishing_passes;
+    uint8_t* cut = (uint8_t*)mn_alloc((size_t)cells, 1);
+    if (cut == NULL) {
+        return mn_fail(MN_ERR_MEMORY, "Out of memory for the finishing passes.");
+    }
+    mn_box box = mn_box_empty();
+    for (int c = 0; c < cells; c++) {
+        float stock = context->stock[c];
+        cut[c] = (uint8_t)(!mn_isnan(stock) && s->planned[c] < stock - MN_LEVEL_TOLERANCE);
+        if (cut[c]) {
+            mn_box_include(&box, c % width, c / width);
+        }
+    }
+    int status = MN_OK;
+    mn_ints nodes = { 0 };
+    float* xs = NULL;
+    float* ys = NULL;
+    float* zs = NULL;
+    for (int k = 1; k <= passes && status == MN_OK; k++) {
+        mn_finishing_rows rows = finishing_rows(context->parameters.finishing_pattern, k, passes, s->step);
+        nodes.count = 0;
+        for (int j = box.j0; j <= box.j1 && status == MN_OK; j++) {
+            for (int i = box.i0; i <= box.i1 && status == MN_OK; i++) {
+                if (cut[j * width + i] && finishing_node(&rows, i, j)) {
+                    status = mn_ints_push(&nodes, j * width + i);
+                }
+            }
+        }
+        if (status != MN_OK || nodes.count == 0) {
+            continue;
+        }
+        int count = nodes.count;
+        free(xs);
+        free(ys);
+        free(zs);
+        xs = (float*)mn_alloc((size_t)count, sizeof(float));
+        ys = (float*)mn_alloc((size_t)count, sizeof(float));
+        zs = (float*)mn_alloc((size_t)count, sizeof(float));
+        if (xs == NULL || ys == NULL || zs == NULL) {
+            status = mn_fail(MN_ERR_MEMORY, "Out of memory for finishing pass %d of %d nodes.", k, count);
+            break;
+        }
+        for (int n = 0; n < count; n++) {
+            int c = nodes.items[n];
+            xs[n] = mn_center_x(g, c % width);
+            ys[n] = mn_center_y(g, c / width);
+            zs[n] = s->planned[c];
+        }
+        mn_box route = route_box(g, xs, ys, count, writer);
+        copy_box(s->clearance, s->planned, g, route);
+        mn_route_grid grid = { *g, s->clearance, s->clearance, safe_plane(context) };
+        mn_budget budget = { (int64_t)count * MN_EVALUATIONS_PER_NODE, 0 };
+        status = route_nodes(context, &grid, route, s->lifted, xs, ys, zs, count, -1, &budget, count, s->monitor != NULL ? s->monitor->cancel : NULL, writer);
+    }
+    mn_ints_free(&nodes);
+    free(xs);
+    free(ys);
+    free(zs);
+    free(cut);
+    return status;
+}
+
+static int z_layer_route(const mn_context* context, const mn_monitor* monitor, int group_size, int far_on, mn_segments* result, mn_segments* finishing, mn_marks* marks, mn_points* entries)
 {
     const mn_grid* g = &context->grid;
     const mn_plan* plan = context->plan;
@@ -1895,7 +2000,15 @@ static int z_layer_route(const mn_context* context, const mn_monitor* monitor, i
         status = z_units(&s, groups, group_count, max_nodes, model_distance, writer, entries);
     }
     free(model_distance);
-    if (status == MN_OK) {
+    if (status == MN_OK && context->parameters.finishing_passes > 0) {
+        status = mn_writer_release(writer, result, marks);
+        if (status == MN_OK) {
+            status = z_finishing(&s, writer);
+        }
+        if (status == MN_OK) {
+            status = mn_writer_take(writer, finishing, NULL);
+        }
+    } else if (status == MN_OK) {
         status = mn_writer_take(writer, result, marks);
     }
 
@@ -1929,7 +2042,8 @@ done:
  * the head clears what stands (T-156, T-157, T-162), everything else at every level, cave by cave, in
  * route units ending where the next one begins, priced with the turn fine. Where the check leaves nothing
  * unreached the plan and the tip are the pass's own, and so is the toolpath. */
-static int z_backwards(const mn_context* context, const mn_monitor* monitor, int group_size, int far_on, mn_segments* result, mn_marks* marks, mn_points* entries, mn_unreached* unreached)
+static int z_backwards(const mn_context* context, const mn_monitor* monitor, int group_size, int far_on, mn_segments* result, mn_segments* finishing, mn_marks* marks, mn_points* entries,
+    mn_unreached* unreached)
 {
     if (context->collision_mode == MN_COLLISION_BACKWARDS_GPU && context->gpu == NULL) {
         return mn_fail(MN_ERR_STATE, "Backwards_GPU needs the generation's GPU session.");
@@ -1945,7 +2059,7 @@ static int z_backwards(const mn_context* context, const mn_monitor* monitor, int
         mn_context routed = *context;
         routed.plan = reached;
         routed.effective_tip = tip;
-        status = z_layer_route(&routed, monitor, group_size, far_on, result, marks, entries);
+        status = z_layer_route(&routed, monitor, group_size, far_on, result, finishing, marks, entries);
     }
     int64_t counted = 0;
     int64_t model_cells = 0;
@@ -1963,7 +2077,7 @@ static int z_backwards(const mn_context* context, const mn_monitor* monitor, int
     return status;
 }
 
-int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_marks* marks, mn_points* entries, mn_unreached* unreached)
+int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments* result, mn_segments* finishing, mn_marks* marks, mn_points* entries, mn_unreached* unreached)
 {
     const mn_plan* plan = context->plan;
     int k = mn_far_levels(&context->parameters);
@@ -1974,9 +2088,17 @@ int mn_z_layer(const mn_context* context, const mn_monitor* monitor, mn_segments
         return mn_fail(MN_ERR_ARGUMENT, "Far stepdown %g must be 0 or the stepdown %g (none) or a whole multiple of it, at least twice it.", (double)context->parameters.far_stepdown,
             (double)context->parameters.stepdown);
     }
+    int passes = context->parameters.finishing_passes;
+    int pattern = context->parameters.finishing_pattern;
+    if (passes < 0 || passes > MN_MAX_FINISHING_PASSES) {
+        return mn_fail(MN_ERR_ARGUMENT, "Finishing passes must be 0 to %d, got %d.", MN_MAX_FINISHING_PASSES, passes);
+    }
+    if (pattern != MN_FINISHING_SHIFTED_ROWS && pattern != MN_FINISHING_CROSS_ROWS && pattern != MN_FINISHING_DIAGONAL_ROWS) {
+        return mn_fail(MN_ERR_ARGUMENT, "Unknown finishing pattern %d.", pattern);
+    }
     int far_on = k >= 2;
     int group_size = far_on ? k : (plan->count > 0 ? plan->count : 1);
-    return z_backwards(context, monitor, group_size, far_on, result, marks, entries, unreached);
+    return z_backwards(context, monitor, group_size, far_on, result, finishing, marks, entries, unreached);
 }
 
 MN_API int32_t mn_strategy_generate(int32_t strategy, const mn_context* context, mn_progress_fn progress, void* progress_context, const volatile int32_t* cancel, mn_segment** segments, int32_t* count)
@@ -1992,7 +2114,12 @@ MN_API int32_t mn_strategy_generate(int32_t strategy, const mn_context* context,
     monitor.context = progress_context;
     monitor.cancel = cancel;
     mn_segments result = { 0 };
-    int status = mn_z_layer(context, &monitor, &result, NULL, NULL, NULL);
+    mn_segments finishing = { 0 };
+    int status = mn_z_layer(context, &monitor, &result, &finishing, NULL, NULL, NULL);
+    for (int k = 0; k < finishing.count && status == MN_OK; k++) {
+        status = mn_segments_push(&result, finishing.items[k]);
+    }
+    mn_segments_free(&finishing);
     if (status != MN_OK) {
         mn_segments_free(&result);
         return status;

@@ -72,93 +72,296 @@ static float touching(const mn_route_grid* grid, float x, float y)
     return best;
 }
 
-/* The polyline after `a` (excluded) up to `b` (included), appended to `points` when given, and the
- * vertical travel along it: rise in place, every cell-edge crossing lifted to the highest plateau
- * touching it and never below the straight line, descent in place over b. */
-float mn_trace(const mn_route_grid* grid, mn_v3 a, mn_v3 b, mn_points* points, int* status)
+/* The vertices of the polyline from a to b in order, `t` being the share of the move's XY length behind
+ * them: the rise in place over a, every cell-edge crossing lifted to the highest plateau touching it and
+ * never below the straight line between the ends, the descent in place over b, then b. The walk starts at
+ * a, which is no vertex. */
+enum { WALK_START, WALK_CROSSINGS, WALK_ABOVE, WALK_END, WALK_DONE };
+
+typedef struct trace_vertex {
+    float t;
+    mn_v3 p;
+} trace_vertex;
+
+typedef struct trace_walk {
+    const mn_route_grid* grid;
+    mn_v3 a;
+    mn_v3 b;
+    float dx;
+    float dy;
+    int i;
+    int j;
+    int i_end;
+    int j_end;
+    int step_i;
+    int step_j;
+    float t_delta_x;
+    float t_delta_y;
+    float t_max_x;
+    float t_max_y;
+    int remaining;
+    float current;
+    float z;
+    int stage;
+} trace_walk;
+
+static void walk_init(trace_walk* w, const mn_route_grid* grid, mn_v3 a, mn_v3 b)
 {
     const mn_grid* g = &grid->g;
     float cell = g->cell_size;
-    int i = mn_cell_i(g, a.x);
-    int j = mn_cell_j(g, a.y);
-    int i_end = mn_cell_i(g, b.x);
-    int j_end = mn_cell_j(g, b.y);
-    float z = a.z;
-    float climb = 0.0f;
-    float current = plateau(grid, i, j);
-    float start = max3(z, current, touching(grid, a.x, a.y));
-    *status = MN_OK;
-    if (start > z) {
-        climb += start - z;
-        z = start;
-        if (points != NULL && *status == MN_OK) {
-            *status = mn_points_push(points, mn_v3_make(a.x, a.y, z));
-        }
-    }
-
-    if (i != i_end || j != j_end) {
-        float dx = b.x - a.x;
-        float dy = b.y - a.y;
-        int step_i = dx > 0 ? 1 : dx < 0 ? -1 : 0;
-        int step_j = dy > 0 ? 1 : dy < 0 ? -1 : 0;
-        float t_delta_x = step_i == 0 ? INFINITY : cell / fabsf(dx);
-        float t_delta_y = step_j == 0 ? INFINITY : cell / fabsf(dy);
-        float t_max_x = step_i == 0 ? INFINITY : (g->origin_x + (float)(step_i > 0 ? i + 1 : i) * cell - a.x) / dx;
-        float t_max_y = step_j == 0 ? INFINITY : (g->origin_y + (float)(step_j > 0 ? j + 1 : j) * cell - a.y) / dy;
-        int remaining = abs(i_end - i) + abs(j_end - j) + 2;
-        while ((i != i_end || j != j_end) && remaining-- > 0) {
-            float t;
-            if (t_max_x < t_max_y) {
-                t = t_max_x;
-                i += step_i;
-                t_max_x += t_delta_x;
-            } else if (t_max_y < t_max_x) {
-                t = t_max_y;
-                j += step_j;
-                t_max_y += t_delta_y;
-            } else {
-                t = t_max_x;
-                i += step_i;
-                j += step_j;
-                t_max_x += t_delta_x;
-                t_max_y += t_delta_y;
-            }
-
-            if (t > 1.0f) {
-                break;
-            }
-
-            float px = a.x + dx * t;
-            float py = a.y + dy * t;
-            float next = plateau(grid, i, j);
-            float lifted = max2(max3(a.z + (b.z - a.z) * t, current, next), touching(grid, px, py));
-            climb += fabsf(lifted - z);
-            z = lifted;
-            if (points != NULL && *status == MN_OK) {
-                *status = mn_points_push(points, mn_v3_make(px, py, z));
-            }
-            current = next;
-        }
-    }
-
-    float above = max2(max3(b.z, current, plateau(grid, i_end, j_end)), touching(grid, b.x, b.y));
-    climb += fabsf(above - z);
-    z = above;
-    if (z > b.z) {
-        if (points != NULL && *status == MN_OK) {
-            *status = mn_points_push(points, mn_v3_make(b.x, b.y, z));
-        }
-        climb += z - b.z;
-    }
-    if (points != NULL && *status == MN_OK) {
-        *status = mn_points_push(points, b);
-    }
-    return climb;
+    w->grid = grid;
+    w->a = a;
+    w->b = b;
+    w->i = mn_cell_i(g, a.x);
+    w->j = mn_cell_j(g, a.y);
+    w->i_end = mn_cell_i(g, b.x);
+    w->j_end = mn_cell_j(g, b.y);
+    w->dx = b.x - a.x;
+    w->dy = b.y - a.y;
+    w->step_i = w->dx > 0 ? 1 : w->dx < 0 ? -1 : 0;
+    w->step_j = w->dy > 0 ? 1 : w->dy < 0 ? -1 : 0;
+    w->t_delta_x = w->step_i == 0 ? INFINITY : cell / fabsf(w->dx);
+    w->t_delta_y = w->step_j == 0 ? INFINITY : cell / fabsf(w->dy);
+    w->t_max_x = w->step_i == 0 ? INFINITY : (g->origin_x + (float)(w->step_i > 0 ? w->i + 1 : w->i) * cell - a.x) / w->dx;
+    w->t_max_y = w->step_j == 0 ? INFINITY : (g->origin_y + (float)(w->step_j > 0 ? w->j + 1 : w->j) * cell - a.y) / w->dy;
+    w->remaining = abs(w->i_end - w->i) + abs(w->j_end - w->j) + 2;
+    w->current = plateau(grid, w->i, w->j);
+    w->z = a.z;
+    w->stage = WALK_START;
 }
+
+static int walk_vertex(trace_walk* w, float t, mn_v3 p, trace_vertex* v)
+{
+    w->z = p.z;
+    v->t = t;
+    v->p = p;
+    return 1;
+}
+
+/* The next vertex in v; 0 after b. */
+static int walk_next(trace_walk* w, trace_vertex* v)
+{
+    const mn_route_grid* grid = w->grid;
+    if (w->stage == WALK_START) {
+        w->stage = WALK_CROSSINGS;
+        float start = max3(w->z, w->current, touching(grid, w->a.x, w->a.y));
+        if (start > w->z) {
+            return walk_vertex(w, 0.0f, mn_v3_make(w->a.x, w->a.y, start), v);
+        }
+    }
+    if (w->stage == WALK_CROSSINGS) {
+        if ((w->i != w->i_end || w->j != w->j_end) && w->remaining-- > 0) {
+            float t;
+            if (w->t_max_x < w->t_max_y) {
+                t = w->t_max_x;
+                w->i += w->step_i;
+                w->t_max_x += w->t_delta_x;
+            } else if (w->t_max_y < w->t_max_x) {
+                t = w->t_max_y;
+                w->j += w->step_j;
+                w->t_max_y += w->t_delta_y;
+            } else {
+                t = w->t_max_x;
+                w->i += w->step_i;
+                w->j += w->step_j;
+                w->t_max_x += w->t_delta_x;
+                w->t_max_y += w->t_delta_y;
+            }
+            if (!(t > 1.0f)) {
+                float px = w->a.x + w->dx * t;
+                float py = w->a.y + w->dy * t;
+                float next = plateau(grid, w->i, w->j);
+                float lifted = max2(max3(w->a.z + (w->b.z - w->a.z) * t, w->current, next), touching(grid, px, py));
+                w->current = next;
+                return walk_vertex(w, t, mn_v3_make(px, py, lifted), v);
+            }
+        }
+        w->stage = WALK_ABOVE;
+    }
+    if (w->stage == WALK_ABOVE) {
+        w->stage = WALK_END;
+        float above = max2(max3(w->b.z, w->current, plateau(grid, w->i_end, w->j_end)), touching(grid, w->b.x, w->b.y));
+        if (above > w->b.z) {
+            return walk_vertex(w, 1.0f, mn_v3_make(w->b.x, w->b.y, above), v);
+        }
+    }
+    if (w->stage == WALK_END) {
+        w->stage = WALK_DONE;
+        return walk_vertex(w, 1.0f, w->b, v);
+    }
+    return 0;
+}
+
+static mn_v3 point_on(const trace_walk* w, float t, float z)
+{
+    if (t <= 0.0f) {
+        return mn_v3_make(w->a.x, w->a.y, z);
+    }
+    if (t >= 1.0f) {
+        return mn_v3_make(w->b.x, w->b.y, z);
+    }
+    return mn_v3_make(w->a.x + w->dx * t, w->a.y + w->dy * t, z);
+}
+
+/* What a trace gives: the vertical travel from a and, when wanted, the points after a. */
+typedef struct trace_out {
+    mn_points* points;
+    int* status;
+    float z;
+    float climb;
+} trace_out;
+
+static void out_emit(trace_out* o, mn_v3 p)
+{
+    o->climb += fabsf(p.z - o->z);
+    o->z = p.z;
+    if (o->points != NULL && *o->status == MN_OK) {
+        *o->status = mn_points_push(o->points, p);
+    }
+}
+
+/* The vertices of a walk one after another: `prev` the last one taken (a at t = 0 before any), `next` the
+ * one after it. */
+typedef struct trace_feed {
+    trace_walk walk;
+    trace_vertex prev;
+    trace_vertex next;
+    int has_next;
+} trace_feed;
+
+static void feed_init(trace_feed* f, const mn_route_grid* grid, mn_v3 a, mn_v3 b)
+{
+    walk_init(&f->walk, grid, a, b);
+    f->prev.t = 0.0f;
+    f->prev.p = a;
+    f->has_next = walk_next(&f->walk, &f->next);
+}
+
+static void feed_take(trace_feed* f)
+{
+    f->prev = f->next;
+    f->has_next = walk_next(&f->walk, &f->next);
+}
+
+static void feed_emit_before(trace_feed* f, trace_out* o, float t)
+{
+    while (f->has_next && f->next.t < t) {
+        out_emit(o, f->next.p);
+        feed_take(f);
+    }
+}
+
+static void feed_skip_through(trace_feed* f, float t)
+{
+    while (f->has_next && f->next.t <= t) {
+        feed_take(f);
+    }
+}
+
+/* The polyline's height at t, which lies from prev to next. */
+static float feed_height(const trace_feed* f, float t)
+{
+    if (f->has_next && f->next.t == t) {
+        return f->next.p.z;
+    }
+    if (!f->has_next || f->prev.t == t) {
+        return f->prev.p.z;
+    }
+    return f->prev.p.z + (f->next.p.z - f->prev.p.z) * ((t - f->prev.t) / (f->next.t - f->prev.t));
+}
+
+/* The end of a stretch on the safe plane: the polyline up to `land` is replaced, the tool lands in place
+ * there on the polyline (b itself at the move's end). */
+static void feed_land(trace_feed* f, trace_out* o, float land, float safe)
+{
+    feed_skip_through(f, land);
+    out_emit(o, point_on(&f->walk, land, safe));
+    out_emit(o, land >= 1.0f ? f->walk.b : point_on(&f->walk, land, feed_height(f, land)));
+}
+
+/* T-216: every stretch of the polyline on the safe plane (consecutive vertices on it) widened by `margin`
+ * (a share of the move) on both sides. A lead walk finds the vertices on the plane; the feed walk, at
+ * least the margin behind it, emits the polyline up to the rise, the stretch on the plane and the
+ * polyline after the landing. A rise or landing beyond the move's own ends lies on them, in place;
+ * stretches whose widened ends meet join. */
+static float trace_widened(const mn_route_grid* grid, mn_v3 a, mn_v3 b, float margin, mn_points* points, int* status)
+{
+    float safe = grid->safe_z;
+    trace_walk lead;
+    walk_init(&lead, grid, a, b);
+    trace_feed feed;
+    feed_init(&feed, grid, a, b);
+    trace_out out = { points, status, a.z, 0.0f };
+    int on_plane = 0;
+    int previous_on_plane = 0;
+    float land = 0.0f;
+    trace_vertex v;
+    while (walk_next(&lead, &v)) {
+        int here = v.p.z >= safe;
+        if (here) {
+            float rise = mn_max(0.0f, v.t - margin);
+            if (on_plane && !previous_on_plane && rise > land) {
+                feed_land(&feed, &out, land, safe);
+                on_plane = 0;
+            }
+            if (!on_plane) {
+                feed_emit_before(&feed, &out, rise);
+                if (rise > 0.0f) {
+                    out_emit(&out, point_on(&feed.walk, rise, feed_height(&feed, rise)));
+                }
+                out_emit(&out, point_on(&feed.walk, rise, safe));
+                on_plane = 1;
+            }
+            land = mn_min(1.0f, v.t + margin);
+        } else if (on_plane && v.t > land + margin) {
+            feed_land(&feed, &out, land, safe);
+            on_plane = 0;
+        }
+        previous_on_plane = here;
+        if (!on_plane) {
+            feed_emit_before(&feed, &out, v.t - margin);
+        }
+    }
+    if (on_plane) {
+        feed_land(&feed, &out, land, safe);
+    }
+    feed_emit_before(&feed, &out, INFINITY);
+    return out.climb;
+}
+
+/* The polyline after `a` (excluded) up to `b` (included), appended to `points` when given, and the
+ * vertical travel along it. A move whose polyline reaches the safe plane (cells lifted over uncut stock)
+ * is on the plane from MN_SAFE_MARGIN of its XY travel before the first such vertex to MN_SAFE_MARGIN
+ * after the last (T-216); every other move keeps the plain polyline. */
+float mn_trace(const mn_route_grid* grid, mn_v3 a, mn_v3 b, mn_points* points, int* status)
+{
+    *status = MN_OK;
+    int base = points != NULL ? points->count : 0;
+    trace_walk walk;
+    walk_init(&walk, grid, a, b);
+    trace_out out = { points, status, a.z, 0.0f };
+    int on_plane = 0;
+    trace_vertex v;
+    while (walk_next(&walk, &v)) {
+        out_emit(&out, v.p);
+        on_plane |= v.p.z >= grid->safe_z;
+    }
+    float planar = sqrtf(walk.dx * walk.dx + walk.dy * walk.dy);
+    if (!on_plane || !(planar > 0.0f)) {
+        return out.climb;
+    }
+    if (points != NULL) {
+        points->count = base;
+    }
+    *status = MN_OK;
+    return trace_widened(grid, a, b, MN_SAFE_MARGIN / planar, points, status);
+}
+
+MN_API float mn_route_safe_margin(void) { return MN_SAFE_MARGIN; }
 
 MN_API float mn_surface_trace(const mn_grid* grid, const float* floor, const float* a, const float* b, float** points, int32_t* point_count)
 {
-    mn_route_grid route = { *grid, floor, floor };
+    mn_route_grid route = { *grid, floor, floor, INFINITY };
     mn_points list = { 0 };
     int status;
     float climb = mn_trace(&route, mn_v3_make(a[0], a[1], a[2]), mn_v3_make(b[0], b[1], b[2]), points != NULL ? &list : NULL, &status);
@@ -194,7 +397,7 @@ float mn_cost_exact(const mn_route_grid* grid, mn_v3 a, mn_v3 b)
 
 MN_API float mn_route_exact(const mn_grid* grid, const float* floor, const float* a, const float* b)
 {
-    mn_route_grid route = { *grid, floor, floor };
+    mn_route_grid route = { *grid, floor, floor, INFINITY };
     return mn_cost_exact(&route, mn_v3_make(a[0], a[1], a[2]), mn_v3_make(b[0], b[1], b[2]));
 }
 

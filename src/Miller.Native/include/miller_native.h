@@ -95,7 +95,26 @@ typedef struct mn_parameters {
     /* Z layer by layer: the far region of every group of far_stepdown / stepdown levels is cut this
      * much deeper in one step (T-156); 0 or the stepdown itself for none (T-196). */
     float far_stepdown;
+    /* The rate of a feed or plunge that meets no material over its whole length (T-218); the
+     * generation's check decides it, every other feed and plunge runs at feed_rate. */
+    float travel_rate;
+    /* T-221: feed_rate and travel_rate are the XY rates; these are the Z rates of the same moves. A move
+     * runs at the vector feed of mn_segment_rate. */
+    float feed_rate_z;
+    float travel_rate_z;
+    /* T-222: finishing passes after the roughing (0 to MN_MAX_FINISHING_PASSES, 0 for none) and their
+     * pattern (MN_FINISHING_*). */
+    int32_t finishing_passes;
+    int32_t finishing_pattern;
 } mn_parameters;
+
+/* Finishing passes (T-222): each visits the positions the roughing cut at the final level it took them to,
+ * along rows of the roughing's row spacing moved by k / (passes + 1) of it for pass k: parallel to the
+ * roughing rows, across them, or along the diagonal; the ends of every row are visited too. */
+#define MN_MAX_FINISHING_PASSES 5
+#define MN_FINISHING_SHIFTED_ROWS 0
+#define MN_FINISHING_CROSS_ROWS 1
+#define MN_FINISHING_DIAGONAL_ROWS 2
 
 /* Inclusive cell rectangle a sweep lowered; empty when i1 < i0 (DirtyRect). */
 typedef struct mn_dirty {
@@ -208,6 +227,9 @@ MN_API int32_t mn_on_lattice(int32_t index, int32_t count, int32_t step);
 MN_API int32_t mn_lattice_nodes(const uint8_t* inside, int32_t width, int32_t height, int32_t step, int32_t** nodes, int32_t* count);
 MN_API int32_t mn_is_outline(const uint8_t* inside, int32_t width, int32_t height, int32_t i, int32_t j);
 MN_API float mn_surface_trace(const mn_grid* grid, const float* floor, const float* a, const float* b, float** points, int32_t* point_count);
+/* The XY distance (mm) along a move between where the tool reaches the safe plane and the first cell
+ * lifted onto it, and between the last such cell and the landing (T-216); the writer's moves keep it. */
+MN_API float mn_route_safe_margin(void);
 MN_API float mn_route_exact(const mn_grid* grid, const float* floor, const float* a, const float* b);
 MN_API float mn_route_lower_bound(const float* a, const float* b);
 MN_API float mn_route_planar(const float* a, const float* b);
@@ -227,6 +249,10 @@ MN_API int32_t mn_route_solve(const mn_grid* grid, const float* floor, const flo
 MN_API float mn_route_path_cost(const mn_grid* grid, const float* floor, const float* x, const float* y, const float* z, const int32_t* order, int32_t count);
 
 /* ---- writer ---- */
+/* The vector feed (mm/min) of a straight move whose XY travel may run at rate_xy and Z travel at rate_z
+ * (T-221): a pure XY move runs at rate_xy, a pure Z move at rate_z, any other move as fast as neither axis
+ * passes its rate and the move not faster than the larger rate. */
+MN_API float mn_segment_rate(const mn_segment* segment, float rate_xy, float rate_z);
 typedef struct mn_writer mn_writer;
 MN_API int32_t mn_writer_create(const mn_parameters* parameters, float safe_z, mn_writer** writer);
 MN_API int32_t mn_writer_travel(mn_writer* writer, const float* to, const mn_grid* grid, const float* floor);
@@ -387,8 +413,9 @@ typedef struct mn_result mn_result;
 #define MN_STAGE_SLICE 6
 #define MN_STAGE_ROUTE 7
 #define MN_STAGE_SIMPLIFY 8
-#define MN_STAGE_STATISTICS 9
-#define MN_STAGE_CHECK 10
+/* The check comes before the statistics: it decides which moves run at the travel rate (T-218). */
+#define MN_STAGE_CHECK 9
+#define MN_STAGE_STATISTICS 10
 
 /* Generation passes (the far withdrawal's repeats) never exceed this number. */
 #define MN_MAX_PASSES 8
@@ -434,6 +461,9 @@ MN_API void mn_result_statistics(const mn_result* result, mn_statistics* statist
  * index of its first segment (the first layer starts at 0) and its level. */
 MN_API int32_t mn_result_layer_count(const mn_result* result);
 MN_API void mn_result_layers(const mn_result* result, int32_t* segment, float* level);
+/* The first segment of the finishing passes of the kept pass's toolpath (T-222); the segment count when it
+ * has none. From there every feed and plunge runs at the milling rates. */
+MN_API int32_t mn_result_finishing_first(const mn_result* result);
 MN_API int32_t mn_result_passes(const mn_result* result);
 /* Per pass (mn_result_passes entries): the distinct cells its check entered and its events. */
 MN_API void mn_result_pass_counts(const mn_result* result, int32_t* entered, int32_t* events);

@@ -9,9 +9,10 @@ using Xunit;
 
 namespace Miller.Tests.Application;
 
-// T-215 (user request): the speed reduction of the turn fine prices the routes only. The toolpath runs
-// every feed and plunge at the feed rate, the .nc file sets that rate once in its header and no G1 line
-// changes it, and the estimated time is the file's length over its rates.
+// T-215 (user request): the speed reduction of the turn fine prices the routes only. With the milling and
+// travel rates of both axes equal (T-218, T-221) the toolpath runs every feed and plunge at that rate, the
+// .nc file sets it once in its header and no G1 line changes it, and the estimated time is the file's
+// length over its rates.
 public sealed class FeedOnceTests
 {
     private const float FeedRate = 150f;
@@ -20,6 +21,9 @@ public sealed class FeedOnceTests
     {
         var project = MillingProject.Default();
         project.Parameters.FeedRate = FeedRate;
+        project.Parameters.FeedRateZ = FeedRate;
+        project.Parameters.TravelRate = FeedRate;
+        project.Parameters.TravelRateZ = FeedRate;
         project.Stock.SizeX = 40;
         project.Stock.SizeY = 40;
         project.Stock.SizeZ = 5;

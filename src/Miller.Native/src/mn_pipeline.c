@@ -4,14 +4,17 @@
 
 /* The whole generation after the project is validated (PipelineService): transform, stock, model
  * map and reach map once, then one or more passes of slicing and cut scope, routing, simplification,
- * statistics and the dynamic collision check (T-147). The Z layer leaves out the positions the
+ * the dynamic collision check (T-147), which also gives every feed and plunge that meets no material
+ * the travel rate (T-218), and the statistics. The Z layer leaves out the positions the
  * backward check finds unreached (T-170, Backwards and Backwards_GPU, the only collision handling
  * since T-214) and the pass is checked for the report. With a far stepdown (T-164) every collision's
  * place and the MN_FAR_WITHDRAW_RADIUS around it are withdrawn from the far stepdown after each pass:
  * later passes may take only the first pass's far positions that were never withdrawn, and a
  * withdrawal that removes a position starts another pass while the entered cells decrease, at most
- * MN_MAX_PASSES times; the pass with the fewest entered cells is kept. Progress goes to the caller per
- * pass and stage; cancellation is honoured between the stages and inside the long ones. */
+ * MN_MAX_PASSES times; the pass with the fewest entered cells is kept. Only the roughing's hits count for
+ * these decisions: the finishing passes (T-222) follow each pass's roughing and their hits are reported only
+ * (T-223, user request: the program runs as with 0 passes until the finishing passes begin). Progress goes
+ * to the caller per pass and stage; cancellation is honoured between the stages and inside the long ones. */
 
 /* Everything one pass produced. */
 typedef struct mn_pass {
@@ -39,6 +42,8 @@ typedef struct mn_pass {
     mn_unreached unreached;
     /* The cells the pass left above what the first pass's plan intended (T-173). */
     mn_uncut uncut;
+    /* The first segment of the finishing passes (T-222), the segment count without them. */
+    int finishing_first;
     int entered;
     int valid;
 } mn_pass;
@@ -238,7 +243,7 @@ static int prepare(const mn_job* job, stage_monitor* stage, const volatile int32
 /* Whether the passes withdraw far positions around collisions: the Z layer with a far stepdown. */
 static int far_withdrawal_on(const mn_job* job) { return job->strategy == MN_STRATEGY_Z_LAYER && mn_far_levels(&job->parameters) >= 2; }
 
-/* One pass: slicing and cut scope, holding bridges, routing, simplification, statistics and the check.
+/* One pass: slicing and cut scope, holding bridges, routing, simplification, the check and the statistics.
  * `status` holds the MODEL bits the pass runs with and receives the BRIDGE bits of its bridges and the
  * COLLISION bits of its check; `hits` receives the check's aggregation when given; `far_allowed` limits
  * the far positions (NULL: all). `intended` (T-173) is filled from the first pass's plan, before the
@@ -374,12 +379,14 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
         context.far_area = pass->far_area;
     }
     mn_segments routed = { 0 };
-    status_code = mn_z_layer(&context, &monitor, &routed, &pass->layers, &pass->units, &pass->unreached);
+    mn_segments finished = { 0 };
+    status_code = mn_z_layer(&context, &monitor, &routed, &finished, &pass->layers, &pass->units, &pass->unreached);
     if (status_code == MN_OK && cancelled(cancel)) {
         status_code = mn_fail(MN_ERR_CANCELLED, "Cancelled.");
     }
     if (status_code != MN_OK) {
         mn_segments_free(&routed);
+        mn_segments_free(&finished);
         return status_code;
     }
     mn_head_limited_mask(r->tip.z, pass->limit.z, cells, p->tolerance, pass->head_limited);
@@ -387,20 +394,27 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
         pass->far_cells += pass->far_area[k];
     }
 
-    /* simplify; the turn fine priced the routes only, every feed runs at the feed rate (T-215). */
+    /* simplify; the turn fine priced the routes only, every feed runs at the feed rate (T-215). The finishing
+     * passes (T-222) are simplified on their own and follow, so their first segment stays known. */
     begin(stage, MN_STAGE_SIMPLIFY);
+    mn_segments finishing = { 0 };
     status_code = mn_simplify_path(&routed, g, pass->strategy_tip.z, p->tolerance, &pass->layers, &pass->toolpath);
+    if (status_code == MN_OK) {
+        status_code = mn_simplify_path(&finished, g, pass->strategy_tip.z, p->tolerance, NULL, &finishing);
+    }
+    pass->finishing_first = pass->toolpath.count;
+    for (int k = 0; k < finishing.count && status_code == MN_OK; k++) {
+        status_code = mn_segments_push(&pass->toolpath, finishing.items[k]);
+    }
     mn_segments_free(&routed);
+    mn_segments_free(&finished);
+    mn_segments_free(&finishing);
     MN_CHECK(status_code);
     MN_STOP_IF_CANCELLED();
 
-    /* statistics */
-    begin(stage, MN_STAGE_STATISTICS);
-    mn_statistics_of(pass->toolpath.items, pass->toolpath.count, p->rapid_rate, &pass->statistics);
-
     /* check: the head and the rapids against the stock as the pass leaves it, order included. A hit
      * cell is removable when its closing under the strategy tip (standing stock included) lies
-     * below the tool surface. */
+     * below the tool surface. It also finds the feeds and plunges that meet no material. */
     begin(stage, MN_STAGE_CHECK);
     mn_map closing = { 0 };
     if (hits != NULL) {
@@ -413,15 +427,28 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
         }
         hits->closing = closing.z;
         hits->slack = p->tolerance;
+        hits->reported_from = pass->finishing_first;
     }
     float* final_stock = (float*)mn_alloc((size_t)cells, sizeof(float));
-    status_code = final_stock == NULL ? mn_fail(MN_ERR_MEMORY, "Out of memory for the final stock.")
-                                      : mn_check_path(pass->toolpath.items, pass->toolpath.count, g, r->stock.z, r->model.z, r->floor, &r->profile, job->tool.cutter_diameter / 2.0f,
-                                          job->tool.cutter_length, MN_COLLISION_TOLERANCE, status, hits, &pass->events, &monitor, final_stock);
+    uint8_t* contact = (uint8_t*)mn_alloc((size_t)(pass->toolpath.count > 0 ? pass->toolpath.count : 1), 1);
+    status_code = final_stock == NULL || contact == NULL
+        ? mn_fail(MN_ERR_MEMORY, "Out of memory for the final stock and the contact of %d segments.", pass->toolpath.count)
+        : mn_check_path(pass->toolpath.items, pass->toolpath.count, g, r->stock.z, r->model.z, r->floor, &r->profile, job->tool.cutter_diameter / 2.0f,
+              job->tool.cutter_length, MN_COLLISION_TOLERANCE, status, hits, &pass->events, &monitor, final_stock, contact);
     if (status_code == MN_OK) {
         mn_uncut_of(g, final_stock, intended, p->tolerance, &pass->uncut);
+        /* T-218 (user request): a feed or plunge that met no material over its whole length is a travel; it
+         * runs at the vector feed of its XY and Z rates (T-221). The finishing passes (T-222) cut what the
+         * machine left, which the simulated stock does not hold, so they keep the milling rates. */
+        for (int k = 0; k < pass->toolpath.count; k++) {
+            mn_segment* s = &pass->toolpath.items[k];
+            if (s->kind != MN_MOVE_RAPID) {
+                s->rate = contact[k] || k >= pass->finishing_first ? mn_segment_rate(s, p->feed_rate, p->feed_rate_z) : mn_segment_rate(s, p->travel_rate, p->travel_rate_z);
+            }
+        }
     }
     free(final_stock);
+    free(contact);
     if (status_code != MN_OK) {
         mn_map_free(&closing);
         if (hits != NULL) {
@@ -440,11 +467,15 @@ static int run_pass(const mn_job* job, stage_monitor* stage, const volatile int3
     }
     if (hits != NULL) {
         for (int k = 0; k < cells; k++) {
-            uint8_t flags = hits->cell_flags[k];
+            uint8_t flags = (uint8_t)(hits->cell_flags[k] | hits->reported_flags[k]);
             pass->contacts[k] = (uint8_t)((flags & MN_HIT_SURFACE) != 0 ? MN_CONTACT_MODEL : flags != 0 ? MN_CONTACT_STOCK : MN_CONTACT_NONE);
         }
     }
     pass->entered = hits != NULL ? hits->entered : pass->events.count;
+
+    /* statistics, at the rates the check gave */
+    begin(stage, MN_STAGE_STATISTICS);
+    mn_statistics_of(pass->toolpath.items, pass->toolpath.count, p->rapid_rate, &pass->statistics);
     pass->valid = 1;
     return MN_OK;
 }
@@ -456,6 +487,10 @@ static int generate(const mn_job* job, stage_monitor* stage, const volatile int3
     }
     if (job->strategy != MN_STRATEGY_Z_LAYER) {
         return mn_fail(MN_ERR_ARGUMENT, "Unknown strategy %d.", job->strategy);
+    }
+    if (!(job->parameters.travel_rate > 0) || !(job->parameters.travel_rate_z > 0) || !(job->parameters.feed_rate_z > 0)) {
+        return mn_fail(MN_ERR_ARGUMENT, "The travel rates and the Z feed rate must be greater than 0, got %g, %g and %g.", (double)job->parameters.travel_rate,
+            (double)job->parameters.travel_rate_z, (double)job->parameters.feed_rate_z);
     }
     if (job->bridge_count < 0 || job->bridge_count > MN_MAX_BRIDGES) {
         return mn_fail(MN_ERR_ARGUMENT, "The bridge count must be 0 to %d, got %d.", MN_MAX_BRIDGES, job->bridge_count);
@@ -505,6 +540,7 @@ static int generate(const mn_job* job, stage_monitor* stage, const volatile int3
         mn_pass pass;
         memset(hits.position_flags, 0, (size_t)cells);
         memset(hits.cell_flags, 0, (size_t)cells);
+        memset(hits.reported_flags, 0, (size_t)cells);
         for (int k = 0; k < cells; k++) {
             hits.position_z[k] = NAN;
             hits.cell_height[k] = NAN;
@@ -674,6 +710,8 @@ MN_API void mn_result_segments(const mn_result* result, mn_segment* segments)
 MN_API void mn_result_statistics(const mn_result* result, mn_statistics* statistics) { *statistics = result->best.statistics; }
 
 MN_API int32_t mn_result_layer_count(const mn_result* result) { return result->best.layers.count; }
+
+MN_API int32_t mn_result_finishing_first(const mn_result* result) { return result->best.finishing_first; }
 
 MN_API void mn_result_layers(const mn_result* result, int32_t* segment, float* level)
 {

@@ -41,7 +41,7 @@ public sealed record PipelineResult(
     // The native status byte per cell, indexed like the model grid.
     public CellStatus[] Status { get; init; } = Array.Empty<CellStatus>();
 
-    // The dynamic check of the kept pass (the last stage of the generation).
+    // The dynamic check of the kept pass (the stage before the statistics).
     public CollisionCheck Collisions { get; init; } = CollisionService.Of(new CollisionReport(Array.Empty<SimulationEvent>(), Array.Empty<CollisionContact>(), 0));
 
     // How many generation passes ran (the far withdrawal repeats while the collisions decrease) and what
@@ -73,6 +73,9 @@ public sealed record PipelineResult(
     // Process times of the generation (T-176).
     public ProcessTimes Times { get; init; } = new(Array.Empty<double>());
 
+    // The first segment of the finishing passes (T-222); the segment count without them.
+    public int FinishingFirstSegment { get; init; }
+
     // The GPU the generation ran on (Backwards_GPU, T-174); null in the other modes.
     public string? Gpu { get; init; }
 }
@@ -97,8 +100,8 @@ public sealed class PipelineService
         ("slice", 0.05f, ""),
         ("route", 0.33f, "pass"),
         ("simplify", 0.02f, ""),
-        ("statistics", 0.02f, ""),
         (CollisionService.StageName, 0.13f, "segment"),
+        ("statistics", 0.02f, ""),
     };
 
     // The first stage that repeats per pass (head clearance).
@@ -159,6 +162,7 @@ public sealed class PipelineService
             Unreached = generated.Unreached,
             Uncut = generated.Uncut,
             Times = generated.Times,
+            FinishingFirstSegment = generated.FinishingFirstSegment,
             Gpu = project.CollisionMode == CollisionMode.Backwards_GPU ? Miller.Core.Native.GpuDevice.Description : null,
         };
     }

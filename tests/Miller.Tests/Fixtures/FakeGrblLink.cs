@@ -24,6 +24,7 @@ public sealed class FakeGrblLink : IMachineLink
     private bool _disposed;
     private int _inFlight;
     private bool _holdReported;
+    private GrblPoint _machinePosition = new(1, 2, 3);
 
     public FakeGrblLink(bool banner = true)
     {
@@ -48,6 +49,27 @@ public sealed class FakeGrblLink : IMachineLink
     public bool BannerAfterReset { get; set; } = true;
 
     public string State { get; set; } = GrblStatus.Idle;
+
+    // The machine position the status reports carry; the work offset is 0.5 on every axis, so the work
+    // position reads this less 0.5.
+    public GrblPoint MachinePosition
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _machinePosition;
+            }
+        }
+
+        set
+        {
+            lock (_gate)
+            {
+                _machinePosition = value;
+            }
+        }
+    }
 
     public List<string> Lines { get; } = new();
 
@@ -186,7 +208,8 @@ public sealed class FakeGrblLink : IMachineLink
                         _holdReported = true;
                     }
 
-                    Emit($"<{state}|MPos:1.000,2.000,3.000|FS:0,0|WCO:0.500,0.500,0.500>");
+                    var at = MachinePosition;
+                    Emit(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"<{state}|MPos:{at.X:0.000},{at.Y:0.000},{at.Z:0.000}|FS:0,0|WCO:0.500,0.500,0.500>"));
                 }
 
                 break;

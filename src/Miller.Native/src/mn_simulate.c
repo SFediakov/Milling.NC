@@ -421,7 +421,7 @@ MN_API int32_t mn_sim_walk(mn_sim* session, int32_t first, int32_t last, float* 
     mn_collisions list = { 0 };
     double probing = 0.0;
     double walking = 0.0;
-    int code = mn_walker_run(session->walker, session->segments, first, last, stock, model, floor, NULL, NULL, &list, NULL, &probing, &walking);
+    int code = mn_walker_run(session->walker, session->segments, first, last, stock, model, floor, NULL, NULL, &list, NULL, &probing, &walking, NULL);
     if (code != MN_OK) {
         mn_collisions_free(&list);
         return code;

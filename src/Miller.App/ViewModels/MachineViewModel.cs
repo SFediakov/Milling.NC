@@ -44,7 +44,6 @@ public sealed partial class MachineViewModel : ViewModelBase
     private readonly Func<bool> _simulationPlaying;
     private readonly string _appVersion;
     private readonly MacroService _macroService;
-    private readonly ExecutionTracker _tracker = new();
     private Toolpath? _programToolpath;
     private long _logSequence;
     private object? _commandKey;
@@ -242,7 +241,7 @@ public sealed partial class MachineViewModel : ViewModelBase
         ShowJob(snapshot);
         ShowOnViewport(snapshot);
         ShowMachineView(snapshot);
-        ShowListing(snapshot);
+        ShowListingRow();
         var key = (snapshot?.Link, snapshot?.Status.State, snapshot?.Status.SubState, snapshot?.IsJobActive, snapshot?.LineInFlight,
             _machine.Program, _toolpath(), _connecting, _machine.RunProgram, _machine.RunJob is { IsActive: false });
         if (!Equals(key, _commandKey))
@@ -352,11 +351,15 @@ public sealed partial class MachineViewModel : ViewModelBase
             return;
         }
 
-        Progress = job.Total > 0 ? (float)job.Acknowledged / job.Total : 0;
-        ProgressText = $"{job.Acknowledged} of {job.Total} lines" + (job.SourceLine > 0 ? $", file line {job.SourceLine}" : string.Empty);
+        // The bar, the line count and the time left follow the lines the machine executed, not the ones it
+        // received (T-219, T-220); the file line is the one of the move the tool is on.
+        var executed = _machine.RunExecutedLines();
+        var source = _machine.RunExecutingSourceLine();
+        Progress = job.Total > 0 ? (float)executed / job.Total : 0;
+        ProgressText = $"{executed} of {job.Total} lines" + (source > 0 ? $", file line {source}" : string.Empty);
         var elapsed = job.Elapsed;
-        var remaining = job.IsActive && job.Acknowledged > 0 && elapsed.TotalSeconds >= MinSecondsForEstimate
-            ? $", about {Duration(elapsed * ((double)(job.Total - job.Acknowledged) / job.Acknowledged))} left"
+        var remaining = job.IsActive && executed > 0 && elapsed.TotalSeconds >= MinSecondsForEstimate
+            ? $", about {Duration(elapsed * ((double)(job.Total - executed) / executed))} left"
             : string.Empty;
         TimeText = $"{Duration(elapsed)} elapsed{remaining}";
         JobText = $"Program {job.State.ToString().ToLowerInvariant()}" + (job.Message is null ? string.Empty : $": {job.Message}");
@@ -368,8 +371,9 @@ public sealed partial class MachineViewModel : ViewModelBase
         }
     }
 
-    // The marker shows the machine's work position; along the generated toolpath the part already
-    // answered is drawn as done. The simulation owns the marker while it plays.
+    // The marker shows the machine's work position; along the generated toolpath the part the machine
+    // executed is drawn as done and the next moves start at the move the tool is on (T-220). The
+    // simulation owns the marker while it plays.
     private void ShowOnViewport(MachineSnapshot? snapshot)
     {
         if (snapshot is not { IsReady: true })
@@ -385,10 +389,10 @@ public sealed partial class MachineViewModel : ViewModelBase
 
         var work = snapshot.Status.WorkPosition;
         var index = _viewport.ToolpathProgressIndex;
-        if (snapshot.Job is { Kind: MachineJobKind.Program } job && _machine.Program is { FromToolpath: true } program
+        if (_machine.Program is { FromToolpath: true } program && RunJobOf(program) is not null
             && _programToolpath is not null && ReferenceEquals(_programToolpath, _viewport.Toolpath))
         {
-            index = program.SegmentsDone(job.Acknowledged);
+            index = program.SegmentsDone(_machine.RunExecutedLines());
         }
 
         _viewport.SetMachinePosition(index, new Vector3((float)work.X, (float)work.Y, (float)work.Z));
@@ -406,12 +410,14 @@ public sealed partial class MachineViewModel : ViewModelBase
 
         var program = _machine.Program;
         var work = snapshot is { IsReady: true } ? snapshot.Status.WorkPosition : Axes.Zero;
-        _viewport.ShowMachineView(program?.Path.Segments ?? Array.Empty<ToolpathSegment>(), Executing(snapshot),
+        _viewport.ShowMachineView(program?.Path.Segments ?? Array.Empty<ToolpathSegment>(), Executing(),
             new Vector3((float)work.X, (float)work.Y, (float)work.Z));
     }
 
-    // The row of the move the tool is on; the last acknowledged line before the first move and once done.
-    private void ShowListing(MachineSnapshot? snapshot)
+    // The row of the move the tool is on. Before the first move the received lines are settings, which
+    // Grbl executes as it acknowledges them, so the last acknowledged line is the executed one; once done,
+    // the last line.
+    private void ShowListingRow()
     {
         var program = _machine.Program;
         var job = RunJobOf(program);
@@ -421,28 +427,15 @@ public sealed partial class MachineViewModel : ViewModelBase
             return;
         }
 
-        var executing = Executing(snapshot);
+        var executing = Executing();
         var acknowledged = Math.Min(job.Acknowledged, program.Grbl.Count) - 1;
         Listing.Show(program.Grbl, job, job.State == JobState.Done || executing >= program.Path.SegmentsDone(job.Acknowledged)
             ? acknowledged
             : program.Path.LineOf(executing));
     }
 
-    // Segments of the loaded program's latest run the tool has passed (ExecutionTracker).
-    private int Executing(MachineSnapshot? snapshot)
-    {
-        var program = _machine.Program;
-        var job = RunJobOf(program);
-        if (program is null || job is null)
-        {
-            return 0;
-        }
-
-        Vector3? position = snapshot is { IsReady: true } ready
-            ? new Vector3((float)ready.Status.WorkPosition.X, (float)ready.Status.WorkPosition.Y, (float)ready.Status.WorkPosition.Z)
-            : null;
-        return _tracker.Executing(program.Path, job, position);
-    }
+    // Segments of the loaded program's latest run the tool has passed (MachineService.RunExecuting).
+    private int Executing() => RunJobOf(_machine.Program) is null ? 0 : _machine.RunExecuting();
 
     private JobProgress? RunJobOf(MachineProgram? program)
         => program is not null && ReferenceEquals(program, _machine.RunProgram) ? _machine.RunJob : null;
