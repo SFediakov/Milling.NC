@@ -360,6 +360,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private void UpdateViewportScene()
     {
         Viewport.SetTool(Project.Current.Tool);
+        Viewport.SetRapidRate(Project.Current.Parameters.RapidRate);
         if (!MeshImport.Matches(Project.Current) || !Project.Current.Axes.IsPermutation)
         {
             if (Viewport.Meshes.Count > 0)

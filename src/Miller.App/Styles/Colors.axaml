@@ -11,9 +11,9 @@
   <Color x:Key="ModelColor">#FF8FB3D9</Color>
   <Color x:Key="SelectionColor">#FFFFD166</Color>
   <Color x:Key="StockColor">#FFC9B58F</Color>
-  <Color x:Key="ToolpathRapidColor">#FFE5484D</Color>
-  <Color x:Key="ToolpathFeedColor">#FF3DDC84</Color>
-  <Color x:Key="ToolpathPlungeColor">#FFF5A524</Color>
+  <Color x:Key="ToolpathSlowColor">#FFE5484D</Color>
+  <Color x:Key="ToolpathMediumColor">#FFFACC15</Color>
+  <Color x:Key="ToolpathFastColor">#FF3DDC84</Color>
   <Color x:Key="ToolpathNextColor">#FF22D3EE</Color>
   <Color x:Key="ToolCutterColor">#FFD0D0D0</Color>
   <Color x:Key="ToolHeadColor">#FF707070</Color>
@@ -40,10 +40,19 @@
   <SolidColorBrush x:Key="ViewportBackgroundBrush" Color="{StaticResource ViewportBackgroundColor}" />
   <SolidColorBrush x:Key="ModelBrush" Color="{StaticResource ModelColor}" />
   <SolidColorBrush x:Key="StockBrush" Color="{StaticResource StockColor}" />
-  <SolidColorBrush x:Key="ToolpathRapidBrush" Color="{StaticResource ToolpathRapidColor}" />
-  <SolidColorBrush x:Key="ToolpathFeedBrush" Color="{StaticResource ToolpathFeedColor}" />
-  <SolidColorBrush x:Key="ToolpathPlungeBrush" Color="{StaticResource ToolpathPlungeColor}" />
+  <SolidColorBrush x:Key="ToolpathSlowBrush" Color="{StaticResource ToolpathSlowColor}" />
+  <SolidColorBrush x:Key="ToolpathMediumBrush" Color="{StaticResource ToolpathMediumColor}" />
+  <SolidColorBrush x:Key="ToolpathFastBrush" Color="{StaticResource ToolpathFastColor}" />
   <SolidColorBrush x:Key="ToolpathNextBrush" Color="{StaticResource ToolpathNextColor}" />
+  <!-- T-224: the speed scale of the toolpath lines (ThemeColors.GetGradient) and of the legend bar, slowest
+       move at offset 0, fastest at 1; the yellow middle keeps the mixed colors bright (red and green alone
+       mix to a dark olive). The first stop is also the legend swatch of a path with one speed. -->
+  <LinearGradientBrush x:Key="ToolpathSpeedBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+    <GradientStop Offset="0" Color="{StaticResource ToolpathSlowColor}" />
+    <GradientStop Offset="0.5" Color="{StaticResource ToolpathMediumColor}" />
+    <GradientStop Offset="1" Color="{StaticResource ToolpathFastColor}" />
+  </LinearGradientBrush>
+  <SolidColorBrush x:Key="LegendBackgroundBrush" Color="{StaticResource PanelBackgroundColor}" Opacity="0.85" />
   <SolidColorBrush x:Key="ToolCutterBrush" Color="{StaticResource ToolCutterColor}" />
   <SolidColorBrush x:Key="ToolHeadBrush" Color="{StaticResource ToolHeadColor}" />
   <SolidColorBrush x:Key="CategoryOkBrush" Color="{StaticResource CategoryOkColor}" />

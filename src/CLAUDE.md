@@ -135,6 +135,11 @@
 - The executed lines of the Machine tab (T-219, T-220) are not a cluster of their own: `ExecutionTracker`
   moved from the view model into `MachineService`, the machine cluster's gate, so the save, the bar, the time
   left and the move list read one tracker. Until T-219 "executed" meant the lines Grbl acknowledged.
+- The speed colors and the speed legend (T-224) are not a cluster of their own: the colors are the vertex colors
+  of the one toolpath renderer, and the legend names the same `ToolpathSpeedScale`, which the viewport view model
+  computes once per shown path; a separate cluster would walk the path twice and could let the legend and the
+  lines disagree. `RendererGeometryTests` and `ColorRuleTests` pinned the move-kind colors and were changed under
+  the user's approval.
 
 ## Placeholder convention (architecture delivered without implementation)
 
@@ -867,4 +872,13 @@
   of executed lines sets `MachinePosition` on a move (work position = machine position - 0.5).
 - `StageProgressTests.OnePass_NamesNoPass_AndTheBarNeverMovesBack` and
   `SimulationSessionTests.Heart_RunToEnd_IsMeasured_AndNotSlowerThanPerSample` failed once each under full-suite
-  load on 2026-11-14 and passed alone 3 of 3, like the wall-time test above.
+  load on 2026-11-14 and passed alone 3 of 3, like the wall-time test above. So did
+  `NativeSimulationTests.Heart_RunToEnd_MatchesTheReference_AndIsFaster` on 2026-11-15 (65 against 166 ms, it
+  wants 3 times faster); it passed alone 3 of 3 and in the next full run.
+- On 2026-11-15 every file written or edited in one execution phase came out with CRLF (whole files, also files
+  that were LF), while the same tools kept LF in a later probe; the cause was not found. git's `text=auto` hides
+  it in the diff, but `.editorconfig` wants LF: check `grep -c $'\r' <file>` after editing and convert back
+  (`sed -i 's/\r$//'`) before the commit (T-224).
+- The GL viewport does not render headless, so an overlay over it (the speed legend) is checked by a headless
+  capture of the window plus tests on the vertex colors; the overlay needs `IsHitTestVisible="False"` or it takes
+  the drags that start over it.

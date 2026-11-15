@@ -77,7 +77,12 @@
     </TabControl>
 
     <Border Name="ViewportHost" Background="{DynamicResource ViewportBackgroundBrush}">
-      <views:Viewport3DControl Name="Viewport" ViewModel="{Binding Viewport}" />
+      <!-- The speed legend lies over the GL surface at its left; every pointer event passes it to the viewport. -->
+      <Panel>
+        <views:Viewport3DControl Name="Viewport" ViewModel="{Binding Viewport}" />
+        <views:SpeedLegendView Name="SpeedLegend" DataContext="{Binding Viewport.SpeedLegend}"
+                               HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8" />
+      </Panel>
     </Border>
   </DockPanel>
 </Window>
