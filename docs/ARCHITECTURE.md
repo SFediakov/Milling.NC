@@ -216,6 +216,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | Toolpath | `ToolpathSegment.cs` | `enum MoveKind { Rapid, Feed, Plunge }` and the segment: `Start`, `End` (`Vector3`), `Kind`, `FeedRate` |
 | Toolpath | `Toolpath.cs` | Segment list, `Bounds`, `TotalLength(kind)` |
 | Toolpath | `ToolpathStatistics.cs` | Lengths per kind, estimated time from rates, segment counts |
+| Toolpath | `ToolpathSpeedScale.cs` | The speed of a move (feed or plunge: its rate; rapid: the rapid rate, G0 has no F), the slowest and fastest of a path, a speed's fraction between them and the legend's steps (T-224) |
 | Toolpath | `ToolpathContext.cs` | Inputs handed to a strategy: tip map, head-limit map, stock map, slice plan, tool, parameters |
 | Toolpath | `IToolpathStrategy.cs` | `Id`, `DisplayName`, `Generate(ToolpathContext, IProgress<float>, CancellationToken) -> Toolpath` (the whole program, first plunge to last retract) |
 | Toolpath | `StrategyRegistry.cs` | Explicit static list of the two routing strategies; `GetById`, `All`; duplicate id = exception |
@@ -297,7 +298,8 @@ placeholder; the task that implements it is written in the placeholder header.
 | root | `App.axaml`, `App.axaml.cs` | Fluent theme, includes `Styles/Colors.axaml` and `Styles/Theme.axaml`, composition root (manual construction of services and view models, no DI container) |
 | Styles | `Colors.axaml` | The only file with color literals |
 | Styles | `Theme.axaml` | Control styles referencing `Colors.axaml` resources |
-| Views | `MainWindow.axaml(.cs)` | Menu bar, left settings tabs, central viewport, bottom status bar with progress |
+| Views | `MainWindow.axaml(.cs)` | Menu bar, left settings tabs, central viewport with the speed legend over its left side, bottom status bar with progress |
+| Views | `SpeedLegendView.axaml(.cs)` | Speed legend (T-224): "Speed, mm/min", the speed gradient bar and the speeds from the slowest (top) to the fastest (bottom); visible with the shown path, takes no pointer input |
 | Views | `MainMenu.axaml` | File (Open STL, Open Project, Save Project, Save Project As, Export NC, Exit), Toolpath (Generate, Cancel), View (Reset Camera; Show Model, Stock, Toolpath, Tool as check items bound two-way to the viewport flags), Simulation (Play, Pause, Stop, Run To End, Next Layer, Previous Layer), Machine (Connect, Disconnect, Start Program, Pause, Resume, Stop, Home, Unlock, Soft Reset), Help (About) |
 | Views | `ToolSettingsView.axaml` | Cutter diameter, cutter length, head diameter, tip type |
 | Views | `StockSettingsView.axaml` | Shape, dimensions, placement, margin, fit button |
@@ -314,7 +316,7 @@ placeholder; the task that implements it is written in the placeholder header.
 | Controls | `NumericBox.cs` | `TextBox` subclass with a float `Value`: typed text is kept as typed, valid text is committed per keystroke, invalid text sets a data validation error, the text is rewritten only on an outside `Value` change |
 | ViewModels | `ViewModelBase.cs` | `ObservableObject` base with validation helpers |
 | ViewModels | `MainWindowViewModel.cs` | Commands for the menu, owns child view models, status text |
-| ViewModels | `ToolSettingsViewModel.cs`, `StockSettingsViewModel.cs`, `AxisSettingsViewModel.cs`, `CuttingParametersViewModel.cs`, `StrategySelectionViewModel.cs`, `ModelsViewModel.cs`, `PresetsViewModel.cs`, `SimulationViewModel.cs`, `AnalysisViewModel.cs`, `MachineViewModel.cs`, `ViewportViewModel.cs` | One per view (`MachineViewModel` copies the controller snapshot 10 times a second and moves the viewport tool marker to the machine's work position); bind to the project through `ProjectService`; validation messages from `ProjectValidator`; `ViewportViewModel` also owns the pick and the drag (`BeginDrag`, `DragTo`, `ModelDragged`), hidden models are not hit |
+| ViewModels | `ToolSettingsViewModel.cs`, `StockSettingsViewModel.cs`, `AxisSettingsViewModel.cs`, `CuttingParametersViewModel.cs`, `StrategySelectionViewModel.cs`, `ModelsViewModel.cs`, `PresetsViewModel.cs`, `SimulationViewModel.cs`, `AnalysisViewModel.cs`, `MachineViewModel.cs`, `ViewportViewModel.cs`, `SpeedLegendViewModel.cs` | One per view (`MachineViewModel` copies the controller snapshot 10 times a second and moves the viewport tool marker to the machine's work position); bind to the project through `ProjectService`; validation messages from `ProjectValidator`; `ViewportViewModel` also owns the pick and the drag (`BeginDrag`, `DragTo`, `ModelDragged`), hidden models are not hit, and the speed scale of the shown path with its legend (`SpeedScale`, `SpeedLegend`, from the project's rapid rate) |
 | Rendering | `GlConstants.cs` | GL enum values not exposed by Avalonia's `GlInterface` |
 | Rendering | `GlFunctions.cs` | Delegates obtained via `GlInterface.GetProcAddress` for VAO, buffer and uniform functions missing from `GlInterface` |
 | Rendering | `GlShaders.cs` | GLSL sources; version preamble selected from `GlVersion` (`#version 300 es` + precision, or `#version 330 core`) |
@@ -322,7 +324,8 @@ placeholder; the task that implements it is written in the placeholder header.
 | Rendering | `Camera.cs` | Orbit camera: target, yaw, pitch, distance; view and projection matrices; `FitToBounds` |
 | Rendering | `MeshRenderer.cs` | Model mesh with flat normals and directional light |
 | Rendering | `HeightMapRenderer.cs` | Stock / final model as a grid mesh; partial vertex updates from dirty rectangles; per-cell category coloring |
-| Rendering | `ToolpathRenderer.cs` | Line segments colored by `MoveKind`; progress highlight |
+| Rendering | `ToolpathRenderer.cs` | Line segments colored by speed (the move's fraction on the path's `ToolpathSpeedScale` along the speed gradient, red slowest, green fastest); done part bright, remaining dimmed, next moves highlighted |
+| Rendering | `ColorGradient.cs` | Colors along the stops of a gradient brush of `Colors.axaml` (read by `ThemeColors.GetGradient`), linear between stops as the brush draws them |
 | Rendering | `ToolRenderer.cs` | Cutter cylinder and head cylinder at the current tool position |
 | Rendering | `AxisTriadRenderer.cs` | Machine axes and stock outline |
 | Rendering | `SceneRenderer.cs` | Composes the renderers; single place that issues draw calls |
